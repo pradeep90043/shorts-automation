@@ -1,0 +1,180 @@
+export interface TelegramMetadata {
+  messageId: number;
+  chatId: number;
+  userId?: number;
+  username?: string;
+  firstName?: string;
+  timestamp: number;
+  fileId: string;
+}
+
+export interface ImageAnalysisResult {
+  width: number;
+  height: number;
+  aspectRatio: number;
+  orientation: 'portrait' | 'landscape' | 'square';
+  hasWhiteMargins: boolean;
+  hasBlackMargins: boolean;
+  borderColors?: string[];
+}
+
+export interface BrandingZone {
+  id: string;
+  type: 'logo' | 'watermark' | 'handle' | 'profile_name' | 'other';
+  // Bounding box: normalized coordinates [0, 1] relative to image width and height
+  boundingBox: {
+    x: number; // Top-left X
+    y: number; // Top-left Y
+    width: number;
+    height: number;
+  };
+  confidence: number;
+  description?: string;
+}
+
+export interface BrandingDetectionResult {
+  detected: boolean;
+  zones: BrandingZone[];
+}
+
+export interface BrandingRemovalResult {
+  success: boolean;
+  methodUsed: 'crop' | 'inpainting' | 'none';
+  outputPath: string;
+  preservationReason?: string; // If skipped, explain why
+}
+
+export interface OcrResult {
+  text: string;
+  confidence: number;
+  words: string[];
+}
+
+export interface InfographicItem {
+  number: number;
+  title: string;
+  description: string;
+  icon?: string;
+  tag?: string;      // badge label e.g. "Free", "Open Source", "Popular"
+  platform?: string; // e.g. "Web • macOS • Linux"
+}
+
+export interface InfographicContent {
+  title: string;
+  titleAccent: string;
+  subtitle?: string;
+  items: InfographicItem[];
+  tipLeft?: string;   // verdict / best-overall text
+  tipRight?: string;  // pro tip / recommendation text
+}
+
+export interface VideoMetadata {
+  title: string;
+  description: string;
+  tags: string[];
+}
+
+export interface RenderOptions {
+  durationSeconds: number;
+  fps: number;
+  effect: 'none' | 'fade' | 'zoom' | 'slide';
+}
+
+export interface PipelineContext {
+  id: string; // Unique Generation ID
+  tempDir: string;
+  telegramMeta: TelegramMetadata;
+  
+  // Pipeline file paths & results
+  originalImagePath: string;
+  analysis?: ImageAnalysisResult;
+  brandingDetection?: BrandingDetectionResult;
+  cleanedImagePath?: string;
+  brandingRemoval?: BrandingRemovalResult;
+  ocr?: OcrResult;
+  layoutImagePath?: string;
+  brandedImagePath?: string;
+  metadata?: VideoMetadata;
+  musicPath?: string;
+  renderedVideoPath?: string;
+  finalVideoPath?: string;
+  
+  // YouTube details
+  youtubeUrl?: string;
+  youtubeVideoId?: string;
+  
+  // Processing status
+  status: 'received' | 'analyzing' | 'detecting_branding' | 'removing_branding' | 'ocr' | 'generating_layout' | 'branding' | 'generating_metadata' | 'rendering_video' | 'adding_music' | 'uploading' | 'completed' | 'failed' | 'manual_review';
+  error?: string;
+  instagramSource?: boolean; // skip branding removal for Instagram-sourced frames
+  captionMetadata?: { title: string; description: string }; // user-provided title+description from Telegram caption
+}
+
+export interface ITelegramService {
+  start(): Promise<void>;
+  downloadFile(fileId: string, destPath: string): Promise<void>;
+  sendMessage(chatId: number, text: string, replyToMessageId?: number): Promise<void>;
+}
+
+export interface IImageAnalyzer {
+  analyze(imagePath: string): Promise<ImageAnalysisResult>;
+}
+
+export interface IBrandingDetector {
+  detect(imagePath: string, analysis: ImageAnalysisResult): Promise<BrandingDetectionResult>;
+}
+
+export interface IBrandingRemover {
+  remove(
+    imagePath: string,
+    zones: BrandingZone[],
+    analysis: ImageAnalysisResult
+  ): Promise<BrandingRemovalResult>;
+}
+
+export interface IOcrService {
+  extractText(imagePath: string): Promise<OcrResult>;
+}
+
+export interface ILayoutGenerator {
+  generate(
+    imagePath: string,
+    analysis: ImageAnalysisResult,
+    outputPath: string,
+    ocrText?: string
+  ): Promise<string>;
+}
+
+export interface IBrandingService {
+  applyCodeOrCapBranding(
+    layoutImagePath: string,
+    outputPath: string
+  ): Promise<string>;
+}
+
+export interface IAiService {
+  generateMetadata(ocrText: string, imageContext: string): Promise<VideoMetadata>;
+}
+
+export interface IVideoRenderer {
+  renderImageToVideo(
+    imagePath: string,
+    outputPath: string,
+    options: RenderOptions
+  ): Promise<string>;
+}
+
+export interface IMusicService {
+  addBackgroundMusic(
+    videoPath: string,
+    musicFolder: string,
+    outputPath: string
+  ): Promise<string>;
+}
+
+export interface IYouTubeService {
+  uploadShort(
+    videoPath: string,
+    metadata: VideoMetadata
+  ): Promise<{ url: string; videoId: string }>;
+}

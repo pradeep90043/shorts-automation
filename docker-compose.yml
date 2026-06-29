@@ -1,0 +1,15 @@
+version: '3.9'
+
+services:
+  bot:
+    build: .
+    container_name: codeorcap-bot
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./output:/app/output
+      - ./assets/music:/app/assets/music
+      - ./logs:/app/logs
+    # Port only needed during YouTube OAuth auth flow
+    ports:
+      - "3000:3000"
