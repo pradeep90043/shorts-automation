@@ -55,6 +55,11 @@ except Exception as e:
   pipelineLogger.info('Instagram cookies exported from Chrome', 'Instagram');
 }
 
+export interface DownloadReelResult {
+  framePath: string;
+  instagramSourceType: 'image' | 'image_with_music' | 'video';
+}
+
 /**
  * Download any Instagram URL (reel, post, IGTV, story) and return a JPEG frame.
  * - Video content → download mp4, extract frame at 2s
@@ -64,7 +69,7 @@ except Exception as e:
 export async function downloadReelFrame(
   url: string,
   destDir: string
-): Promise<string> {
+): Promise<DownloadReelResult> {
   const framePath = path.join(destDir, 'original.jpg');
 
   pipelineLogger.info(`Downloading Instagram content: ${url}`, 'Instagram');
@@ -92,6 +97,11 @@ export async function downloadReelFrame(
       const videoPath = path.join(destDir, videoFile);
       pipelineLogger.info(`Video downloaded → ${videoPath}`, 'Instagram');
 
+      // Check if it is a static image with music or a dynamic video
+      const isStatic = await checkIfVideoIsStatic(videoPath);
+      const instagramSourceType = isStatic ? 'image_with_music' : 'video';
+      pipelineLogger.info(`Content detected as: ${instagramSourceType}`, 'Instagram');
+
       await runCommand(FFMPEG, [
         '-y', '-ss', '00:00:02',
         '-i', videoPath,
@@ -100,9 +110,9 @@ export async function downloadReelFrame(
       ], 'ffmpeg');
 
       if (fs.existsSync(framePath)) {
-        pipelineLogger.checkpoint('Instagram frame extracted via yt-dlp', true, framePath);
+        pipelineLogger.checkpoint(`Instagram frame extracted via yt-dlp (${instagramSourceType})`, true, framePath);
         try { fs.unlinkSync(videoPath); } catch {}
-        return framePath;
+        return { framePath, instagramSourceType };
       }
     }
   } catch (err) {
@@ -121,7 +131,7 @@ export async function downloadReelFrame(
     throw new Error('Puppeteer screenshot did not produce an image');
   }
 
-  return framePath;
+  return { framePath, instagramSourceType: 'image' };
 }
 
 /**
@@ -169,6 +179,55 @@ async function screenshotInstagramPost(url: string, outputPath: string): Promise
   }
 }
 
+/**
+ * Decodes the first 5 seconds of the video and compares the MD5 checksums of the decoded frames.
+ * If all selected frame checksums are identical, it is a static image with background music.
+ */
+async function checkIfVideoIsStatic(videoPath: string): Promise<boolean> {
+  try {
+    // Run ffmpeg with framemd5 muxer for the first 5 seconds, ignoring audio.
+    // Selecting frames every 30 frames (approx. 1s for 30fps video).
+    const stdout = await runCommandWithOutput(FFMPEG, [
+      '-t', '5',
+      '-i', videoPath,
+      '-an',
+      '-vf', "select='not(mod(n,30))'",
+      '-f', 'framemd5',
+      '-'
+    ], 'check-static-video');
+
+    // Parse the output to find frame hashes (lines starting with '0, ')
+    const lines = stdout.split('\n');
+    const hashes: string[] = [];
+
+    for (const line of lines) {
+      if (line.startsWith('0,')) {
+        const parts = line.split(',');
+        if (parts.length > 0) {
+          const hash = parts[parts.length - 1].trim();
+          if (hash && hash.length === 32) {
+            hashes.push(hash);
+          }
+        }
+      }
+    }
+
+    if (hashes.length <= 1) {
+      // 0 or 1 frames means we can't detect change, assume static or single frame
+      return true;
+    }
+
+    // Check if all hashes are identical
+    const firstHash = hashes[0];
+    const allIdentical = hashes.every(h => h === firstHash);
+
+    return allIdentical;
+  } catch (err) {
+    pipelineLogger.warn(`Failed to check if video is static: ${err instanceof Error ? err.message : err}. Assuming dynamic video.`, 'Instagram');
+    return false;
+  }
+}
+
 function runCommand(bin: string, args: string[], label: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -179,6 +238,27 @@ function runCommand(bin: string, args: string[], label: string): Promise<void> {
     child.on('close', (code) => {
       if (code === 0) {
         resolve();
+      } else {
+        reject(new Error(`${label} failed (exit ${code}): ${stderr.slice(-400)}`));
+      }
+    });
+
+    child.on('error', reject);
+  });
+}
+
+function runCommandWithOutput(bin: string, args: string[], label: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+
+    let stdout = '';
+    let stderr = '';
+    child.stdout?.on('data', (d: Buffer) => { stdout += d.toString(); });
+    child.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
+
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve(stdout);
       } else {
         reject(new Error(`${label} failed (exit ${code}): ${stderr.slice(-400)}`));
       }

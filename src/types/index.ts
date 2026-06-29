@@ -107,6 +107,7 @@ export interface PipelineContext {
   status: 'received' | 'analyzing' | 'detecting_branding' | 'removing_branding' | 'ocr' | 'generating_layout' | 'branding' | 'generating_metadata' | 'rendering_video' | 'adding_music' | 'uploading' | 'completed' | 'failed' | 'manual_review';
   error?: string;
   instagramSource?: boolean; // skip branding removal for Instagram-sourced frames
+  instagramSourceType?: 'image' | 'image_with_music' | 'video';
   captionMetadata?: { title: string; description: string }; // user-provided title+description from Telegram caption
 }
 

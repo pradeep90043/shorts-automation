@@ -295,8 +295,11 @@ export class TelegramService implements ITelegramService {
     from: { id: number; username?: string; first_name?: string }
   ): Promise<void> {
     let framePath: string;
+    let instagramSourceType: 'image' | 'image_with_music' | 'video';
     try {
-      framePath = await downloadReelFrame(reelUrl, tempGenDir);
+      const result = await downloadReelFrame(reelUrl, tempGenDir);
+      framePath = result.framePath;
+      instagramSourceType = result.instagramSourceType;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       pipelineLogger.error('Instagram download failed', err, 'Instagram');
@@ -325,9 +328,28 @@ export class TelegramService implements ITelegramService {
       originalImagePath: framePath,
       status: 'received',
       instagramSource: true,
+      instagramSourceType,
     };
 
-    pipelineLogger.checkpoint('Instagram frame ready — starting pipeline', true, framePath);
+    let contentTypeDesc = '';
+    if (instagramSourceType === 'image') {
+      contentTypeDesc = '📸 *Image/Carousel* (screenshotted)';
+    } else if (instagramSourceType === 'image_with_music') {
+      contentTypeDesc = '🎵 *Static Reel* (image with music)';
+    } else {
+      contentTypeDesc = '🎬 *Dynamic Video* (real video)';
+    }
+
+    await this.sendMessage(
+      chatId,
+      `✅ *Download complete!*\n` +
+      `• *Type:* ${contentTypeDesc}\n` +
+      `• *Frame Path:* \`${path.basename(framePath)}\`\n\n` +
+      `Starting automation pipeline...`,
+      messageId
+    );
+
+    pipelineLogger.checkpoint(`Instagram frame ready (${instagramSourceType}) — starting pipeline`, true, framePath);
 
     if (this.pipelineTrigger) {
       this.pipelineTrigger(context).catch((err) => {
