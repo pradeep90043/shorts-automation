@@ -18,10 +18,13 @@ export interface AppConfig {
     channels: YoutubeChannel[];   // one entry per channel
   };
   ai: {
-    provider: 'claude' | 'antigravity' | 'gemini' | 'mock';
+    provider: 'claude' | 'antigravity' | 'gemini' | 'freellmapi' | 'mock';
     claudePath: string;
     antigravityPath: string;
     geminiApiKey: string;
+    freellmapiUrl: string;
+    freellmapiKey: string;
+    freellmapiModel: string;
   };
   paths: {
     assetsDir: string;
@@ -36,6 +39,13 @@ export interface AppConfig {
     musicVolume: number;
     musicStartOffset: number;
     beautifyCode: boolean;
+  };
+  binaries: {
+    ffmpeg: string;
+    ffprobe: string;
+    ytdlp: string;
+    python3: string;
+    chrome: string;
   };
 }
 
@@ -66,10 +76,13 @@ export const config: AppConfig = {
     channels: loadChannels(),
   },
   ai: {
-    provider: (process.env.AI_PROVIDER || 'mock') as 'claude' | 'antigravity' | 'gemini' | 'mock',
+    provider: (process.env.AI_PROVIDER || 'mock') as 'claude' | 'antigravity' | 'gemini' | 'freellmapi' | 'mock',
     claudePath: process.env.CLAUDE_CLI_PATH || 'claude',
     antigravityPath: process.env.ANTIGRAVITY_CLI_PATH || 'agy',
     geminiApiKey: process.env.GEMINI_API_KEY || '',
+    freellmapiUrl: process.env.FREELLMAPI_URL || 'http://localhost:3001',
+    freellmapiKey: process.env.FREELLMAPI_KEY || '',
+    freellmapiModel: process.env.FREELLMAPI_MODEL || 'gemini-2.0-flash',
   },
   paths: {
     assetsDir: process.env.ASSETS_DIR 
@@ -94,6 +107,13 @@ export const config: AppConfig = {
     musicVolume: parseFloat(process.env.MUSIC_VOLUME || '0.15'),
     musicStartOffset: parseInt(process.env.MUSIC_START_OFFSET || '20', 10),
     beautifyCode: process.env.BEAUTIFY_CODE !== 'false',
+  },
+  binaries: {
+    ffmpeg: process.env.FFMPEG_PATH || 'ffmpeg',
+    ffprobe: process.env.FFPROBE_PATH || 'ffprobe',
+    ytdlp: process.env.YTDLP_PATH || 'yt-dlp',
+    python3: process.env.PYTHON_PATH || 'python3',
+    chrome: process.env.PUPPETEER_EXECUTABLE_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   }
 };
 

@@ -1,3 +1,7 @@
+import sharp from 'sharp';
+import { GoogleGenAI } from '@google/genai';
+import { FreeLlmApiClient } from '../ai/freellmapi';
+import { config } from '../config';
 import { 
   IBrandingDetector, 
   BrandingDetectionResult, 
@@ -63,46 +67,170 @@ class SocialHandleDetector implements IBrandingSubDetector {
 
   public async detect(
     imagePath: string,
-    _analysis: ImageAnalysisResult,
+    analysis: ImageAnalysisResult,
     precomputedOcrText?: string
   ): Promise<BrandingZone[]> {
     const zones: BrandingZone[] = [];
     
     try {
-      // Use precomputed OCR text if available, otherwise run OCR
-      let text = precomputedOcrText;
-      if (!text) {
-        const ocrResult = await this.ocrService.extractText(imagePath);
-        text = ocrResult.text;
+      let text = precomputedOcrText || '';
+      let detailedWords: any[] = [];
+      
+      // Always fetch full OCR result if precomputed text is not provided or if we want coordinates
+      const ocrResult = await this.ocrService.extractText(imagePath);
+      text = ocrResult.text;
+      detailedWords = ocrResult.detailedWords || [];
+
+      const handleRegex = /@[a-zA-Z0-9_\.]+|https?:\/\/(www\.)?[a-zA-Z0-9-]+\.[a-z]+/gi;
+
+      if (detailedWords && detailedWords.length > 0) {
+        detailedWords.forEach((word, index) => {
+          if (word.text.match(handleRegex)) {
+            pipelineLogger.info(`Found exact branding text match: ${word.text}`, 'SocialHandleDetector');
+            const w = (word.bbox.x1 - word.bbox.x0) / analysis.width;
+            const h = (word.bbox.y1 - word.bbox.y0) / analysis.height;
+            zones.push({
+              id: `ocr-exact-handle-${index}`,
+              type: word.text.startsWith('@') ? 'handle' : 'watermark',
+              boundingBox: {
+                x: word.bbox.x0 / analysis.width,
+                y: word.bbox.y0 / analysis.height,
+                width: w,
+                height: h,
+              },
+              confidence: (word.confidence || 85) / 100,
+              description: `Exact social handle or URL text: "${word.text}"`
+            });
+          }
+        });
       }
 
-      // Look for social handles or branding elements (e.g. @username, www.website, etc.)
-      // Note: A full implementation with tesseract.js can return character/word bounding boxes.
-      // For this local production module, we search the text for handles or watermarks.
-      const handleRegex = /@[a-zA-Z0-9_\.]+|https?:\/\/(www\.)?[a-zA-Z0-9-]+\.[a-z]+/gi;
-      const matches = text.match(handleRegex);
-
-      if (matches) {
-        matches.forEach((match, index) => {
-          pipelineLogger.info(`Found branding text match: ${match}`, 'SocialHandleDetector');
-          
-          // Since we are doing regex search on text, we can label the approximate location.
-          // In a full OCR engine, we get the exact bounding box. Here we flag general zones
-          // based on text patterns, default to center-bottom or top-right.
-          zones.push({
-            id: `ocr-handle-${index}`,
-            type: match.startsWith('@') ? 'handle' : 'watermark',
-            boundingBox: { x: 0.1, y: 0.85, width: 0.8, height: 0.1 }, // Standard lower overlay
-            confidence: 0.85,
-            description: `Social handle or URL text: "${match}"`
+      // Fallback to legacy behavior if matches exist but detailedWords didn't catch them
+      if (zones.length === 0) {
+        const matches = text.match(handleRegex);
+        if (matches) {
+          matches.forEach((match, index) => {
+            pipelineLogger.info(`Found branding text match: ${match}`, 'SocialHandleDetector');
+            zones.push({
+              id: `ocr-handle-${index}`,
+              type: match.startsWith('@') ? 'handle' : 'watermark',
+              boundingBox: { x: 0.1, y: 0.85, width: 0.8, height: 0.1 }, // Standard lower overlay
+              confidence: 0.85,
+              description: `Social handle or URL text: "${match}"`
+            });
           });
-        });
+        }
       }
     } catch (err) {
       pipelineLogger.warn(`OCR handle detection failed or skipped: ${err instanceof Error ? err.message : err}`, 'SocialHandleDetector');
     }
 
     return zones;
+  }
+}
+
+class AiBrandingDetector implements IBrandingSubDetector {
+  public name = 'AiBrandingDetector';
+  private ai: GoogleGenAI | null = null;
+  private freellmapi: FreeLlmApiClient | null = null;
+
+  constructor() {
+    if (config.ai.provider === 'freellmapi') {
+      this.freellmapi = new FreeLlmApiClient();
+    } else if (config.ai.geminiApiKey) {
+      this.ai = new GoogleGenAI({ apiKey: config.ai.geminiApiKey });
+    }
+  }
+
+  public async detect(
+    imagePath: string,
+    _analysis: ImageAnalysisResult
+  ): Promise<BrandingZone[]> {
+    if (!this.ai && !this.freellmapi) {
+      pipelineLogger.warn('AI provider not configured for AiBrandingDetector', 'AiBrandingDetector');
+      return [];
+    }
+
+    try {
+      // Downscale the image to prevent payload limit issues (similar to metadata generator)
+      const buffer = await sharp(imagePath)
+        .resize({ width: 480, height: 854, fit: 'inside' })
+        .jpeg({ quality: 75 })
+        .toBuffer();
+      const base64 = buffer.toString('base64');
+      const mimeType = 'image/jpeg';
+
+      const prompt = `You are a computer vision assistant for a video editing pipeline.
+Analyze the image and detect the exact coordinates of any branding, watermarks, profile pictures, usernames/handles, logos, or app overlays of other channels or creators.
+
+We need to remove these elements. Locate them and return their bounding boxes in normalized coordinates relative to the image size (value between 0.0 and 1.0).
+
+Specifically search for:
+- profile picture (e.g. circle image showing a person/logo in top-left or bottom-left)
+- profile name / username / handle (e.g. "@username", "username" in top-left or bottom-left)
+- watermarks or logos (e.g. Instagram logo, TikTok watermark, other channel logo)
+- actions panel (e.g. reels interaction panel on the right with like/comment/share icons)
+- main_post_content (e.g. if the image contains a full post layout, comments, or web view headers, detect the bounding box of the central post image/media box itself, excluding headers, comments, likes, and footer chrome)
+
+If no such elements are present, return an empty array [].
+
+Return ONLY a raw JSON array of objects with the following schema — no markdown, no explanation:
+[
+  {
+    "type": "logo" | "watermark" | "handle" | "profile_name" | "main_post_content",
+    "box": {
+      "x": number,      // top-left x coordinate (0.0 to 1.0)
+      "y": number,      // top-left y coordinate (0.0 to 1.0)
+      "width": number,  // width of bounding box (0.0 to 1.0)
+      "height": number  // height of bounding box (0.0 to 1.0)
+    },
+    "description": string
+  }
+]`;
+
+      let raw = '';
+      if (this.freellmapi) {
+        raw = await this.freellmapi.generateVision(prompt, base64, mimeType);
+      } else if (this.ai) {
+        const res = await this.ai.models.generateContent({
+          model: 'gemini-2.0-flash',
+          contents: [{
+            role: 'user',
+            parts: [{ inlineData: { mimeType, data: base64 } }, { text: prompt }],
+          }],
+        });
+        raw = res.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+      }
+
+      const startIndex = raw.indexOf('[');
+      const endIndex = raw.lastIndexOf(']');
+      if (startIndex === -1 || endIndex === -1) {
+        pipelineLogger.info('AI Branding Detector returned empty or invalid response', 'AiBrandingDetector');
+        return [];
+      }
+
+      const s = raw.slice(startIndex, endIndex + 1);
+      const items = JSON.parse(s) as Array<{
+        type: 'logo' | 'watermark' | 'handle' | 'profile_name' | 'main_post_content';
+        box: { x: number; y: number; width: number; height: number };
+        description: string;
+      }>;
+
+      const zones: BrandingZone[] = items.map((item, index) => ({
+        id: `ai-branding-${index}`,
+        type: item.type,
+        boundingBox: item.box,
+        confidence: 0.9,
+        description: item.description
+      }));
+
+      pipelineLogger.info(`AI Branding Detector found ${zones.length} zones`, 'AiBrandingDetector');
+      return zones;
+
+    } catch (err) {
+      pipelineLogger.error('AI Branding Detector failed', err, 'AiBrandingDetector');
+      return [];
+    }
   }
 }
 
@@ -113,6 +241,7 @@ export class BrandingDetector implements IBrandingDetector {
     // Register active detectors
     this.detectors.push(new EdgeBrandingDetector());
     this.detectors.push(new SocialHandleDetector());
+    this.detectors.push(new AiBrandingDetector());
   }
 
   /**

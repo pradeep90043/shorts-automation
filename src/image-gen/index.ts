@@ -4,16 +4,23 @@ import fs from 'fs';
 import { InfographicContent } from '../types';
 import { InfographicRenderer } from '../infographic-renderer';
 import { pipelineLogger } from '../utils/logger';
+import { config } from '../config';
+import { FreeLlmApiClient } from '../ai/freellmapi';
 
 const CANVAS_W = 1080;
 const CANVAS_H = 1920;
 
 export class PollinationsImageGenerator {
-  private ai: GoogleGenAI;
+  private ai: GoogleGenAI | null = null;
+  private freellmapi: FreeLlmApiClient | null = null;
   private renderer: InfographicRenderer;
 
-  constructor(apiKey: string) {
-    this.ai = new GoogleGenAI({ apiKey });
+  constructor() {
+    if (config.ai.provider === 'freellmapi') {
+      this.freellmapi = new FreeLlmApiClient();
+    } else if (config.ai.geminiApiKey) {
+      this.ai = new GoogleGenAI({ apiKey: config.ai.geminiApiKey });
+    }
     this.renderer = new InfographicRenderer();
   }
 
@@ -100,12 +107,12 @@ Return ONLY this JSON (no markdown fences, no explanation):
 Replace the example with real content from the image. Include ALL items visible. Start response with { and end with }.`;
   }
 
-  // Step 1: Gemini vision — sees the full post (text + logos + images)
+  // Step 1: AI vision — sees the full post (text + logos + images)
   private async extractContent(
     sourceImagePath: string,
     ocrText?: string
   ): Promise<InfographicContent & { visualContext?: string }> {
-    pipelineLogger.info('Step 1: Analyzing post with Gemini vision (text + visuals)…', 'PollinationsImageGenerator');
+    pipelineLogger.info('Step 1: Analyzing post with AI vision (text + visuals)…', 'PollinationsImageGenerator');
 
     const base64   = fs.readFileSync(sourceImagePath).toString('base64');
     const mimeType = sourceImagePath.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
@@ -114,18 +121,24 @@ Replace the example with real content from the image. Include ALL items visible.
       ? `\n\nOCR already extracted this text (use as reference):\n${ocrText.slice(0, 1000)}`
       : '';
 
-    const callGemini = async (prompt: string): Promise<string> => {
+    const callAI = async (prompt: string): Promise<string> => {
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          const res = await this.ai.models.generateContent({
-            model: 'gemini-2.0-flash',
-            contents: [{ role: 'user', parts: [{ inlineData: { mimeType, data: base64 } }, { text: prompt }] }]
-          });
-          return res.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+          if (config.ai.provider === 'freellmapi') {
+            if (!this.freellmapi) throw new Error('FreeLLMAPI client is not initialized');
+            return await this.freellmapi.generateVision(prompt, base64, mimeType);
+          } else {
+            if (!this.ai) throw new Error('Gemini API key is missing.');
+            const res = await this.ai.models.generateContent({
+              model: 'gemini-2.0-flash',
+              contents: [{ role: 'user', parts: [{ inlineData: { mimeType, data: base64 } }, { text: prompt }] }]
+            });
+            return res.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+          }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           if (attempt < 2 && /503|unavailable|quota|rate/i.test(msg)) {
-            pipelineLogger.warn(`Gemini 503/rate-limit on attempt ${attempt + 1}, waiting 5s…`, 'PollinationsImageGenerator');
+            pipelineLogger.warn(`AI 503/rate-limit on attempt ${attempt + 1}, waiting 5s…`, 'PollinationsImageGenerator');
             await new Promise(r => setTimeout(r, 5000));
           } else throw err;
         }
@@ -135,7 +148,7 @@ Replace the example with real content from the image. Include ALL items visible.
 
     // Attempt 1: full detailed prompt
     try {
-      const rawText = await callGemini(this.buildExtractionPrompt(ocrHint));
+      const rawText = await callAI(this.buildExtractionPrompt(ocrHint));
       const content = this.parseContentJSON(rawText);
       pipelineLogger.info(
         `Content extracted: "${content.title} ${content.titleAccent}" (${content.items.length} items)${content.visualContext ? ` | visuals: ${content.visualContext}` : ''}`,
@@ -147,7 +160,7 @@ Replace the example with real content from the image. Include ALL items visible.
     }
 
     // Attempt 2: simpler prompt, less strict
-    const rawText2 = await callGemini(this.buildSimpleExtractionPrompt(ocrHint));
+    const rawText2 = await callAI(this.buildSimpleExtractionPrompt(ocrHint));
     pipelineLogger.info(`Attempt 2 raw response (first 300): ${rawText2.slice(0, 300)}`, 'PollinationsImageGenerator');
     const content = this.parseContentJSON(rawText2);
     pipelineLogger.info(

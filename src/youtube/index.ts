@@ -110,4 +110,34 @@ export class YouTubeService {
     if (results.length === 0) throw new Error('All channel uploads failed');
     return { url: results[0].url, videoId: results[0].videoId };
   }
+
+  // Delete a video from a configured YouTube channel
+  public async deleteFromChannel(
+    channelName: string,
+    videoId: string
+  ): Promise<boolean> {
+    const { clientId, clientSecret, redirectUri } = config.youtube;
+    const channel = config.youtube.channels.find(ch => ch.name === channelName);
+
+    // Support simulation deletion
+    if (videoId.startsWith('sim-') || !clientId || !clientSecret || !channel || !channel.refreshToken) {
+      pipelineLogger.info(`[${channelName}] Simulating video deletion for ID: ${videoId}`, 'YouTubeService');
+      return true;
+    }
+
+    try {
+      const oauth2 = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+      oauth2.setCredentials({ refresh_token: channel.refreshToken });
+
+      const yt = google.youtube({ version: 'v3', auth: oauth2 });
+
+      pipelineLogger.info(`[${channelName}] Deleting video ID: ${videoId}…`, 'YouTubeService');
+      await yt.videos.delete({ id: videoId });
+      pipelineLogger.checkpoint(`[${channelName}] Deleted video ID: ${videoId}`, true, videoId);
+      return true;
+    } catch (err) {
+      pipelineLogger.error(`[${channelName}] Failed to delete video ${videoId}`, err, 'YouTubeService');
+      return false;
+    }
+  }
 }

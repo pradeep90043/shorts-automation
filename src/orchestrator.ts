@@ -169,13 +169,14 @@ export class PipelineOrchestrator {
 
       // 5 & 6. Generate branded frame — AI renderer or classic SVG pipeline
       const aiProvider = config.ai.provider || 'mock';
-      const useAI = aiProvider === 'claude' || aiProvider === 'antigravity' || aiProvider === 'gemini';
+      const useAI = aiProvider === 'claude' || aiProvider === 'antigravity' || aiProvider === 'gemini' || aiProvider === 'freellmapi';
 
       if (useAI) {
         context.status = 'generating_layout';
         const layoutPath = path.join(context.tempDir, 'layout.png');
         const provider = aiProvider === 'antigravity' ? 'antigravity'
           : aiProvider === 'gemini' ? 'gemini'
+          : aiProvider === 'freellmapi' ? 'freellmapi'
           : 'claude';
         context.layoutImagePath = await this.aiRenderer.generateBrandedFrame(
           workingImage,
@@ -229,7 +230,8 @@ export class PipelineOrchestrator {
       context.finalVideoPath = await this.music.addBackgroundMusic(
         context.renderedVideoPath,
         config.paths.musicDir,
-        finalVideoPath
+        finalVideoPath,
+        context.metadata?.mood
       );
 
       // 10. Upload to YouTube Shorts

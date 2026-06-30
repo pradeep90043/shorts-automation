@@ -15,6 +15,8 @@ export class TelegramService implements ITelegramService {
   private pipelineTrigger?: (context: PipelineContext) => Promise<void>;
   private approvalTrigger?: (genId: string) => Promise<void>;
   private reviewCallback?: (action: 'publish' | 'cancel' | 'regenerate' | 'viral', id: string) => void;
+  private revokeCallback?: (id: string) => Promise<void>;
+  private textPromptCallback?: (chatId: number, text: string, messageId: number) => Promise<boolean>;
 
   constructor() {
     if (!config.telegramToken) {
@@ -43,6 +45,17 @@ export class TelegramService implements ITelegramService {
    */
   public registerReviewCallback(cb: (action: 'publish' | 'cancel' | 'regenerate' | 'viral', id: string) => void): void {
     this.reviewCallback = cb;
+  }
+
+  /**
+   * Registers the revoke callback from DirectUploader
+   */
+  public registerRevokeCallback(cb: (id: string) => Promise<void>): void {
+    this.revokeCallback = cb;
+  }
+
+  public registerTextPromptCallback(cb: (chatId: number, text: string, messageId: number) => Promise<boolean>): void {
+    this.textPromptCallback = cb;
   }
 
   private reviewKeyboard(id: string) {
@@ -105,6 +118,29 @@ export class TelegramService implements ITelegramService {
     } catch (_) {}
   }
 
+  /**
+   * Send a success message with a revoke button
+   */
+  public async sendSuccessMessageWithRevoke(
+    chatId: number,
+    text: string,
+    id: string,
+    replyToMessageId?: number
+  ): Promise<number> {
+    const res = await this.bot.telegram.sendMessage(chatId, text, {
+      reply_parameters: replyToMessageId ? { message_id: replyToMessageId } : undefined,
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '🗑️ Revoke Upload', callback_data: `rvk_${id}` }
+          ]
+        ]
+      }
+    });
+    return res.message_id;
+  }
+
   public async start(): Promise<void> {
     this.bot.launch();
     pipelineLogger.info('Telegram Bot successfully started and listening for messages.', 'Telegram');
@@ -139,6 +175,15 @@ export class TelegramService implements ITelegramService {
       });
     } catch (err) {
       pipelineLogger.error(`Failed to send Telegram message to chat ${chatId}`, err, 'Telegram');
+    }
+  }
+
+  public async deleteMessage(chatId: number, messageId: number): Promise<void> {
+    try {
+      await this.bot.telegram.deleteMessage(chatId, messageId);
+      pipelineLogger.info(`Deleted message ${messageId} in chat ${chatId}`, 'Telegram');
+    } catch (err) {
+      pipelineLogger.warn(`Failed to delete message ${messageId} in chat ${chatId}: ${err instanceof Error ? err.message : err}`, 'Telegram');
     }
   }
 
@@ -232,6 +277,28 @@ export class TelegramService implements ITelegramService {
       }
     });
 
+    // Handle video messages directly uploaded from Telegram
+    this.bot.on('video', async (ctx) => {
+      try {
+        const video = ctx.message.video;
+        const fileId = video.file_id;
+
+        await this.initiateVideoPipeline(
+          fileId,
+          ctx.message.message_id,
+          ctx.chat.id,
+          ctx.from.id,
+          video.file_name || 'video.mp4',
+          ctx.from.username,
+          ctx.from.first_name,
+          ctx.message.caption
+        );
+      } catch (err) {
+        pipelineLogger.error('Error handling Telegram video message', err, 'Telegram');
+        ctx.reply('❌ An error occurred while initializing the video pipeline.');
+      }
+    });
+
     // Handle review inline button callbacks
     this.bot.action(/^rv_(pub|can|reg|vrl)_(.+)$/, async (ctx) => {
       const code = ctx.match[1];
@@ -245,16 +312,36 @@ export class TelegramService implements ITelegramService {
       if (this.reviewCallback) this.reviewCallback(action, id);
     });
 
+    // Handle revoke inline button callbacks
+    this.bot.action(/^rvk_(.+)$/, async (ctx) => {
+      const id = ctx.match[1];
+      await ctx.answerCbQuery('🗑️ Revoking upload…');
+      if (this.revokeCallback) {
+        await this.revokeCallback(id);
+      }
+    });
+
     // Handle text messages — detect Instagram reel links
     this.bot.on('text', async (ctx) => {
       try {
         const text = ctx.message.text || '';
 
+        if (text.startsWith('/')) {
+          return; // Ignore command messages
+        }
+
+        // 1. Check if this is an interactive text prompt for a pending review
+        if (this.textPromptCallback) {
+          const handled = await this.textPromptCallback(ctx.chat.id, text, ctx.message.message_id);
+          if (handled) {
+            return; // Successfully intercepted and handled
+          }
+        }
+
+        // 2. Fallback to Instagram Reel Url detection
         if (!isInstagramReelUrl(text)) {
           // Not an Instagram link — ignore (or give a hint)
-          if (!text.startsWith('/')) {
-            ctx.reply('📸 Send a screenshot image or an Instagram reel link to start the pipeline.');
-          }
+          ctx.reply('📸 Send a screenshot image or an Instagram reel link to start the pipeline.');
           return;
         }
 
@@ -296,10 +383,12 @@ export class TelegramService implements ITelegramService {
   ): Promise<void> {
     let framePath: string;
     let instagramSourceType: 'image' | 'image_with_music' | 'video';
+    let videoPath: string | undefined;
     try {
       const result = await downloadReelFrame(reelUrl, tempGenDir);
       framePath = result.framePath;
       instagramSourceType = result.instagramSourceType;
+      videoPath = result.videoPath;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       pipelineLogger.error('Instagram download failed', err, 'Instagram');
@@ -326,6 +415,8 @@ export class TelegramService implements ITelegramService {
       tempDir: tempGenDir,
       telegramMeta,
       originalImagePath: framePath,
+      originalVideoPath: videoPath,
+      isVideo: instagramSourceType === 'video',
       status: 'received',
       instagramSource: true,
       instagramSourceType,
@@ -428,6 +519,75 @@ export class TelegramService implements ITelegramService {
       });
     } else {
       pipelineLogger.warn(`No pipeline trigger registered. Image downloaded but not processed.`, 'Telegram');
+      await this.sendMessage(chatId, `⚠️ Pipeline orchestrator not loaded.`, messageId);
+    }
+  }
+
+  private async initiateVideoPipeline(
+    fileId: string,
+    messageId: number,
+    chatId: number,
+    userId: number,
+    originalFileName: string,
+    username?: string,
+    firstName?: string,
+    caption?: string
+  ): Promise<void> {
+    const id = `gen-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const tempGenDir = path.join(config.paths.tempDir, id);
+    
+    // Create generation temp directory
+    fs.mkdirSync(tempGenDir, { recursive: true });
+
+    const ext = path.extname(originalFileName) || '.mp4';
+    const originalVideoPath = path.join(tempGenDir, `original${ext}`);
+    const originalImagePath = path.join(tempGenDir, `original.jpg`); // for extracted frame
+
+    const telegramMeta: TelegramMetadata = {
+      messageId,
+      chatId,
+      userId,
+      username,
+      firstName,
+      timestamp: Math.floor(Date.now() / 1000),
+      fileId,
+    };
+
+    const captionMetadata = this.parseCaptionMetadata(caption);
+
+    const context: PipelineContext = {
+      id,
+      tempDir: tempGenDir,
+      telegramMeta,
+      originalImagePath,
+      originalVideoPath,
+      isVideo: true,
+      status: 'received',
+      captionMetadata,
+    };
+
+    pipelineLogger.info(`Telegram received video. Assigned Gen ID: ${id}`, 'Telegram');
+    pipelineLogger.checkpoint('Telegram video received', true, id);
+
+    await this.sendMessage(chatId, `📥 *Video received!* starting automation pipeline...\n\`ID: ${id}\``, messageId);
+
+    // Download the video
+    try {
+      await this.downloadFile(fileId, originalVideoPath);
+      pipelineLogger.checkpoint('Video downloaded', true, `Saved to ${originalVideoPath}`);
+    } catch (err) {
+      pipelineLogger.error(`Failed to download video for ${id}`, err, 'Telegram');
+      await this.sendMessage(chatId, `❌ Failed to download video from Telegram.`, messageId);
+      return;
+    }
+
+    // Trigger pipeline orchestrator asynchronously
+    if (this.pipelineTrigger) {
+      this.pipelineTrigger(context).catch((err) => {
+        pipelineLogger.error(`Pipeline orchestrator failed for Gen ID ${id}`, err, 'Orchestrator');
+      });
+    } else {
+      pipelineLogger.warn(`No pipeline trigger registered. Video downloaded but not processed.`, 'Telegram');
       await this.sendMessage(chatId, `⚠️ Pipeline orchestrator not loaded.`, messageId);
     }
   }

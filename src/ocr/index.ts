@@ -19,6 +19,11 @@ export class OcrService implements IOcrService {
       const text = result.data.text || '';
       const confidence = result.data.confidence || 0;
       const words = result.data.words ? result.data.words.map(w => w.text) : [];
+      const detailedWords = result.data.words ? result.data.words.map(w => ({
+        text: w.text,
+        confidence: w.confidence || 0,
+        bbox: w.bbox,
+      })) : [];
 
       pipelineLogger.checkpoint('OCR completed', true, `Extracted ${words.length} words with confidence ${confidence}%`);
       
@@ -26,6 +31,7 @@ export class OcrService implements IOcrService {
         text,
         confidence,
         words,
+        detailedWords,
       };
     } catch (err) {
       pipelineLogger.error(`OCR failed on image ${imagePath}`, err, 'OCR');

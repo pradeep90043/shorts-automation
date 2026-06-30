@@ -20,7 +20,7 @@ export interface ImageAnalysisResult {
 
 export interface BrandingZone {
   id: string;
-  type: 'logo' | 'watermark' | 'handle' | 'profile_name' | 'other';
+  type: 'logo' | 'watermark' | 'handle' | 'profile_name' | 'other' | 'main_post_content';
   // Bounding box: normalized coordinates [0, 1] relative to image width and height
   boundingBox: {
     x: number; // Top-left X
@@ -44,10 +44,17 @@ export interface BrandingRemovalResult {
   preservationReason?: string; // If skipped, explain why
 }
 
+export interface OcrWord {
+  text: string;
+  confidence: number;
+  bbox: { x0: number; y0: number; x1: number; y1: number };
+}
+
 export interface OcrResult {
   text: string;
   confidence: number;
   words: string[];
+  detailedWords?: OcrWord[];
 }
 
 export interface InfographicItem {
@@ -72,6 +79,7 @@ export interface VideoMetadata {
   title: string;
   description: string;
   tags: string[];
+  mood?: 'funny' | 'sad' | 'other';
 }
 
 export interface RenderOptions {
@@ -87,6 +95,8 @@ export interface PipelineContext {
   
   // Pipeline file paths & results
   originalImagePath: string;
+  originalVideoPath?: string;
+  isVideo?: boolean;
   analysis?: ImageAnalysisResult;
   brandingDetection?: BrandingDetectionResult;
   cleanedImagePath?: string;
@@ -109,12 +119,20 @@ export interface PipelineContext {
   instagramSource?: boolean; // skip branding removal for Instagram-sourced frames
   instagramSourceType?: 'image' | 'image_with_music' | 'video';
   captionMetadata?: { title: string; description: string }; // user-provided title+description from Telegram caption
+  userPrompt?: string; // custom re-generation prompt instruction from the user
 }
 
 export interface ITelegramService {
   start(): Promise<void>;
   downloadFile(fileId: string, destPath: string): Promise<void>;
   sendMessage(chatId: number, text: string, replyToMessageId?: number): Promise<void>;
+  deleteMessage(chatId: number, messageId: number): Promise<void>;
+  sendSuccessMessageWithRevoke(
+    chatId: number,
+    text: string,
+    id: string,
+    replyToMessageId?: number
+  ): Promise<number>;
 }
 
 export interface IImageAnalyzer {
@@ -163,13 +181,20 @@ export interface IVideoRenderer {
     outputPath: string,
     options: RenderOptions
   ): Promise<string>;
+  processVideo(
+    videoPath: string,
+    outputPath: string,
+    context: PipelineContext,
+    options: RenderOptions
+  ): Promise<string>;
 }
 
 export interface IMusicService {
   addBackgroundMusic(
     videoPath: string,
     musicFolder: string,
-    outputPath: string
+    outputPath: string,
+    mood?: 'funny' | 'sad' | 'other'
   ): Promise<string>;
 }
 

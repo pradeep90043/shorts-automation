@@ -6,10 +6,30 @@ services:
     container_name: codeorcap-bot
     restart: unless-stopped
     env_file: .env
+    environment:
+      - FREELLMAPI_URL=http://freellmapi:3001
+    depends_on:
+      - freellmapi
     volumes:
       - ./output:/app/output
       - ./assets/music:/app/assets/music
       - ./logs:/app/logs
+      - ./cookies.txt:/app/cookies.txt
     # Port only needed during YouTube OAuth auth flow
     ports:
       - "3000:3000"
+
+  freellmapi:
+    image: ghcr.io/tashfeenahmed/freellmapi:latest
+    container_name: freellmapi
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+      - ENCRYPTION_KEY=${FREELLMAPI_ENCRYPTION_KEY}
+    volumes:
+      - freellmapi-data:/app/server/data
+
+volumes:
+  freellmapi-data:

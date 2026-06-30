@@ -2,14 +2,13 @@ import puppeteer from 'puppeteer-core';
 import sharp from 'sharp';
 import { InfographicContent } from '../types';
 import { pipelineLogger } from '../utils/logger';
-
-const CHROME_PATH = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+import { config } from '../config';
 
 // Canvas dimensions
 const W = 1080;
 const H = 1920;
-const TOP_RESERVED    = 220;
-const BOTTOM_RESERVED = 340;
+const TOP_RESERVED    = 160;
+const BOTTOM_RESERVED = 260;
 
 export class InfographicRenderer {
 
@@ -110,7 +109,7 @@ export class InfographicRenderer {
 
   /* ── Series tag ── */
   .series-tag {
-    font-size: 14px;
+    font-size: 20px;
     font-weight: 700;
     font-family: Arial, sans-serif;
     color: rgba(255,184,0,0.65);
@@ -122,7 +121,7 @@ export class InfographicRenderer {
 
   /* ── Title ── */
   .title {
-    font-size: 68px;
+    font-size: 80px;
     font-weight: 900;
     color: #fff;
     text-align: center;
@@ -134,7 +133,7 @@ export class InfographicRenderer {
 
   /* ── Accent ── */
   .accent {
-    font-size: 72px;
+    font-size: 86px;
     font-weight: 900;
     font-style: italic;
     color: #FFB800;
@@ -147,7 +146,7 @@ export class InfographicRenderer {
 
   /* ── Subtitle ── */
   .subtitle {
-    font-size: 20px;
+    font-size: 26px;
     font-weight: 400;
     font-family: Arial, sans-serif;
     color: #999;
@@ -168,7 +167,7 @@ export class InfographicRenderer {
     display: grid;
     grid-template-columns: 1fr 1fr;
     grid-auto-rows: 1fr;
-    gap: 10px 18px;
+    gap: 12px 18px;
     flex: 1;
   }
 
@@ -177,22 +176,22 @@ export class InfographicRenderer {
     display: flex;
     background: #0D0D0D;
     border: 1px solid rgba(255,184,0,0.22);
-    border-radius: 4px;
+    border-radius: 6px;
     overflow: hidden;
     box-shadow: 0 0 12px rgba(255,184,0,0.06);
   }
 
   .card-bar {
-    width: 4px;
+    width: 6px;
     background: #FFB800;
     flex-shrink: 0;
   }
 
   .card-inner {
-    padding: 10px 12px 10px 10px;
+    padding: 12px 14px 12px 12px;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 6px;
     min-width: 0;
     flex: 1;
     justify-content: space-between;
@@ -201,25 +200,25 @@ export class InfographicRenderer {
   .card-top {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
   }
 
   .badge {
-    width: 26px;
-    height: 26px;
-    border: 1.5px solid #FFB800;
+    width: 44px;
+    height: 44px;
+    border: 2px solid #FFB800;
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 11px;
+    font-size: 18px;
     font-weight: 900;
     color: #FFB800;
     flex-shrink: 0;
   }
 
   .card-title {
-    font-size: 15px;
+    font-size: 24px;
     font-weight: 900;
     color: #FFB800;
     text-transform: uppercase;
@@ -229,11 +228,11 @@ export class InfographicRenderer {
   }
 
   .card-desc {
-    font-size: 12px;
+    font-size: 18px;
     font-weight: 400;
     font-family: Arial, sans-serif;
     color: #CCC;
-    line-height: 1.35;
+    line-height: 1.4;
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
@@ -245,7 +244,7 @@ export class InfographicRenderer {
     padding: 2px 8px;
     border: 1px solid #FF8A00;
     border-radius: 3px;
-    font-size: 10px;
+    font-size: 14px;
     font-weight: 700;
     font-family: Arial, sans-serif;
     color: #FF8A00;
@@ -259,12 +258,12 @@ export class InfographicRenderer {
     border: 1px solid rgba(255,184,0,0.28);
     border-radius: 4px;
     background: #0D0D0D;
-    padding: 14px 20px;
+    padding: 18px 24px;
     margin-top: 12px;
   }
 
   .summary-header {
-    font-size: 13px;
+    font-size: 20px;
     font-weight: 700;
     font-family: Arial, sans-serif;
     color: #FFB800;
@@ -286,7 +285,7 @@ export class InfographicRenderer {
   }
 
   .col-label {
-    font-size: 10px;
+    font-size: 16px;
     font-weight: 700;
     font-family: Arial, sans-serif;
     color: #FF8A00;
@@ -295,7 +294,7 @@ export class InfographicRenderer {
   }
 
   .col-text {
-    font-size: 13px;
+    font-size: 18px;
     font-family: Arial, sans-serif;
     font-weight: 400;
     color: #CCC;
@@ -325,7 +324,7 @@ export class InfographicRenderer {
     const html = this.buildHTML(content, transparentBg);
 
     const browser = await puppeteer.launch({
-      executablePath: CHROME_PATH,
+      executablePath: config.binaries.chrome,
       headless: true,
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
              '--force-color-profile=srgb'],

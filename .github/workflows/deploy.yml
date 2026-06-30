@@ -1,0 +1,51 @@
+name: CI/CD Deploy to Oracle VM
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Copy files to VM via SCP
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_KEY }}
+          port: 22
+          source: "dist/**,assets/**,Dockerfile,docker-compose.yml,.dockerignore,package.json,package-lock.json,tsconfig.json,eng.traineddata"
+          target: "~/shorts-automation"
+          overwrite: true
+
+      - name: Restart Docker Containers on VM
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_KEY }}
+          port: 22
+          script: |
+            cd ~/shorts-automation
+            # Ensure runtime directories exist
+            mkdir -p temp output logs
+            # Rebuild and restart the container services
+            docker compose up --build -d

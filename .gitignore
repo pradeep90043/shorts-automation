@@ -6,3 +6,11 @@ output
 *.log
 .env
 .DS_Store
+cookies.txt
+www.instagram.com_cookies.txt
+*.txt
+*.PNG
+*.png
+website-audit-reel/
+.agents/
+skills-lock.json

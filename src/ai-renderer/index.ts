@@ -63,17 +63,15 @@ export class AIRenderer {
   public async generateBrandedFrame(
     imagePath: string,
     outputPath: string,
-    provider: 'claude' | 'antigravity' | 'gemini' = 'claude',
+    provider: 'claude' | 'antigravity' | 'gemini' | 'freellmapi' = 'claude',
     ocrText?: string
   ): Promise<string> {
     pipelineLogger.info(`AI Renderer starting (provider: ${provider})`, 'AIRenderer');
 
-    if (provider === 'gemini') {
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) throw new Error('GEMINI_API_KEY is not set in environment');
-      const generator = new PollinationsImageGenerator(apiKey);
+    if (provider === 'gemini' || provider === 'freellmapi') {
+      const generator = new PollinationsImageGenerator();
       await generator.generate(imagePath, outputPath, ocrText);
-      pipelineLogger.checkpoint('Pollinations image generated', true, `Output: ${outputPath}`);
+      pipelineLogger.checkpoint('AI-generated image background created', true, `Output: ${outputPath}`);
       return outputPath;
     }
 

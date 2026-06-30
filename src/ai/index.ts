@@ -1,11 +1,21 @@
 import { exec } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { GoogleGenAI } from '@google/genai';
 import { IAiService, VideoMetadata } from '../types';
 import { config } from '../config';
 import { pipelineLogger } from '../utils/logger';
+import { FreeLlmApiClient } from './freellmapi';
 
 export class AiService implements IAiService {
+  private ai: GoogleGenAI | null = null;
+
+  constructor() {
+    if (config.ai.geminiApiKey) {
+      this.ai = new GoogleGenAI({ apiKey: config.ai.geminiApiKey });
+    }
+  }
+
   public async generateMetadata(ocrText: string, imageContext: string): Promise<VideoMetadata> {
     pipelineLogger.info('Generating video metadata using AI...', 'AIService');
 
@@ -44,6 +54,73 @@ Output JSON format:
     if (provider === 'mock') {
       pipelineLogger.info('AI Provider is set to mock, using rule-based fallback generator.', 'AIService');
       return this.generateFallbackMetadata(cleanOcr);
+    }
+
+    if (provider === 'freellmapi') {
+      pipelineLogger.info('Using FreeLLMAPI to generate metadata...', 'AIService');
+      if (!config.ai.freellmapiKey) {
+        pipelineLogger.warn('FreeLLMAPI API key is missing. Falling back to rule-based generation.', 'AIService');
+        return this.generateFallbackMetadata(cleanOcr);
+      }
+
+      try {
+        const client = new FreeLlmApiClient();
+        const stdout = await client.generateText(prompt);
+
+        let jsonText = stdout.trim();
+        if (jsonText.includes('```')) {
+          const matches = jsonText.match(/```(?:json)?([\s\S]*?)```/);
+          if (matches && matches[1]) {
+            jsonText = matches[1].trim();
+          }
+        }
+
+        const parsed: VideoMetadata = JSON.parse(jsonText);
+        if (!parsed.title || !parsed.description || !Array.isArray(parsed.tags)) {
+          throw new Error('FreeLLMAPI returned JSON, but structure is missing required fields.');
+        }
+
+        pipelineLogger.checkpoint('FreeLLMAPI metadata generated', true, `Title: "${parsed.title}"`);
+        return parsed;
+      } catch (err) {
+        pipelineLogger.warn(`FreeLLMAPI API metadata generation failed: ${err instanceof Error ? err.message : err}. Falling back to rule-based generation.`, 'AIService');
+        return this.generateFallbackMetadata(cleanOcr);
+      }
+    }
+
+    if (provider === 'gemini') {
+      pipelineLogger.info('Using Gemini API to generate metadata...', 'AIService');
+      if (!this.ai) {
+        pipelineLogger.warn('Gemini API key is missing. Falling back to rule-based generation.', 'AIService');
+        return this.generateFallbackMetadata(cleanOcr);
+      }
+
+      try {
+        const response = await this.ai.models.generateContent({
+          model: 'gemini-2.0-flash',
+          contents: prompt,
+        });
+
+        const stdout = response.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+        let jsonText = stdout.trim();
+        if (jsonText.includes('```')) {
+          const matches = jsonText.match(/```(?:json)?([\s\S]*?)```/);
+          if (matches && matches[1]) {
+            jsonText = matches[1].trim();
+          }
+        }
+
+        const parsed: VideoMetadata = JSON.parse(jsonText);
+        if (!parsed.title || !parsed.description || !Array.isArray(parsed.tags)) {
+          throw new Error('Gemini returned JSON, but structure is missing required fields.');
+        }
+
+        pipelineLogger.checkpoint('Gemini metadata generated', true, `Title: "${parsed.title}"`);
+        return parsed;
+      } catch (err) {
+        pipelineLogger.warn(`Gemini API metadata generation failed: ${err instanceof Error ? err.message : err}. Falling back to rule-based generation.`, 'AIService');
+        return this.generateFallbackMetadata(cleanOcr);
+      }
     }
 
     const tempPromptPath = path.join(config.paths.tempDir, `prompt-${Date.now()}.txt`);

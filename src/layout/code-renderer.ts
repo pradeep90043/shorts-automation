@@ -102,14 +102,14 @@ export class CodeRenderer {
     const HEADER_H    = 74;
     const FOOTER_PAD  = 28;
 
-    // Adaptive line height: fill ~72% of the code zone (1360px).
-    // Target card body height ≈ 877px; line height clamped 38–90px.
-    const TARGET_BODY_H = Math.round(1360 * 0.72) - HEADER_H - FOOTER_PAD; // ~877px
+    // Adaptive line height: fill ~75% of the expanded code zone (1500px).
+    // Target card body height ≈ 1048px; line height clamped 48–110px.
+    const TARGET_BODY_H = Math.round(1500 * 0.75) - HEADER_H - FOOTER_PAD; // ~1048px
     const rawLineH = Math.round(TARGET_BODY_H / lines.length);
-    const LINE_H = Math.min(90, Math.max(38, rawLineH));
+    const LINE_H = Math.min(110, Math.max(48, rawLineH));
 
-    // Font size: 20–30px (keeps code readable even with large leading for short snippets)
-    const FONT_SIZE = Math.min(30, Math.max(20, Math.round(LINE_H * 0.52)));
+    // Font size: 24–40px (keeps code highly readable and bold)
+    const FONT_SIZE = Math.min(40, Math.max(24, Math.round(LINE_H * 0.55)));
 
     const LINE_NO_W = 58;
     const CODE_X    = LINE_NO_W + 16;
@@ -117,20 +117,20 @@ export class CodeRenderer {
     const cardHeight = HEADER_H + lines.length * LINE_H + FOOTER_PAD;
 
     const colors = {
-      bg:       '#0D1117',
-      headerBg: '#090D14',
-      border:   '#1C2333',
-      keyword:  '#FF2D78',
-      string:   '#FFD166',
-      comment:  '#5C6B8A',
-      number:   '#C084FC',
-      symbol:   '#22D3EE',
-      text:     '#E6EDF3',
-      lineNo:   '#3D4F63',
+      bg:       '#0D0D0D',
+      headerBg: '#070707',
+      border:   '#221E14',
+      keyword:  '#FFB800',
+      string:   '#FFFFFF',
+      comment:  '#7C7C7C',
+      number:   '#FF8A00',
+      symbol:   '#FFD700',
+      text:     '#E5E5E5',
+      lineNo:   '#555555',
       dot1:     '#FF5F56',
       dot2:     '#FFBD2E',
       dot3:     '#27C93F',
-      badge:    '#1A2333',
+      badge:    '#141414',
     };
 
     const lang      = isJava ? 'Java' : 'JavaScript';
@@ -201,7 +201,7 @@ export class CodeRenderer {
   <text x="${CARD_WIDTH - 88}" y="${HEADER_H / 2 + 5}" fill="${langColor}" font-family="'Courier New', Courier, monospace" font-size="13" font-weight="bold">${lang}</text>
 
   <!-- Filename -->
-  <text x="${CARD_WIDTH / 2}" y="${HEADER_H / 2 + 6}" fill="#6B7A94" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="14" font-weight="600" text-anchor="middle" letter-spacing="0.5">${filename}</text>
+  <text x="${CARD_WIDTH / 2}" y="${HEADER_H / 2 + 6}" fill="#8A8A8A" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="14" font-weight="600" text-anchor="middle" letter-spacing="0.5">${filename}</text>
 
   <!-- Line number column background -->
   <rect x="0" y="${HEADER_H}" width="${LINE_NO_W + 6}" height="${lines.length * LINE_H + FOOTER_PAD}" fill="rgba(0,0,0,0.2)"/>

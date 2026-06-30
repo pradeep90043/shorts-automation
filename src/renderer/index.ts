@@ -1,6 +1,12 @@
 import { exec } from 'child_process';
-import { IVideoRenderer, RenderOptions } from '../types';
+import path from 'path';
+import fs from 'fs';
+import { IVideoRenderer, RenderOptions, PipelineContext } from '../types';
 import { pipelineLogger } from '../utils/logger';
+import { config } from '../config';
+import { ImageAnalyzer } from '../image-analysis';
+import { BrandingDetector } from '../branding-detector';
+import { OcrService } from '../ocr';
 
 export class VideoRenderer implements IVideoRenderer {
   public async renderImageToVideo(
@@ -80,7 +86,7 @@ export class VideoRenderer implements IVideoRenderer {
       filterString = '';
     }
 
-    const cmd = `ffmpeg -y -loop 1 -i "${imagePath}" -t ${duration} ${filterString} -c:v libx264 -pix_fmt yuv420p -r ${fps} "${outputPath}"`;
+    const cmd = `ffmpeg -y -loop 1 -i "${imagePath}" -t ${duration} ${filterString} -c:v libx264 -preset ultrafast -pix_fmt yuv420p -r ${fps} "${outputPath}"`;
 
     pipelineLogger.info(`Executing FFmpeg command: ${cmd}`, 'VideoRenderer');
 
@@ -91,6 +97,205 @@ export class VideoRenderer implements IVideoRenderer {
           reject(error);
         } else {
           pipelineLogger.checkpoint('Video rendered', true, `Output saved to ${outputPath}`);
+          resolve(outputPath);
+        }
+      });
+    });
+  }
+
+  public async processVideo(
+    videoPath: string,
+    outputPath: string,
+    context: PipelineContext,
+    options: RenderOptions
+  ): Promise<string> {
+    const framePath = context.originalImagePath;
+
+    pipelineLogger.info(`Processing video source: ${videoPath}`, 'VideoRenderer');
+
+    // 1. Extract a frame from the video at 1.0 seconds (for analysis) if it doesn't exist
+    if (!fs.existsSync(framePath)) {
+      const extractCmd = `ffmpeg -y -ss 00:00:01 -i "${videoPath}" -vframes 1 -q:v 2 "${framePath}"`;
+      await new Promise<void>((resolve, reject) => {
+        exec(extractCmd, (err, _stdout, stderr) => {
+          if (err) {
+            pipelineLogger.warn(`Failed to extract frame at 1s, attempting 0s: ${stderr}`, 'VideoRenderer');
+            // Fallback to 0s
+            const fallbackCmd = `ffmpeg -y -ss 00:00:00 -i "${videoPath}" -vframes 1 -q:v 2 "${framePath}"`;
+            exec(fallbackCmd, (err2, _stdout2, stderr2) => {
+              if (err2) {
+                reject(new Error(`Failed to extract video frame: ${stderr2}`));
+              } else {
+                resolve();
+              }
+            });
+          } else {
+            resolve();
+          }
+        });
+      });
+    }
+
+    // 2. Analyze the frame
+    if (!context.analysis) {
+      const analyzer = new ImageAnalyzer();
+      context.analysis = await analyzer.analyze(framePath);
+    }
+    const analysis = context.analysis;
+
+    // 3. Run Branding Detection and OCR on the frame
+    if (!context.brandingDetection) {
+      const detector = new BrandingDetector();
+      context.brandingDetection = await detector.detect(framePath, analysis);
+    }
+    const detection = context.brandingDetection;
+
+    if (!context.ocr) {
+      const ocrService = new OcrService();
+      context.ocr = await ocrService.extractText(framePath);
+    }
+
+    // 4. Calculate cropping dynamically based on AI detected zones to crop out edge watermarks/profiles completely
+    const zones = [...detection.zones];
+    
+    let hCropped = 0;
+    let wCropped = 0;
+    let xCropped = 0;
+    let yCropped = 0;
+
+    let cropTop = 0;
+    let cropBottom = 0;
+
+    // Check system status bar / header / footer edge zones first
+    const edgeTopZones = zones.filter(z => !z.id.startsWith('ai-branding-') && z.boundingBox.y === 0 && z.boundingBox.height <= 0.12);
+    const edgeBottomZones = zones.filter(z => !z.id.startsWith('ai-branding-') && z.boundingBox.y >= 0.88 && z.boundingBox.height <= 0.12);
+    
+    if (edgeTopZones.length > 0) {
+      cropTop = Math.max(...edgeTopZones.map(z => z.boundingBox.height));
+    }
+    if (edgeBottomZones.length > 0) {
+      cropBottom = Math.max(...edgeBottomZones.map(z => z.boundingBox.height));
+    }
+
+    // Process AI-detected branding zones: instead of over-cropping the video, 
+    // we keep the crops minimal (status bars only) and blur the watermark/handle zones.
+    // So we do not expand cropTop/cropBottom based on aiZones here.
+
+    // For Instagram Reels, enforce a minimum crop of 8% to clear status bars even if AI missed them
+    if (context.instagramSource) {
+      cropTop = Math.max(cropTop, 0.08);
+      cropBottom = Math.max(cropBottom, 0.08);
+    }
+
+    // Limit crop to prevent over-cropping (max 35% from top or bottom)
+    cropTop = Math.min(cropTop, 0.35);
+    cropBottom = Math.min(cropBottom, 0.35);
+
+    // To prevent distortion, we crop a 9:16 region centered on the width and scale it to 1080x1920
+    hCropped = Math.round(analysis.height * (1 - cropTop - cropBottom));
+    if (hCropped % 2 !== 0) hCropped -= 1;
+
+    wCropped = Math.round(hCropped * 9 / 16);
+    if (wCropped % 2 !== 0) wCropped -= 1;
+
+    xCropped = Math.round((analysis.width - wCropped) / 2);
+    if (xCropped % 2 !== 0) xCropped -= 1;
+    if (xCropped < 0) xCropped = 0;
+
+    yCropped = Math.round(analysis.height * cropTop);
+    if (yCropped % 2 !== 0) yCropped -= 1;
+
+    pipelineLogger.info(
+      `Dynamic AI Video cropping: original=${analysis.width}x${analysis.height}, cropBounds=[w=${wCropped}, h=${hCropped}, x=${xCropped}, y=${yCropped}], cropTop=${cropTop.toFixed(3)}, cropBottom=${cropBottom.toFixed(3)}`,
+      'VideoRenderer'
+    );
+
+    const blurRegions: Array<{ x: number; y: number; width: number; height: number }> = [];
+
+    // Process other branding zones to blur
+    const middleWatermarks = zones.filter(z => {
+      if (!z.id.startsWith('ai-branding-')) return false;
+      if (z.type === 'main_post_content') return false;
+      const box = z.boundingBox;
+
+      const xRel = box.x * analysis.width;
+      const yRel = box.y * analysis.height;
+      const wRel = box.width * analysis.width;
+      const hRel = box.height * analysis.height;
+
+      // Check if it's inside the cropped region
+      const insideX = (xRel + wRel) > xCropped && xRel < (xCropped + wCropped);
+      const insideY = (yRel + hRel) > yCropped && yRel < (yCropped + hCropped);
+
+      return insideX && insideY;
+    });
+
+    for (const z of middleWatermarks) {
+      const origX = z.boundingBox.x * analysis.width;
+      const origY = z.boundingBox.y * analysis.height;
+      const origW = z.boundingBox.width * analysis.width;
+      const origH = z.boundingBox.height * analysis.height;
+
+      const cropX = origX - xCropped;
+      const cropY = origY - yCropped;
+
+      const safeX = Math.max(0, Math.min(wCropped - 10, cropX));
+      const safeY = Math.max(0, Math.min(hCropped - 10, cropY));
+      const safeW = Math.max(10, Math.min(wCropped - safeX, origW));
+      const safeH = Math.max(10, Math.min(hCropped - safeY, origH));
+
+      blurRegions.push({ x: safeX, y: safeY, width: safeW, height: safeH });
+    }
+
+    pipelineLogger.info(`Total blur regions prepared: ${blurRegions.length}`, 'VideoRenderer');
+
+    // 6. Build FFmpeg filter complex for cropping, scaling, and blurring regions
+    let filterChain = `[0:v]crop=${wCropped}:${hCropped}:${xCropped}:${yCropped},scale=1080:1920[scaled]`;
+    
+    let currentLabel = 'scaled';
+    for (let i = 0; i < blurRegions.length; i++) {
+      const region = blurRegions[i];
+      
+      const X_px = Math.round(region.x * (1080 / wCropped));
+      const Y_px = Math.round(region.y * (1920 / hCropped));
+      const W_px = Math.round(region.width * (1080 / wCropped));
+      const H_px = Math.round(region.height * (1920 / hCropped));
+
+      const safeX = Math.max(0, Math.min(1080 - W_px, X_px));
+      const safeY = Math.max(0, Math.min(1920 - H_px, Y_px));
+      const safeW = Math.max(10, Math.min(1080, W_px));
+      const safeH = Math.max(10, Math.min(1920, H_px));
+      
+      // Calculate a safe blur radius to prevent FFmpeg failures (radius must not exceed min(safeW, safeH) / 4)
+      const safeRadius = Math.max(1, Math.min(15, Math.floor(safeW / 4), Math.floor(safeH / 4)));
+      
+      const nextLabel = `blur_${i}`;
+      filterChain += `; [${currentLabel}]split[v1_${i}][v2_${i}]; [v2_${i}]crop=${safeW}:${safeH}:${safeX}:${safeY},boxblur=luma_radius=${safeRadius}:luma_power=3[blurred_${i}]; [v1_${i}][blurred_${i}]overlay=${safeX}:${safeY}[${nextLabel}]`;
+      currentLabel = nextLabel;
+    }
+
+    // 7. Define watermark path
+    const watermarkPath = path.join(config.paths.assetsDir, 'watermark.png');
+    const hasWatermark = fs.existsSync(watermarkPath);
+
+    // 8. Execute FFmpeg
+    const fps = options.fps;
+    let finalCmd = '';
+    if (hasWatermark) {
+      finalCmd = `ffmpeg -y -i "${videoPath}" -i "${watermarkPath}" -filter_complex "${filterChain}; [${currentLabel}][1:v]overlay=(W-w)/2:(H-h)/2[out]" -map "[out]" -map 0:a? -c:v libx264 -preset ultrafast -pix_fmt yuv420p -r ${fps} -c:a copy "${outputPath}"`;
+    } else {
+      finalCmd = `ffmpeg -y -i "${videoPath}" -filter_complex "${filterChain}" -map "[${currentLabel}]" -map 0:a? -c:v libx264 -preset ultrafast -pix_fmt yuv420p -r ${fps} -c:a copy "${outputPath}"`;
+    }
+    
+    pipelineLogger.info(`Executing FFmpeg video processing command: ${finalCmd}`, 'VideoRenderer');
+
+    return new Promise<string>((resolve, reject) => {
+      exec(finalCmd, { maxBuffer: 20 * 1024 * 1024 }, (error, _stdout, stderr) => {
+        if (error) {
+          pipelineLogger.error(`FFmpeg video processing failed: ${stderr}`, error, 'VideoRenderer');
+          reject(error);
+        } else {
+          pipelineLogger.checkpoint('Video processing complete', true, `Output saved to ${outputPath}`);
           resolve(outputPath);
         }
       });

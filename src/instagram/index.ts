@@ -3,13 +3,18 @@ import fs from 'fs';
 import path from 'path';
 import puppeteer from 'puppeteer-core';
 import { pipelineLogger } from '../utils/logger';
+import { config } from '../config';
 
-const CHROME_PATH = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const CHROME_PATH = config.binaries.chrome;
+const YTDLP   = config.binaries.ytdlp;
+const FFMPEG  = config.binaries.ffmpeg;
+const PYTHON3 = config.binaries.python3;
 
-const YTDLP   = '/opt/homebrew/bin/yt-dlp';
-const FFMPEG  = '/opt/homebrew/bin/ffmpeg';
-const PYTHON3 = '/opt/anaconda3/bin/python3';
-const COOKIES_FILE = '/tmp/instagram_cookies.txt';
+// Resolve manual cookies.txt in the project root if it exists, otherwise fall back to temp file
+const PROJECT_COOKIES_PATH = path.resolve(__dirname, '../../cookies.txt');
+const COOKIES_FILE = fs.existsSync(PROJECT_COOKIES_PATH)
+  ? PROJECT_COOKIES_PATH
+  : '/tmp/instagram_cookies.txt';
 
 // Match all Instagram content URL formats:
 // /reel/, /p/, /tv/, /stories/, share links with ?igsh=...
@@ -31,6 +36,12 @@ export function extractInstagramUrl(text: string): string | null {
  * them properly on macOS, so we export via Python first.
  */
 async function exportCookies(): Promise<void> {
+  // If a manual cookies.txt is provided in the project root, don't run export
+  if (fs.existsSync(PROJECT_COOKIES_PATH)) {
+    pipelineLogger.info('Using manual cookies.txt from project root', 'Instagram');
+    return;
+  }
+
   const script = `
 import browser_cookie3, time, sys
 try:
@@ -51,13 +62,21 @@ except Exception as e:
     print(f"Cookie export failed: {e}", file=sys.stderr)
     sys.exit(1)
 `;
-  await runCommand(PYTHON3, ['-c', script], 'cookie-export');
-  pipelineLogger.info('Instagram cookies exported from Chrome', 'Instagram');
+  try {
+    await runCommand(PYTHON3, ['-c', script], 'cookie-export');
+    pipelineLogger.info('Instagram cookies exported from Chrome', 'Instagram');
+  } catch (err) {
+    pipelineLogger.warn(
+      `Failed to export Instagram cookies from browser: ${err instanceof Error ? err.message : err}. Proceeding without fresh cookies.`,
+      'Instagram'
+    );
+  }
 }
 
 export interface DownloadReelResult {
   framePath: string;
   instagramSourceType: 'image' | 'image_with_music' | 'video';
+  videoPath?: string;
 }
 
 /**
@@ -111,8 +130,12 @@ export async function downloadReelFrame(
 
       if (fs.existsSync(framePath)) {
         pipelineLogger.checkpoint(`Instagram frame extracted via yt-dlp (${instagramSourceType})`, true, framePath);
-        try { fs.unlinkSync(videoPath); } catch {}
-        return { framePath, instagramSourceType };
+        if (instagramSourceType === 'video') {
+          return { framePath, instagramSourceType, videoPath };
+        } else {
+          try { fs.unlinkSync(videoPath); } catch {}
+          return { framePath, instagramSourceType };
+        }
       }
     }
   } catch (err) {
@@ -163,15 +186,25 @@ async function screenshotInstagramPost(url: string, outputPath: string): Promise
       '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
     );
 
-    await page.goto(embedUrl, { waitUntil: 'networkidle2', timeout: 30_000 });
+    await page.goto(embedUrl, { waitUntil: 'domcontentloaded', timeout: 20_000 });
 
     // Wait for the embedded post image or video to load
     await page.waitForSelector('img, video', { timeout: 15_000 }).catch(() => {});
     await new Promise(r => setTimeout(r, 1500));
 
-    // Crop to just the content — remove the Instagram embed chrome (header/footer)
-    // The embed widget typically has a white border; screenshot the full page
-    await page.screenshot({ path: outputPath as `${string}.jpg`, type: 'jpeg', quality: 92, fullPage: true });
+    // Crop to just the content — try to screenshot the .EmbedFrame element directly
+    // to remove the Instagram embed chrome (header/footer)
+    const embedFrameSelector = '.EmbedFrame';
+    await page.waitForSelector(embedFrameSelector, { timeout: 5000 }).catch(() => {});
+    const embedFrame = await page.$(embedFrameSelector);
+
+    if (embedFrame) {
+      pipelineLogger.info('Cropping to .EmbedFrame element directly in Puppeteer', 'Instagram');
+      await embedFrame.screenshot({ path: outputPath as `${string}.jpg`, type: 'jpeg', quality: 92 });
+    } else {
+      pipelineLogger.warn('Could not find .EmbedFrame selector, falling back to fullPage screenshot', 'Instagram');
+      await page.screenshot({ path: outputPath as `${string}.jpg`, type: 'jpeg', quality: 92, fullPage: true });
+    }
 
     pipelineLogger.checkpoint('Instagram post screenshotted via embed URL', true, outputPath);
   } finally {
@@ -180,48 +213,57 @@ async function screenshotInstagramPost(url: string, outputPath: string): Promise
 }
 
 /**
- * Decodes the first 5 seconds of the video and compares the MD5 checksums of the decoded frames.
- * If all selected frame checksums are identical, it is a static image with background music.
+ * Decodes the first 5 seconds of the video, downscales to 8x8 grayscale,
+ * and calculates the average pixel difference between consecutive frames.
+ * If the average pixel change is below a threshold (e.g. 0.15 gray levels),
+ * it is considered a static image with background music.
  */
 async function checkIfVideoIsStatic(videoPath: string): Promise<boolean> {
   try {
-    // Run ffmpeg with framemd5 muxer for the first 5 seconds, ignoring audio.
-    // Selecting frames every 30 frames (approx. 1s for 30fps video).
-    const stdout = await runCommandWithOutput(FFMPEG, [
+    // We downscale to 8x8 and force gray color space at 1 frame per second.
+    // This allows us to handle compression noise, progress bars, and minor artifacts.
+    const buffer = await runCommandWithBufferOutput(FFMPEG, [
       '-t', '5',
       '-i', videoPath,
       '-an',
-      '-vf', "select='not(mod(n,30))'",
-      '-f', 'framemd5',
+      '-vf', "fps=fps=1,scale=8:8,format=gray",
+      '-f', 'rawvideo',
       '-'
     ], 'check-static-video');
 
-    // Parse the output to find frame hashes (lines starting with '0, ')
-    const lines = stdout.split('\n');
-    const hashes: string[] = [];
-
-    for (const line of lines) {
-      if (line.startsWith('0,')) {
-        const parts = line.split(',');
-        if (parts.length > 0) {
-          const hash = parts[parts.length - 1].trim();
-          if (hash && hash.length === 32) {
-            hashes.push(hash);
-          }
-        }
-      }
-    }
-
-    if (hashes.length <= 1) {
-      // 0 or 1 frames means we can't detect change, assume static or single frame
+    const numFrames = Math.floor(buffer.length / 64);
+    if (numFrames <= 1) {
+      // Not enough frames to determine change (assume static)
       return true;
     }
 
-    // Check if all hashes are identical
-    const firstHash = hashes[0];
-    const allIdentical = hashes.every(h => h === firstHash);
+    const frames: Buffer[] = [];
+    for (let i = 0; i < numFrames; i++) {
+      frames.push(buffer.subarray(i * 64, (i + 1) * 64));
+    }
 
-    return allIdentical;
+    let totalDiff = 0;
+    let comparisons = 0;
+
+    for (let i = 1; i < frames.length; i++) {
+      const f1 = frames[i];
+      const f0 = frames[i - 1];
+      let frameDiff = 0;
+      for (let j = 0; j < 64; j++) {
+        frameDiff += Math.abs(f1[j] - f0[j]);
+      }
+      totalDiff += (frameDiff / 64);
+      comparisons++;
+    }
+
+    const avgDiffPerPixel = comparisons > 0 ? totalDiff / comparisons : 0;
+    pipelineLogger.info(`Average frame difference score: ${avgDiffPerPixel.toFixed(3)}`, 'Instagram');
+
+    // Threshold of 0.15 gray levels difference per pixel on average.
+    // Static reels (image + music) have practically 0 difference.
+    // Zooming edits have >0.9 difference, real videos have even higher.
+    const isStatic = avgDiffPerPixel < 0.15;
+    return isStatic;
   } catch (err) {
     pipelineLogger.warn(`Failed to check if video is static: ${err instanceof Error ? err.message : err}. Assuming dynamic video.`, 'Instagram');
     return false;
@@ -247,18 +289,18 @@ function runCommand(bin: string, args: string[], label: string): Promise<void> {
   });
 }
 
-function runCommandWithOutput(bin: string, args: string[], label: string): Promise<string> {
+function runCommandWithBufferOutput(bin: string, args: string[], label: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
-    let stdout = '';
+    const chunks: Buffer[] = [];
     let stderr = '';
-    child.stdout?.on('data', (d: Buffer) => { stdout += d.toString(); });
+    child.stdout?.on('data', (chunk: Buffer) => { chunks.push(chunk); });
     child.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
 
     child.on('close', (code) => {
       if (code === 0) {
-        resolve(stdout);
+        resolve(Buffer.concat(chunks));
       } else {
         reject(new Error(`${label} failed (exit ${code}): ${stderr.slice(-400)}`));
       }

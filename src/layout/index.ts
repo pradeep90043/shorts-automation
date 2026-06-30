@@ -7,10 +7,10 @@ import { config } from '../config';
 import { pipelineLogger } from '../utils/logger';
 
 // Zone constants — must match branding/index.ts exactly
-export const TOP_RESERVED    = 220;   // Logo zone height
-export const BOTTOM_RESERVED = 340;   // Footer zone height
+export const TOP_RESERVED    = 160;   // Logo zone height
+export const BOTTOM_RESERVED = 260;   // Footer zone height
 export const CODE_ZONE_Y     = TOP_RESERVED;
-export const CODE_ZONE_H     = 1920 - TOP_RESERVED - BOTTOM_RESERVED; // 1360px
+export const CODE_ZONE_H     = 1920 - TOP_RESERVED - BOTTOM_RESERVED; // 1500px
 
 export class LayoutGenerator implements ILayoutGenerator {
   private codeRenderer: CodeRenderer;
@@ -115,9 +115,9 @@ export class LayoutGenerator implements ILayoutGenerator {
     }
 
     // ── 2. Scale the code card / screenshot to fit the CODE ZONE ─────────────
-    // Available area for the card (with inner padding)
-    const maxCardW = CANVAS_W - 40;      // 1040px — 20px margin each side
-    const maxCardH = CODE_ZONE_H - 40;   // 1320px — 20px padding top/bottom
+    // Available area for the card (with compact 10px margin/padding for maximum size/readability)
+    const maxCardW = CANVAS_W - 20;      // 1060px — 10px margin each side
+    const maxCardH = CODE_ZONE_H - 20;   // 1480px — 10px padding top/bottom
 
     let scaledW = maxCardW;
     let scaledH = Math.round(scaledW / workingAnalysis.aspectRatio);
@@ -140,40 +140,20 @@ export class LayoutGenerator implements ILayoutGenerator {
     // ── 3. Build atmospheric SVG background ──────────────────────────────────
     const bgSvg = `<svg width="${CANVAS_W}" height="${CANVAS_H}" viewBox="0 0 ${CANVAS_W} ${CANVAS_H}" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <!-- Base dark gradient -->
+    <!-- Background: solid black for clean premium look -->
     <linearGradient id="bgGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%"   stop-color="#080C14"/>
-      <stop offset="45%"  stop-color="#0A0F1C"/>
-      <stop offset="100%" stop-color="#060A12"/>
+      <stop offset="0%"   stop-color="#000000"/>
+      <stop offset="100%" stop-color="#050505"/>
     </linearGradient>
 
-    <!-- Atmospheric glow behind code zone -->
-    <radialGradient id="codeGlow" cx="50%" cy="50%" r="55%">
-      <stop offset="0%"   stop-color="#1A0A50" stop-opacity="0.45"/>
-      <stop offset="60%"  stop-color="#0A1A3A" stop-opacity="0.2"/>
-      <stop offset="100%" stop-color="#080C14" stop-opacity="0"/>
-    </radialGradient>
-
-    <!-- Top purple accent glow -->
-    <radialGradient id="topGlow" cx="50%" cy="0%" r="60%">
-      <stop offset="0%"   stop-color="#5500CC" stop-opacity="0.25"/>
-      <stop offset="100%" stop-color="#080C14" stop-opacity="0"/>
-    </radialGradient>
-
-    <!-- Bottom cyan accent glow -->
-    <radialGradient id="botGlow" cx="50%" cy="100%" r="50%">
-      <stop offset="0%"   stop-color="#00C8FF" stop-opacity="0.18"/>
-      <stop offset="100%" stop-color="#080C14" stop-opacity="0"/>
-    </radialGradient>
-
-    <!-- Dot grid pattern -->
-    <pattern id="dots" width="32" height="32" patternUnits="userSpaceOnUse">
-      <circle cx="16" cy="16" r="1" fill="rgba(120,140,220,0.09)"/>
+    <!-- Subtle gold grid pattern -->
+    <pattern id="goldDots" width="48" height="48" patternUnits="userSpaceOnUse">
+      <circle cx="24" cy="24" r="0.75" fill="rgba(255, 215, 0, 0.08)"/>
     </pattern>
 
     <!-- Card glow filter -->
     <filter id="cardGlow" x="-6%" y="-4%" width="112%" height="108%">
-      <feGaussianBlur stdDeviation="14" result="blur"/>
+      <feGaussianBlur stdDeviation="10" result="blur"/>
       <feMerge>
         <feMergeNode in="blur"/>
         <feMergeNode in="SourceGraphic"/>
@@ -182,43 +162,42 @@ export class LayoutGenerator implements ILayoutGenerator {
 
     <!-- Card border gradient -->
     <linearGradient id="cardBorder" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%"   stop-color="#6600EE" stop-opacity="0.85"/>
-      <stop offset="45%"  stop-color="#00E5FF" stop-opacity="0.9"/>
-      <stop offset="100%" stop-color="#FF0066" stop-opacity="0.85"/>
+      <stop offset="0%"   stop-color="#FFD700" stop-opacity="0.95"/>
+      <stop offset="50%"  stop-color="#FFA500" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#FFD700" stop-opacity="0.95"/>
     </linearGradient>
   </defs>
 
-  <!-- ── Base ── -->
+  <!-- ── Base Background ── -->
   <rect width="${CANVAS_W}" height="${CANVAS_H}" fill="url(#bgGrad)"/>
+  <rect width="${CANVAS_W}" height="${CANVAS_H}" fill="url(#goldDots)"/>
 
-  <!-- ── Dot grid ── -->
-  <rect width="${CANVAS_W}" height="${CANVAS_H}" fill="url(#dots)"/>
+  <!-- ── Gold Double Outer Border ── -->
+  <!-- Outer sci-fi cut outline -->
+  <path d="M 60 30 L 1020 30 L 1050 60 L 1050 1860 L 1020 1890 L 60 1890 L 30 1860 L 30 60 Z"
+        fill="none" stroke="#FFD700" stroke-width="2.5" opacity="0.95"/>
+  <!-- Inner offset outline -->
+  <path d="M 65 38 L 1015 38 L 1042 65 L 1042 1855 L 1015 1882 L 65 1882 L 38 1855 L 38 65 Z"
+        fill="none" stroke="#FFD700" stroke-width="1" opacity="0.4"/>
 
-  <!-- ── Atmospheric glows ── -->
-  <rect width="${CANVAS_W}" height="600" fill="url(#topGlow)"/>
-  <rect y="${CODE_ZONE_Y}" width="${CANVAS_W}" height="${CODE_ZONE_H}" fill="url(#codeGlow)"/>
-  <rect y="${CANVAS_H - 600}" width="${CANVAS_W}" height="600" fill="url(#botGlow)"/>
+  <!-- Tech details on corners -->
+  <!-- Top Left Cut Accents -->
+  <line x1="30" y1="90" x2="30" y2="120" stroke="#FFD700" stroke-width="2" opacity="0.6"/>
+  <line x1="90" y1="30" x2="120" y2="30" stroke="#FFD700" stroke-width="2" opacity="0.6"/>
+  
+  <!-- Top Right Cut Accents -->
+  <line x1="1050" y1="90" x2="1050" y2="120" stroke="#FFD700" stroke-width="2" opacity="0.6"/>
+  <line x1="990" y1="30" x2="960" y2="30" stroke="#FFD700" stroke-width="2" opacity="0.6"/>
 
-  <!-- ── Zone separator lines ── -->
-  <line x1="60" y1="${TOP_RESERVED}" x2="${CANVAS_W - 60}" y2="${TOP_RESERVED}"
-        stroke="rgba(100,0,240,0.22)" stroke-width="1"/>
-  <line x1="60" y1="${CANVAS_H - BOTTOM_RESERVED}" x2="${CANVAS_W - 60}" y2="${CANVAS_H - BOTTOM_RESERVED}"
-        stroke="rgba(0,220,255,0.22)" stroke-width="1"/>
+  <!-- Bottom Left Cut Accents -->
+  <line x1="30" y1="1830" x2="30" y2="1800" stroke="#FFD700" stroke-width="2" opacity="0.6"/>
+  <line x1="90" y1="1890" x2="120" y2="1890" stroke="#FFD700" stroke-width="2" opacity="0.6"/>
 
-  <!-- ── Corner bracket top-left ── -->
-  <path d="M 42 ${TOP_RESERVED + 24} L 42 ${TOP_RESERVED + 8} L 66 ${TOP_RESERVED + 8}"
-        fill="none" stroke="#6600EE" stroke-width="2" opacity="0.5"/>
-  <!-- ── Corner bracket top-right ── -->
-  <path d="M ${CANVAS_W - 42} ${TOP_RESERVED + 24} L ${CANVAS_W - 42} ${TOP_RESERVED + 8} L ${CANVAS_W - 66} ${TOP_RESERVED + 8}"
-        fill="none" stroke="#00E5FF" stroke-width="2" opacity="0.5"/>
-  <!-- ── Corner bracket bottom-left ── -->
-  <path d="M 42 ${CANVAS_H - BOTTOM_RESERVED - 24} L 42 ${CANVAS_H - BOTTOM_RESERVED - 8} L 66 ${CANVAS_H - BOTTOM_RESERVED - 8}"
-        fill="none" stroke="#00E5FF" stroke-width="2" opacity="0.5"/>
-  <!-- ── Corner bracket bottom-right ── -->
-  <path d="M ${CANVAS_W - 42} ${CANVAS_H - BOTTOM_RESERVED - 24} L ${CANVAS_W - 42} ${CANVAS_H - BOTTOM_RESERVED - 8} L ${CANVAS_W - 66} ${CANVAS_H - BOTTOM_RESERVED - 8}"
-        fill="none" stroke="#FF0066" stroke-width="2" opacity="0.5"/>
+  <!-- Bottom Right Cut Accents -->
+  <line x1="1050" y1="1830" x2="1050" y2="1800" stroke="#FFD700" stroke-width="2" opacity="0.6"/>
+  <line x1="990" y1="1890" x2="960" y2="1890" stroke="#FFD700" stroke-width="2" opacity="0.6"/>
 
-  <!-- ── Glowing border around code card position ── -->
+  <!-- ── Glowing border around card (code/infographic) ── -->
   <rect x="${cardLeft - 3}" y="${cardTop - 3}"
         width="${scaledW + 6}" height="${scaledH + 6}"
         rx="17" fill="none"
