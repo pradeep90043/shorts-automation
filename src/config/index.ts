@@ -82,7 +82,7 @@ export const config: AppConfig = {
     geminiApiKey: process.env.GEMINI_API_KEY || '',
     freellmapiUrl: process.env.FREELLMAPI_URL || 'http://localhost:3001',
     freellmapiKey: process.env.FREELLMAPI_KEY || '',
-    freellmapiModel: process.env.FREELLMAPI_MODEL || 'gemini-2.0-flash',
+    freellmapiModel: process.env.FREELLMAPI_MODEL || 'auto',
   },
   paths: {
     assetsDir: process.env.ASSETS_DIR 

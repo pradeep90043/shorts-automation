@@ -8,7 +8,7 @@ export class FreeLlmApiClient {
   constructor() {
     this.baseUrl = config.ai.freellmapiUrl.replace(/\/$/, '');
     this.apiKey = config.ai.freellmapiKey;
-    this.model = config.ai.freellmapiModel || 'gemini-2.0-flash';
+    this.model = config.ai.freellmapiModel || 'auto';
   }
 
   public async generateChat(messages: any[]): Promise<string> {
