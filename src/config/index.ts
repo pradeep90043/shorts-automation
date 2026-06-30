@@ -18,7 +18,7 @@ export interface AppConfig {
     channels: YoutubeChannel[];   // one entry per channel
   };
   ai: {
-    provider: 'claude' | 'antigravity' | 'gemini' | 'freellmapi' | 'mock';
+    provider: 'claude' | 'antigravity' | 'freellmapi' | 'mock';
     claudePath: string;
     antigravityPath: string;
     geminiApiKey: string;
@@ -76,7 +76,7 @@ export const config: AppConfig = {
     channels: loadChannels(),
   },
   ai: {
-    provider: (process.env.AI_PROVIDER || 'mock') as 'claude' | 'antigravity' | 'gemini' | 'freellmapi' | 'mock',
+    provider: (process.env.AI_PROVIDER || 'mock') as 'claude' | 'antigravity' | 'freellmapi' | 'mock',
     claudePath: process.env.CLAUDE_CLI_PATH || 'claude',
     antigravityPath: process.env.ANTIGRAVITY_CLI_PATH || 'agy',
     geminiApiKey: process.env.GEMINI_API_KEY || '',

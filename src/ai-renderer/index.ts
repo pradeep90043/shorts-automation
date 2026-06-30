@@ -63,12 +63,12 @@ export class AIRenderer {
   public async generateBrandedFrame(
     imagePath: string,
     outputPath: string,
-    provider: 'claude' | 'antigravity' | 'gemini' | 'freellmapi' = 'claude',
+    provider: 'claude' | 'antigravity' | 'freellmapi' = 'claude',
     ocrText?: string
   ): Promise<string> {
     pipelineLogger.info(`AI Renderer starting (provider: ${provider})`, 'AIRenderer');
 
-    if (provider === 'gemini' || provider === 'freellmapi') {
+    if (provider === 'freellmapi') {
       const generator = new PollinationsImageGenerator();
       await generator.generate(imagePath, outputPath, ocrText);
       pipelineLogger.checkpoint('AI-generated image background created', true, `Output: ${outputPath}`);
