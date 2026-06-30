@@ -1,9 +1,9 @@
-import fs from 'fs';
-import path from 'path';
-import sharp from 'sharp';
-import { exec } from 'child_process';
-import { config } from '../config';
-import { pipelineLogger } from './logger';
+import fs from "fs";
+import path from "path";
+import sharp from "sharp";
+import { exec } from "child_process";
+import { config } from "../config";
+import { pipelineLogger } from "./logger";
 
 export async function ensureAssetsExist(): Promise<void> {
   const assetsDir = config.paths.assetsDir;
@@ -12,18 +12,21 @@ export async function ensureAssetsExist(): Promise<void> {
   const outputDir = config.paths.outputDir;
 
   // Create directories if they do not exist
-  [assetsDir, musicDir, tempDir, outputDir].forEach(dir => {
+  [assetsDir, musicDir, tempDir, outputDir].forEach((dir) => {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
   });
 
-  const logoPath = path.join(assetsDir, 'logo.png');
-  const watermarkPath = path.join(assetsDir, 'watermark.png');
+  const logoPath = path.join(assetsDir, "logo.png");
+  const watermarkPath = path.join(assetsDir, "watermark.png");
 
   // 1. Generate default CodeOrCap logo if missing
   if (!fs.existsSync(logoPath)) {
-    pipelineLogger.info('Logo not found, generating default branding logo...', 'Assets');
+    pipelineLogger.info(
+      "Logo not found, generating default branding logo...",
+      "Assets",
+    );
     try {
       // Create a premium 400x120 SVG banner logo with dark cyber-tech gradient
       const svgLogo = `
@@ -50,18 +53,23 @@ export async function ensureAssetsExist(): Promise<void> {
         </svg>
       `;
 
-      await sharp(Buffer.from(svgLogo))
-        .png()
-        .toFile(logoPath);
-      pipelineLogger.checkpoint('Default logo.png generated');
+      await sharp(Buffer.from(svgLogo)).png().toFile(logoPath);
+      pipelineLogger.checkpoint("Default logo.png generated");
     } catch (err) {
-      pipelineLogger.error('Failed to generate default logo.png', err, 'Assets');
+      pipelineLogger.error(
+        "Failed to generate default logo.png",
+        err,
+        "Assets",
+      );
     }
   }
 
   // 2. Generate default watermark.png if missing
   if (!fs.existsSync(watermarkPath)) {
-    pipelineLogger.info('Watermark not found, generating default watermark...', 'Assets');
+    pipelineLogger.info(
+      "Watermark not found, generating default watermark...",
+      "Assets",
+    );
     try {
       // 500x500 diagonal semi-transparent text watermark
       const svgWatermark = `
@@ -82,51 +90,66 @@ export async function ensureAssetsExist(): Promise<void> {
         </svg>
       `;
 
-      await sharp(Buffer.from(svgWatermark))
-        .png()
-        .toFile(watermarkPath);
-      pipelineLogger.checkpoint('Default watermark.png generated');
+      await sharp(Buffer.from(svgWatermark)).png().toFile(watermarkPath);
+      pipelineLogger.checkpoint("Default watermark.png generated");
     } catch (err) {
-      pipelineLogger.error('Failed to generate default watermark.png', err, 'Assets');
+      pipelineLogger.error(
+        "Failed to generate default watermark.png",
+        err,
+        "Assets",
+      );
     }
   }
 
   // 3. Generate default background audio if music folder is empty
-  const musicFiles = fs.readdirSync(musicDir).filter(f => {
+  const musicFiles = fs.readdirSync(musicDir).filter((f) => {
     const ext = path.extname(f).toLowerCase();
-    return ['.mp3', '.wav', '.m4a', '.aac', '.ogg'].includes(ext);
+    return [".mp3", ".wav", ".m4a", ".aac", ".ogg"].includes(ext);
   });
 
   if (musicFiles.length === 0) {
-    const defaultMusicPath = path.join(musicDir, 'ambient_synth.aac');
-    pipelineLogger.info(`No music tracks found in ${musicDir}. Synthesizing default ambient track via FFmpeg...`, 'Assets');
-    
+    const defaultMusicPath = path.join(musicDir, "ambient_synth.aac");
+    pipelineLogger.info(
+      `No music tracks found in ${musicDir}. Synthesizing default ambient track via FFmpeg...`,
+      "Assets",
+    );
+
     // Command to generate 20 seconds of synth-like wave sound using lavfi filter (sine sweep/beeps with reverb effects)
     // -f lavfi -i "sine=frequency=220:beep_factor=4:duration=20" -af "apulsator=hz=0.25,aecho=0.8:0.88:60:0.4"
     const cmd = `ffmpeg -y -f lavfi -i "sine=frequency=350:duration=20" -af "apulsator=hz=1.5,aecho=0.8:0.88:200:0.4,volume=0.9" -c:a aac -b:a 128k "${defaultMusicPath}"`;
-    
+
     await new Promise<void>((resolve, reject) => {
       exec(cmd, (error, _stdout, stderr) => {
         if (error) {
-          pipelineLogger.error(`Failed to synthesize default music: ${stderr}`, error, 'Assets');
+          pipelineLogger.error(
+            `Failed to synthesize default music: ${stderr}`,
+            error,
+            "Assets",
+          );
           // If FFmpeg synth fails, create a silent track as absolute fallback
           const silentCmd = `ffmpeg -y -f lavfi -i "anullsrc=r=44100:cl=stereo" -t 20 -c:a aac -b:a 64k "${defaultMusicPath}"`;
           exec(silentCmd, (silentError, _, silentStderr) => {
             if (silentError) {
-              pipelineLogger.error(`Failed to create silent fallback audio: ${silentStderr}`, silentError, 'Assets');
+              pipelineLogger.error(
+                `Failed to create silent fallback audio: ${silentStderr}`,
+                silentError,
+                "Assets",
+              );
               reject(silentError);
             } else {
-              pipelineLogger.checkpoint('Default silent audio synthesized');
+              pipelineLogger.checkpoint("Default silent audio synthesized");
               resolve();
             }
           });
         } else {
-          pipelineLogger.checkpoint('Default ambient_synth.aac synthesized');
+          pipelineLogger.checkpoint("Default ambient_synth.aac synthesized");
           resolve();
         }
       });
-    }).catch(err => {
-      pipelineLogger.warn(`Audio generation bypassed: ${err.message}. Please place an audio file in '${musicDir}'`);
+    }).catch((err) => {
+      pipelineLogger.warn(
+        `Audio generation bypassed: ${err.message}. Please place an audio file in '${musicDir}'`,
+      );
     });
   }
 }

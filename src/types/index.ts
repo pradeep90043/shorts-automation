@@ -12,7 +12,7 @@ export interface ImageAnalysisResult {
   width: number;
   height: number;
   aspectRatio: number;
-  orientation: 'portrait' | 'landscape' | 'square';
+  orientation: "portrait" | "landscape" | "square";
   hasWhiteMargins: boolean;
   hasBlackMargins: boolean;
   borderColors?: string[];
@@ -20,7 +20,13 @@ export interface ImageAnalysisResult {
 
 export interface BrandingZone {
   id: string;
-  type: 'logo' | 'watermark' | 'handle' | 'profile_name' | 'other' | 'main_post_content';
+  type:
+    | "logo"
+    | "watermark"
+    | "handle"
+    | "profile_name"
+    | "other"
+    | "main_post_content";
   // Bounding box: normalized coordinates [0, 1] relative to image width and height
   boundingBox: {
     x: number; // Top-left X
@@ -39,7 +45,7 @@ export interface BrandingDetectionResult {
 
 export interface BrandingRemovalResult {
   success: boolean;
-  methodUsed: 'crop' | 'inpainting' | 'none';
+  methodUsed: "crop" | "inpainting" | "none";
   outputPath: string;
   preservationReason?: string; // If skipped, explain why
 }
@@ -62,7 +68,7 @@ export interface InfographicItem {
   title: string;
   description: string;
   icon?: string;
-  tag?: string;      // badge label e.g. "Free", "Open Source", "Popular"
+  tag?: string; // badge label e.g. "Free", "Open Source", "Popular"
   platform?: string; // e.g. "Web • macOS • Linux"
 }
 
@@ -71,28 +77,28 @@ export interface InfographicContent {
   titleAccent: string;
   subtitle?: string;
   items: InfographicItem[];
-  tipLeft?: string;   // verdict / best-overall text
-  tipRight?: string;  // pro tip / recommendation text
+  tipLeft?: string; // verdict / best-overall text
+  tipRight?: string; // pro tip / recommendation text
 }
 
 export interface VideoMetadata {
   title: string;
   description: string;
   tags: string[];
-  mood?: 'funny' | 'sad' | 'other';
+  mood?: "funny" | "sad" | "other";
 }
 
 export interface RenderOptions {
   durationSeconds: number;
   fps: number;
-  effect: 'none' | 'fade' | 'zoom' | 'slide';
+  effect: "none" | "fade" | "zoom" | "slide";
 }
 
 export interface PipelineContext {
   id: string; // Unique Generation ID
   tempDir: string;
   telegramMeta: TelegramMetadata;
-  
+
   // Pipeline file paths & results
   originalImagePath: string;
   originalVideoPath?: string;
@@ -108,16 +114,30 @@ export interface PipelineContext {
   musicPath?: string;
   renderedVideoPath?: string;
   finalVideoPath?: string;
-  
+
   // YouTube details
   youtubeUrl?: string;
   youtubeVideoId?: string;
-  
+
   // Processing status
-  status: 'received' | 'analyzing' | 'detecting_branding' | 'removing_branding' | 'ocr' | 'generating_layout' | 'branding' | 'generating_metadata' | 'rendering_video' | 'adding_music' | 'uploading' | 'completed' | 'failed' | 'manual_review';
+  status:
+    | "received"
+    | "analyzing"
+    | "detecting_branding"
+    | "removing_branding"
+    | "ocr"
+    | "generating_layout"
+    | "branding"
+    | "generating_metadata"
+    | "rendering_video"
+    | "adding_music"
+    | "uploading"
+    | "completed"
+    | "failed"
+    | "manual_review";
   error?: string;
   instagramSource?: boolean; // skip branding removal for Instagram-sourced frames
-  instagramSourceType?: 'image' | 'image_with_music' | 'video';
+  instagramSourceType?: "image" | "image_with_music" | "video";
   captionMetadata?: { title: string; description: string }; // user-provided title+description from Telegram caption
   userPrompt?: string; // custom re-generation prompt instruction from the user
 }
@@ -125,13 +145,17 @@ export interface PipelineContext {
 export interface ITelegramService {
   start(): Promise<void>;
   downloadFile(fileId: string, destPath: string): Promise<void>;
-  sendMessage(chatId: number, text: string, replyToMessageId?: number): Promise<void>;
+  sendMessage(
+    chatId: number,
+    text: string,
+    replyToMessageId?: number,
+  ): Promise<void>;
   deleteMessage(chatId: number, messageId: number): Promise<void>;
   sendSuccessMessageWithRevoke(
     chatId: number,
     text: string,
     id: string,
-    replyToMessageId?: number
+    replyToMessageId?: number,
   ): Promise<number>;
 }
 
@@ -140,14 +164,17 @@ export interface IImageAnalyzer {
 }
 
 export interface IBrandingDetector {
-  detect(imagePath: string, analysis: ImageAnalysisResult): Promise<BrandingDetectionResult>;
+  detect(
+    imagePath: string,
+    analysis: ImageAnalysisResult,
+  ): Promise<BrandingDetectionResult>;
 }
 
 export interface IBrandingRemover {
   remove(
     imagePath: string,
     zones: BrandingZone[],
-    analysis: ImageAnalysisResult
+    analysis: ImageAnalysisResult,
   ): Promise<BrandingRemovalResult>;
 }
 
@@ -160,32 +187,35 @@ export interface ILayoutGenerator {
     imagePath: string,
     analysis: ImageAnalysisResult,
     outputPath: string,
-    ocrText?: string
+    ocrText?: string,
   ): Promise<string>;
 }
 
 export interface IBrandingService {
   applyCodeOrCapBranding(
     layoutImagePath: string,
-    outputPath: string
+    outputPath: string,
   ): Promise<string>;
 }
 
 export interface IAiService {
-  generateMetadata(ocrText: string, imageContext: string): Promise<VideoMetadata>;
+  generateMetadata(
+    ocrText: string,
+    imageContext: string,
+  ): Promise<VideoMetadata>;
 }
 
 export interface IVideoRenderer {
   renderImageToVideo(
     imagePath: string,
     outputPath: string,
-    options: RenderOptions
+    options: RenderOptions,
   ): Promise<string>;
   processVideo(
     videoPath: string,
     outputPath: string,
     context: PipelineContext,
-    options: RenderOptions
+    options: RenderOptions,
   ): Promise<string>;
 }
 
@@ -194,13 +224,13 @@ export interface IMusicService {
     videoPath: string,
     musicFolder: string,
     outputPath: string,
-    mood?: 'funny' | 'sad' | 'other'
+    mood?: "funny" | "sad" | "other",
   ): Promise<string>;
 }
 
 export interface IYouTubeService {
   uploadShort(
     videoPath: string,
-    metadata: VideoMetadata
+    metadata: VideoMetadata,
   ): Promise<{ url: string; videoId: string }>;
 }

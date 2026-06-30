@@ -1,10 +1,10 @@
-import sharp from 'sharp';
-import path from 'path';
-import fs from 'fs';
-import { IBrandingService } from '../types';
-import { config } from '../config';
-import { pipelineLogger } from '../utils/logger';
-import { TOP_RESERVED, BOTTOM_RESERVED } from '../layout';
+import sharp from "sharp";
+import path from "path";
+import fs from "fs";
+import { IBrandingService } from "../types";
+import { config } from "../config";
+import { pipelineLogger } from "../utils/logger";
+import { TOP_RESERVED, BOTTOM_RESERVED } from "../layout";
 
 const CANVAS_W = 1080;
 const CANVAS_H = 1920;
@@ -12,11 +12,14 @@ const CANVAS_H = 1920;
 export class BrandingService implements IBrandingService {
   public async applyCodeOrCapBranding(
     layoutImagePath: string,
-    outputPath: string
+    outputPath: string,
   ): Promise<string> {
-    pipelineLogger.info(`Applying CodeOrCap branding to ${layoutImagePath}`, 'BrandingService');
+    pipelineLogger.info(
+      `Applying CodeOrCap branding to ${layoutImagePath}`,
+      "BrandingService",
+    );
 
-    const logoPath = path.join(config.paths.assetsDir, 'logo.png');
+    const logoPath = path.join(config.paths.assetsDir, "logo.png");
     if (!fs.existsSync(logoPath)) {
       throw new Error(`Branding logo not found at ${logoPath}.`);
     }
@@ -106,8 +109,11 @@ export class BrandingService implements IBrandingService {
     // ── Composite all layers onto the layout image ────────────────────────────
     await sharp(layoutImagePath).composite(composites).toFile(outputPath);
 
-    pipelineLogger.checkpoint('Branding applied', true,
-      `Header at top, footer at y:${footerY} → ${outputPath}`);
+    pipelineLogger.checkpoint(
+      "Branding applied",
+      true,
+      `Header at top, footer at y:${footerY} → ${outputPath}`,
+    );
     return outputPath;
   }
 }

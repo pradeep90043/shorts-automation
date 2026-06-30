@@ -1,13 +1,15 @@
-import sharp from 'sharp';
-import { pipelineLogger } from '../utils/logger';
+import sharp from "sharp";
+import { pipelineLogger } from "../utils/logger";
 
 export interface Token {
   text: string;
-  type: 'keyword' | 'string' | 'comment' | 'number' | 'default' | 'symbol';
+  type: "keyword" | "string" | "comment" | "number" | "default" | "symbol";
 }
 
-const KEYWORDS_JAVA = /\b(class|public|private|protected|void|static|import|package|return|new|if|else|for|while|do|switch|case|break|continue|interface|extends|implements|throws|throw|try|catch|finally|this|super|final|volatile|transient|synchronized|instanceof|enum|abstract|default|native|strictfp|assert)\b/g;
-const KEYWORDS_JS   = /\b(class|public|private|protected|void|static|import|export|package|return|new|if|else|for|while|do|switch|case|break|continue|const|let|var|function|async|await|def|from|lambda|try|except|catch|finally|throw|throws|type|interface|implements|extends|require|module)\b/g;
+const KEYWORDS_JAVA =
+  /\b(class|public|private|protected|void|static|import|package|return|new|if|else|for|while|do|switch|case|break|continue|interface|extends|implements|throws|throw|try|catch|finally|this|super|final|volatile|transient|synchronized|instanceof|enum|abstract|default|native|strictfp|assert)\b/g;
+const KEYWORDS_JS =
+  /\b(class|public|private|protected|void|static|import|export|package|return|new|if|else|for|while|do|switch|case|break|continue|const|let|var|function|async|await|def|from|lambda|try|except|catch|finally|throw|throws|type|interface|implements|extends|require|module)\b/g;
 
 export class CodeRenderer {
   private static tokenize(line: string, isJava: boolean): Token[] {
@@ -15,12 +17,12 @@ export class CodeRenderer {
     const trimmed = line.trim();
 
     if (
-      trimmed.startsWith('//') ||
-      trimmed.startsWith('/*') ||
-      trimmed.startsWith('*') ||
-      trimmed.startsWith('#')
+      trimmed.startsWith("//") ||
+      trimmed.startsWith("/*") ||
+      trimmed.startsWith("*") ||
+      trimmed.startsWith("#")
     ) {
-      return [{ text: line, type: 'comment' }];
+      return [{ text: line, type: "comment" }];
     }
 
     const keywords = isJava ? KEYWORDS_JAVA : KEYWORDS_JS;
@@ -28,34 +30,52 @@ export class CodeRenderer {
     const numberRegex = /\b(\d+(?:\.\d+)?)\b/g;
     const symbolRegex = /[{}()\[\];.,+\-*\/%=&|<>!?:~^@]/g;
 
-    const items: { start: number; end: number; type: Token['type'] }[] = [];
+    const items: { start: number; end: number; type: Token["type"] }[] = [];
 
     const overlaps = (s: number, e: number) =>
-      items.some(i => (s >= i.start && s < i.end) || (e > i.start && e <= i.end));
+      items.some(
+        (i) => (s >= i.start && s < i.end) || (e > i.start && e <= i.end),
+      );
 
     let m: RegExpExecArray | null;
 
     stringRegex.lastIndex = 0;
     while ((m = stringRegex.exec(line)) !== null) {
-      items.push({ start: m.index, end: stringRegex.lastIndex, type: 'string' });
+      items.push({
+        start: m.index,
+        end: stringRegex.lastIndex,
+        type: "string",
+      });
     }
 
     numberRegex.lastIndex = 0;
     while ((m = numberRegex.exec(line)) !== null) {
       if (!overlaps(m.index, numberRegex.lastIndex))
-        items.push({ start: m.index, end: numberRegex.lastIndex, type: 'number' });
+        items.push({
+          start: m.index,
+          end: numberRegex.lastIndex,
+          type: "number",
+        });
     }
 
     keywords.lastIndex = 0;
     while ((m = keywords.exec(line)) !== null) {
       if (!overlaps(m.index, keywords.lastIndex))
-        items.push({ start: m.index, end: keywords.lastIndex, type: 'keyword' });
+        items.push({
+          start: m.index,
+          end: keywords.lastIndex,
+          type: "keyword",
+        });
     }
 
     symbolRegex.lastIndex = 0;
     while ((m = symbolRegex.exec(line)) !== null) {
       if (!overlaps(m.index, symbolRegex.lastIndex))
-        items.push({ start: m.index, end: symbolRegex.lastIndex, type: 'symbol' });
+        items.push({
+          start: m.index,
+          end: symbolRegex.lastIndex,
+          type: "symbol",
+        });
     }
 
     items.sort((a, b) => a.start - b.start);
@@ -63,44 +83,50 @@ export class CodeRenderer {
     let pos = 0;
     for (const item of items) {
       if (item.start > pos)
-        tokens.push({ text: line.substring(pos, item.start), type: 'default' });
-      tokens.push({ text: line.substring(item.start, item.end), type: item.type });
+        tokens.push({ text: line.substring(pos, item.start), type: "default" });
+      tokens.push({
+        text: line.substring(item.start, item.end),
+        type: item.type,
+      });
       pos = item.end;
     }
     if (pos < line.length)
-      tokens.push({ text: line.substring(pos), type: 'default' });
+      tokens.push({ text: line.substring(pos), type: "default" });
 
     return tokens;
   }
 
   private static escapeXml(s: string): string {
     return s
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&apos;')
-      .replace(/ /g, '&#160;');
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&apos;")
+      .replace(/ /g, "&#160;");
   }
 
   public async renderCodeToImage(
     ocrText: string,
     outputPath: string,
-    isJava = false
+    isJava = false,
   ): Promise<string> {
-    pipelineLogger.info('Rendering syntax-highlighted code card...', 'CodeRenderer');
+    pipelineLogger.info(
+      "Rendering syntax-highlighted code card...",
+      "CodeRenderer",
+    );
 
     const lines = ocrText
-      .split('\n')
-      .map(l => l.trimEnd())
+      .split("\n")
+      .map((l) => l.trimEnd())
       .filter((l, i, arr) => l.length > 0 || (i > 0 && arr[i - 1].length > 0))
       .slice(0, 28);
 
-    if (lines.length === 0) throw new Error('No code text to render.');
+    if (lines.length === 0) throw new Error("No code text to render.");
 
-    const CARD_WIDTH  = 1040;
-    const HEADER_H    = 74;
-    const FOOTER_PAD  = 28;
+    const CARD_WIDTH = 1040;
+    const HEADER_H = 74;
+    const FOOTER_PAD = 28;
 
     // Adaptive line height: fill ~75% of the expanded code zone (1500px).
     // Target card body height ≈ 1048px; line height clamped 48–110px.
@@ -112,32 +138,32 @@ export class CodeRenderer {
     const FONT_SIZE = Math.min(40, Math.max(24, Math.round(LINE_H * 0.55)));
 
     const LINE_NO_W = 58;
-    const CODE_X    = LINE_NO_W + 16;
+    const CODE_X = LINE_NO_W + 16;
 
     const cardHeight = HEADER_H + lines.length * LINE_H + FOOTER_PAD;
 
     const colors = {
-      bg:       '#0D0D0D',
-      headerBg: '#070707',
-      border:   '#221E14',
-      keyword:  '#FFB800',
-      string:   '#FFFFFF',
-      comment:  '#7C7C7C',
-      number:   '#FF8A00',
-      symbol:   '#FFD700',
-      text:     '#E5E5E5',
-      lineNo:   '#555555',
-      dot1:     '#FF5F56',
-      dot2:     '#FFBD2E',
-      dot3:     '#27C93F',
-      badge:    '#141414',
+      bg: "#0D0D0D",
+      headerBg: "#070707",
+      border: "#221E14",
+      keyword: "#FFB800",
+      string: "#FFFFFF",
+      comment: "#7C7C7C",
+      number: "#FF8A00",
+      symbol: "#FFD700",
+      text: "#E5E5E5",
+      lineNo: "#555555",
+      dot1: "#FF5F56",
+      dot2: "#FFBD2E",
+      dot3: "#27C93F",
+      badge: "#141414",
     };
 
-    const lang      = isJava ? 'Java' : 'JavaScript';
-    const filename  = isJava ? 'Main.java' : 'app.js';
-    const langColor = isJava ? '#F89820' : '#F7DF1E';
+    const lang = isJava ? "Java" : "JavaScript";
+    const filename = isJava ? "Main.java" : "app.js";
+    const langColor = isJava ? "#F89820" : "#F7DF1E";
 
-    let codeRows = '';
+    let codeRows = "";
     lines.forEach((line, idx) => {
       const y = HEADER_H + idx * LINE_H + FONT_SIZE + 4;
       const tokens = CodeRenderer.tokenize(line, isJava);
@@ -157,11 +183,11 @@ export class CodeRenderer {
       codeRows += `<text x="${CODE_X}" y="${y}" font-family="'Courier New', Courier, monospace" font-size="${FONT_SIZE}" xml:space="preserve">`;
       for (const tok of tokens) {
         let fill = colors.text;
-        if (tok.type === 'keyword') fill = colors.keyword;
-        else if (tok.type === 'string')  fill = colors.string;
-        else if (tok.type === 'comment') fill = colors.comment;
-        else if (tok.type === 'number')  fill = colors.number;
-        else if (tok.type === 'symbol')  fill = colors.symbol;
+        if (tok.type === "keyword") fill = colors.keyword;
+        else if (tok.type === "string") fill = colors.string;
+        else if (tok.type === "comment") fill = colors.comment;
+        else if (tok.type === "number") fill = colors.number;
+        else if (tok.type === "symbol") fill = colors.symbol;
         codeRows += `<tspan fill="${fill}">${CodeRenderer.escapeXml(tok.text)}</tspan>`;
       }
       codeRows += `</text>\n`;
@@ -211,7 +237,11 @@ export class CodeRenderer {
 </svg>`;
 
     await sharp(Buffer.from(svg)).png().toFile(outputPath);
-    pipelineLogger.checkpoint('Code card rendered', true, `${lines.length} lines, ${cardHeight}px tall → ${outputPath}`);
+    pipelineLogger.checkpoint(
+      "Code card rendered",
+      true,
+      `${lines.length} lines, ${cardHeight}px tall → ${outputPath}`,
+    );
     return outputPath;
   }
 }

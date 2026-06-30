@@ -1,58 +1,72 @@
-import puppeteer from 'puppeteer-core';
-import sharp from 'sharp';
-import { InfographicContent } from '../types';
-import { pipelineLogger } from '../utils/logger';
-import { config } from '../config';
+import puppeteer from "puppeteer-core";
+import sharp from "sharp";
+import { InfographicContent } from "../types";
+import { pipelineLogger } from "../utils/logger";
+import { config } from "../config";
 
 // Canvas dimensions
 const W = 1080;
 const H = 1920;
-const TOP_RESERVED    = 160;
+const TOP_RESERVED = 160;
 const BOTTOM_RESERVED = 260;
 
 export class InfographicRenderer {
-
   private static esc(s: string): string {
     return s
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
   }
 
   private buildHTML(content: InfographicContent, transparent: boolean): string {
-    const bodyBg = transparent ? 'rgba(11,11,11,0.82)' : '#0B0B0B';
+    const bodyBg = transparent ? "rgba(11,11,11,0.82)" : "#0B0B0B";
 
-    const cardsHTML = content.items.map(item => `
+    const cardsHTML = content.items
+      .map(
+        (item) => `
       <div class="card">
         <div class="card-bar"></div>
         <div class="card-inner">
           <div class="card-top">
-            <div class="badge">${String(item.number).padStart(2, '0')}</div>
-            <div class="card-title">${InfographicRenderer.esc(item.icon ?? '')} ${InfographicRenderer.esc(item.title)}</div>
+            <div class="badge">${String(item.number).padStart(2, "0")}</div>
+            <div class="card-title">${InfographicRenderer.esc(item.icon ?? "")} ${InfographicRenderer.esc(item.title)}</div>
           </div>
           <p class="card-desc">${InfographicRenderer.esc(item.description)}</p>
-          ${item.tag ? `<span class="tag">${InfographicRenderer.esc(item.tag)}</span>` : ''}
+          ${item.tag ? `<span class="tag">${InfographicRenderer.esc(item.tag)}</span>` : ""}
         </div>
       </div>
-    `).join('');
+    `,
+      )
+      .join("");
 
-    const summaryHTML = (content.tipLeft || content.tipRight) ? `
+    const summaryHTML =
+      content.tipLeft || content.tipRight
+        ? `
       <div class="summary">
         <div class="summary-header">🏆 TOP PICKS</div>
         <div class="summary-cols">
-          ${content.tipLeft ? `
+          ${
+            content.tipLeft
+              ? `
             <div class="summary-col">
               <div class="col-label">BEST OVERALL</div>
               <p class="col-text">${InfographicRenderer.esc(content.tipLeft)}</p>
-            </div>` : '<div></div>'}
-          ${content.tipRight ? `
+            </div>`
+              : "<div></div>"
+          }
+          ${
+            content.tipRight
+              ? `
             <div class="summary-col">
               <div class="col-label">PRO TIP</div>
               <p class="col-text">${InfographicRenderer.esc(content.tipRight)}</p>
-            </div>` : '<div></div>'}
+            </div>`
+              : "<div></div>"
+          }
         </div>
-      </div>` : '';
+      </div>`
+        : "";
 
     return `<!DOCTYPE html>
 <html>
@@ -308,7 +322,7 @@ export class InfographicRenderer {
     <div class="series-tag">── TOP ${content.items.length} ──</div>
     <h1 class="title">${InfographicRenderer.esc(content.title)}</h1>
     <h2 class="accent">${InfographicRenderer.esc(content.titleAccent)}</h2>
-    ${content.subtitle ? `<p class="subtitle">${InfographicRenderer.esc(content.subtitle)}</p>` : ''}
+    ${content.subtitle ? `<p class="subtitle">${InfographicRenderer.esc(content.subtitle)}</p>` : ""}
     <div class="divider"></div>
     <div class="grid">${cardsHTML}</div>
     ${summaryHTML}
@@ -320,23 +334,30 @@ export class InfographicRenderer {
 
   // ── Public API ────────────────────────────────────────────────────────────────
 
-  public async renderToBuffer(content: InfographicContent, transparentBg = false): Promise<Buffer> {
+  public async renderToBuffer(
+    content: InfographicContent,
+    transparentBg = false,
+  ): Promise<Buffer> {
     const html = this.buildHTML(content, transparentBg);
 
     const browser = await puppeteer.launch({
       executablePath: config.binaries.chrome,
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
-             '--force-color-profile=srgb'],
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--force-color-profile=srgb",
+      ],
     });
 
     try {
       const page = await browser.newPage();
       await page.setViewport({ width: W, height: H, deviceScaleFactor: 1 });
-      await page.setContent(html, { waitUntil: 'domcontentloaded' });
+      await page.setContent(html, { waitUntil: "domcontentloaded" });
 
       const shot = await page.screenshot({
-        type: 'png',
+        type: "png",
         clip: { x: 0, y: 0, width: W, height: H },
         omitBackground: transparentBg,
       });
@@ -347,15 +368,21 @@ export class InfographicRenderer {
     }
   }
 
-  public async render(content: InfographicContent, outputPath: string): Promise<string> {
+  public async render(
+    content: InfographicContent,
+    outputPath: string,
+  ): Promise<string> {
     pipelineLogger.info(
       `Rendering infographic: "${content.title} ${content.titleAccent}" (${content.items.length} items)`,
-      'InfographicRenderer'
+      "InfographicRenderer",
     );
     const buf = await this.renderToBuffer(content, false);
     await sharp(buf).toFile(outputPath);
-    pipelineLogger.checkpoint('Infographic rendered', true,
-      `${content.items.length} items → ${outputPath}`);
+    pipelineLogger.checkpoint(
+      "Infographic rendered",
+      true,
+      `${content.items.length} items → ${outputPath}`,
+    );
     return outputPath;
   }
 }

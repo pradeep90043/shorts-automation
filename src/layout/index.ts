@@ -1,16 +1,16 @@
-import sharp from 'sharp';
-import path from 'path';
-import fs from 'fs';
-import { ILayoutGenerator, ImageAnalysisResult } from '../types';
-import { CodeRenderer } from './code-renderer';
-import { config } from '../config';
-import { pipelineLogger } from '../utils/logger';
+import sharp from "sharp";
+import path from "path";
+import fs from "fs";
+import { ILayoutGenerator, ImageAnalysisResult } from "../types";
+import { CodeRenderer } from "./code-renderer";
+import { config } from "../config";
+import { pipelineLogger } from "../utils/logger";
 
 // Zone constants — must match branding/index.ts exactly
-export const TOP_RESERVED    = 160;   // Logo zone height
-export const BOTTOM_RESERVED = 260;   // Footer zone height
-export const CODE_ZONE_Y     = TOP_RESERVED;
-export const CODE_ZONE_H     = 1920 - TOP_RESERVED - BOTTOM_RESERVED; // 1500px
+export const TOP_RESERVED = 160; // Logo zone height
+export const BOTTOM_RESERVED = 260; // Footer zone height
+export const CODE_ZONE_Y = TOP_RESERVED;
+export const CODE_ZONE_H = 1920 - TOP_RESERVED - BOTTOM_RESERVED; // 1500px
 
 export class LayoutGenerator implements ILayoutGenerator {
   private codeRenderer: CodeRenderer;
@@ -24,22 +24,25 @@ export class LayoutGenerator implements ILayoutGenerator {
    * Infographic/roadmap text (numbered lists, topic names, etc.) returns false.
    */
   private isActualCode(text: string): boolean {
-    const lines = text.split('\n').map(l => l.trimEnd()).filter(l => l.length > 0);
+    const lines = text
+      .split("\n")
+      .map((l) => l.trimEnd())
+      .filter((l) => l.length > 0);
     if (lines.length < 3) return false;
 
     // Strong code indicators — any one is enough
     const strongPatterns = [
-      /\bfunction\s+\w+\s*\(/,           // function declaration
-      /\bclass\s+\w+\s*[\{(]/,           // class declaration
-      /\bvoid\s+\w+\s*\(/,               // Java/C method
-      /\bdef\s+\w+\s*\(/,                // Python function
-      /\bimport\s+[\w.]+\s*;/,           // Java import with ;
+      /\bfunction\s+\w+\s*\(/, // function declaration
+      /\bclass\s+\w+\s*[\{(]/, // class declaration
+      /\bvoid\s+\w+\s*\(/, // Java/C method
+      /\bdef\s+\w+\s*\(/, // Python function
+      /\bimport\s+[\w.]+\s*;/, // Java import with ;
       /\bimport\s+[\w{},\s]+\s+from\s+/, // JS/TS import from
-      /\w+\s*=\s*new\s+\w+\s*\(/,       // new instantiation
-      /\bSystem\.out\.print/,            // Java print
+      /\w+\s*=\s*new\s+\w+\s*\(/, // new instantiation
+      /\bSystem\.out\.print/, // Java print
       /\bconsole\.(log|error|warn)\s*\(/, // JS console
       /\bpublic\s+(static\s+)?[\w<>[\]]+\s+\w+\s*\(/, // Java method sig
-      /^\s{2,}\w/m,                      // indented code block (2+ spaces)
+      /^\s{2,}\w/m, // indented code block (2+ spaces)
     ];
 
     for (const p of strongPatterns) {
@@ -47,8 +50,8 @@ export class LayoutGenerator implements ILayoutGenerator {
     }
 
     // Density check: code symbols {} ; () [] = make up >4% of non-whitespace
-    const codeChars  = (text.match(/[{}()\[\];=]/g) || []).length;
-    const totalChars = text.replace(/\s/g, '').length;
+    const codeChars = (text.match(/[{}()\[\];=]/g) || []).length;
+    const totalChars = text.replace(/\s/g, "").length;
     if (totalChars > 0 && codeChars / totalChars > 0.04) return true;
 
     return false;
@@ -58,34 +61,44 @@ export class LayoutGenerator implements ILayoutGenerator {
     imagePath: string,
     analysis: ImageAnalysisResult,
     outputPath: string,
-    ocrText?: string
+    ocrText?: string,
   ): Promise<string> {
-    pipelineLogger.info(`Generating 9:16 layout for image: ${imagePath}`, 'LayoutGenerator');
+    pipelineLogger.info(
+      `Generating 9:16 layout for image: ${imagePath}`,
+      "LayoutGenerator",
+    );
 
     const CANVAS_W = 1080;
     const CANVAS_H = 1920;
 
     let workingImagePath = imagePath;
-    let workingAnalysis  = { ...analysis };
+    let workingAnalysis = { ...analysis };
 
     // ── 1. Render beautified code card — ONLY when OCR text looks like real code ─
-    const looksLikeCode = ocrText && ocrText.trim().length > 0 && this.isActualCode(ocrText);
+    const looksLikeCode =
+      ocrText && ocrText.trim().length > 0 && this.isActualCode(ocrText);
 
     if (config.rendering.beautifyCode && looksLikeCode) {
       try {
-        const tempPath = path.join(path.dirname(outputPath), 'beautified_code.png');
+        const tempPath = path.join(
+          path.dirname(outputPath),
+          "beautified_code.png",
+        );
 
         const lower = ocrText!.toLowerCase();
         const isJava =
-          lower.includes('public class') ||
-          lower.includes('public static void') ||
-          lower.includes('system.out') ||
-          lower.includes('import java.');
+          lower.includes("public class") ||
+          lower.includes("public static void") ||
+          lower.includes("system.out") ||
+          lower.includes("import java.");
 
         await this.codeRenderer.renderCodeToImage(ocrText!, tempPath, isJava);
 
         if (fs.existsSync(tempPath)) {
-          pipelineLogger.info('OCR text looks like code — using beautified code card.', 'LayoutGenerator');
+          pipelineLogger.info(
+            "OCR text looks like code — using beautified code card.",
+            "LayoutGenerator",
+          );
           workingImagePath = tempPath;
           const meta = await sharp(tempPath).metadata();
           if (meta.width && meta.height) {
@@ -93,7 +106,7 @@ export class LayoutGenerator implements ILayoutGenerator {
               width: meta.width,
               height: meta.height,
               aspectRatio: meta.width / meta.height,
-              orientation: meta.height > meta.width ? 'portrait' : 'landscape',
+              orientation: meta.height > meta.width ? "portrait" : "landscape",
               hasBlackMargins: false,
               hasWhiteMargins: false,
             };
@@ -102,22 +115,22 @@ export class LayoutGenerator implements ILayoutGenerator {
       } catch (err) {
         pipelineLogger.warn(
           `Code card failed: ${err instanceof Error ? err.message : err}. Using original image.`,
-          'LayoutGenerator'
+          "LayoutGenerator",
         );
         workingImagePath = imagePath;
-        workingAnalysis  = { ...analysis };
+        workingAnalysis = { ...analysis };
       }
     } else if (ocrText && !looksLikeCode) {
       pipelineLogger.info(
-        'OCR text does not look like source code (infographic/roadmap) — using original image with branding overlay.',
-        'LayoutGenerator'
+        "OCR text does not look like source code (infographic/roadmap) — using original image with branding overlay.",
+        "LayoutGenerator",
       );
     }
 
     // ── 2. Scale the code card / screenshot to fit the CODE ZONE ─────────────
     // Available area for the card (with compact 10px margin/padding for maximum size/readability)
-    const maxCardW = CANVAS_W - 20;      // 1060px — 10px margin each side
-    const maxCardH = CODE_ZONE_H - 20;   // 1480px — 10px padding top/bottom
+    const maxCardW = CANVAS_W - 20; // 1060px — 10px margin each side
+    const maxCardH = CODE_ZONE_H - 20; // 1480px — 10px padding top/bottom
 
     let scaledW = maxCardW;
     let scaledH = Math.round(scaledW / workingAnalysis.aspectRatio);
@@ -129,13 +142,13 @@ export class LayoutGenerator implements ILayoutGenerator {
 
     pipelineLogger.info(
       `Code card scaled to ${scaledW}×${scaledH} (aspect ${workingAnalysis.aspectRatio.toFixed(2)})`,
-      'LayoutGenerator'
+      "LayoutGenerator",
     );
 
     const cardLeft = Math.floor((CANVAS_W - scaledW) / 2);
     // Bias 40% from top of zone (not dead-center) so the card sits closer
     // to the logo rather than floating in the middle — looks better on short snippets.
-    const cardTop  = CODE_ZONE_Y + Math.floor((CODE_ZONE_H - scaledH) * 0.40);
+    const cardTop = CODE_ZONE_Y + Math.floor((CODE_ZONE_H - scaledH) * 0.4);
 
     // ── 3. Build atmospheric SVG background ──────────────────────────────────
     const bgSvg = `<svg width="${CANVAS_W}" height="${CANVAS_H}" viewBox="0 0 ${CANVAS_W} ${CANVAS_H}" xmlns="http://www.w3.org/2000/svg">
@@ -213,12 +226,12 @@ export class LayoutGenerator implements ILayoutGenerator {
       // Clip infographic to rounded rectangle so it looks intentional
       const roundedMask = Buffer.from(
         `<svg width="${scaledW}" height="${scaledH}">` +
-        `<rect width="${scaledW}" height="${scaledH}" rx="20" ry="20" fill="white"/>` +
-        `</svg>`
+          `<rect width="${scaledW}" height="${scaledH}" rx="20" ry="20" fill="white"/>` +
+          `</svg>`,
       );
       cardBuffer = await sharp(workingImagePath)
         .resize(scaledW, scaledH)
-        .composite([{ input: roundedMask, blend: 'dest-in' }])
+        .composite([{ input: roundedMask, blend: "dest-in" }])
         .png()
         .toBuffer();
     } else {
@@ -232,8 +245,11 @@ export class LayoutGenerator implements ILayoutGenerator {
       .composite([{ input: cardBuffer, left: cardLeft, top: cardTop }])
       .toFile(outputPath);
 
-    pipelineLogger.checkpoint('Layout generated', true,
-      `Card at x:${cardLeft} y:${cardTop} (${scaledW}×${scaledH}) → ${outputPath}`);
+    pipelineLogger.checkpoint(
+      "Layout generated",
+      true,
+      `Card at x:${cardLeft} y:${cardTop} (${scaledW}×${scaledH}) → ${outputPath}`,
+    );
     return outputPath;
   }
 }

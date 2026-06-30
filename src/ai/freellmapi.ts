@@ -1,4 +1,4 @@
-import { config } from '../config';
+import { config } from "../config";
 
 export class FreeLlmApiClient {
   private baseUrl: string;
@@ -6,9 +6,9 @@ export class FreeLlmApiClient {
   private model: string;
 
   constructor() {
-    this.baseUrl = config.ai.freellmapiUrl.replace(/\/$/, '');
+    this.baseUrl = config.ai.freellmapiUrl.replace(/\/$/, "");
     this.apiKey = config.ai.freellmapiKey;
-    this.model = config.ai.freellmapiModel || 'auto';
+    this.model = config.ai.freellmapiModel || "auto";
   }
 
   public async generateChat(messages: any[]): Promise<string> {
@@ -18,10 +18,10 @@ export class FreeLlmApiClient {
 
     try {
       const res = await fetch(url, {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.apiKey}`,
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${this.apiKey}`,
         },
         body: JSON.stringify({
           model: this.model,
@@ -32,13 +32,15 @@ export class FreeLlmApiClient {
 
       if (!res.ok) {
         const errText = await res.text();
-        throw new Error(`FreeLLMAPI request failed with status ${res.status}: ${errText}`);
+        throw new Error(
+          `FreeLLMAPI request failed with status ${res.status}: ${errText}`,
+        );
       }
 
-      const json = await res.json() as any;
-      return json.choices?.[0]?.message?.content ?? '';
+      const json = (await res.json()) as any;
+      return json.choices?.[0]?.message?.content ?? "";
     } catch (err: any) {
-      if (err.name === 'AbortError') {
+      if (err.name === "AbortError") {
         throw new Error(`FreeLLMAPI request timed out after 60 seconds`);
       }
       throw err;
@@ -48,25 +50,27 @@ export class FreeLlmApiClient {
   }
 
   public async generateText(prompt: string): Promise<string> {
-    return this.generateChat([
-      { role: 'user', content: prompt }
-    ]);
+    return this.generateChat([{ role: "user", content: prompt }]);
   }
 
-  public async generateVision(prompt: string, imageBase64: string, mimeType: string): Promise<string> {
+  public async generateVision(
+    prompt: string,
+    imageBase64: string,
+    mimeType: string,
+  ): Promise<string> {
     return this.generateChat([
       {
-        role: 'user',
+        role: "user",
         content: [
-          { type: 'text', text: prompt },
+          { type: "text", text: prompt },
           {
-            type: 'image_url',
+            type: "image_url",
             image_url: {
-              url: `data:${mimeType};base64,${imageBase64}`
-            }
-          }
-        ]
-      }
+              url: `data:${mimeType};base64,${imageBase64}`,
+            },
+          },
+        ],
+      },
     ]);
   }
 }

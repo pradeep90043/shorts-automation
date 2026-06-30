@@ -1,11 +1,11 @@
-import sharp from 'sharp';
-import fs from 'fs';
-import { InfographicContent } from '../types';
-import { InfographicRenderer } from '../infographic-renderer';
-import { pipelineLogger } from '../utils/logger';
-import { config } from '../config';
-import { FreeLlmApiClient } from '../ai/freellmapi';
-import { parseAiJson } from '../utils/json';
+import sharp from "sharp";
+import fs from "fs";
+import { InfographicContent } from "../types";
+import { InfographicRenderer } from "../infographic-renderer";
+import { pipelineLogger } from "../utils/logger";
+import { config } from "../config";
+import { FreeLlmApiClient } from "../ai/freellmapi";
+import { parseAiJson } from "../utils/json";
 
 const CANVAS_W = 1080;
 const CANVAS_H = 1920;
@@ -15,21 +15,26 @@ export class PollinationsImageGenerator {
   private renderer: InfographicRenderer;
 
   constructor() {
-    if (config.ai.provider === 'freellmapi') {
+    if (config.ai.provider === "freellmapi") {
       this.freellmapi = new FreeLlmApiClient();
     }
     this.renderer = new InfographicRenderer();
   }
 
-  private parseContentJSON(raw: string): InfographicContent & { visualContext?: string } {
+  private parseContentJSON(
+    raw: string,
+  ): InfographicContent & { visualContext?: string } {
     const obj = parseAiJson<Record<string, unknown>>(raw);
 
     // Patch missing required fields rather than failing outright
-    if (!obj.title)       obj.title       = 'TECH LIST';
-    if (!obj.titleAccent) obj.titleAccent = 'TOOLS';
+    if (!obj.title) obj.title = "TECH LIST";
+    if (!obj.titleAccent) obj.titleAccent = "TOOLS";
     if (!Array.isArray(obj.items) || (obj.items as unknown[]).length === 0) {
-      pipelineLogger.warn(`AI JSON missing items. Full object keys: ${Object.keys(obj).join(', ')}`, 'PollinationsImageGenerator');
-      throw new Error('AI JSON has no items array — cannot build infographic');
+      pipelineLogger.warn(
+        `AI JSON missing items. Full object keys: ${Object.keys(obj).join(", ")}`,
+        "PollinationsImageGenerator",
+      );
+      throw new Error("AI JSON has no items array — cannot build infographic");
     }
 
     return obj as unknown as InfographicContent & { visualContext?: string };
@@ -89,31 +94,41 @@ Replace the example with real content from the image. Include ALL items visible.
   // Step 1: AI vision — sees the full post (text + logos + images)
   private async extractContent(
     sourceImagePath: string,
-    ocrText?: string
+    ocrText?: string,
   ): Promise<InfographicContent & { visualContext?: string }> {
-    pipelineLogger.info('Step 1: Analyzing post with AI vision (text + visuals)…', 'PollinationsImageGenerator');
+    pipelineLogger.info(
+      "Step 1: Analyzing post with AI vision (text + visuals)…",
+      "PollinationsImageGenerator",
+    );
 
-    const base64   = fs.readFileSync(sourceImagePath).toString('base64');
-    const mimeType = sourceImagePath.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
+    const base64 = fs.readFileSync(sourceImagePath).toString("base64");
+    const mimeType = sourceImagePath.toLowerCase().endsWith(".png")
+      ? "image/png"
+      : "image/jpeg";
 
-    const ocrHint = ocrText && ocrText.trim().length > 10
-      ? `\n\nOCR already extracted this text (use as reference):\n${ocrText.slice(0, 1000)}`
-      : '';
+    const ocrHint =
+      ocrText && ocrText.trim().length > 10
+        ? `\n\nOCR already extracted this text (use as reference):\n${ocrText.slice(0, 1000)}`
+        : "";
 
     const callAI = async (prompt: string): Promise<string> => {
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          if (!this.freellmapi) throw new Error('FreeLLMAPI client is not initialized');
+          if (!this.freellmapi)
+            throw new Error("FreeLLMAPI client is not initialized");
           return await this.freellmapi.generateVision(prompt, base64, mimeType);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           if (attempt < 2 && /503|unavailable|quota|rate/i.test(msg)) {
-            pipelineLogger.warn(`AI 503/rate-limit on attempt ${attempt + 1}, waiting 5s…`, 'PollinationsImageGenerator');
-            await new Promise(r => setTimeout(r, 5000));
+            pipelineLogger.warn(
+              `AI 503/rate-limit on attempt ${attempt + 1}, waiting 5s…`,
+              "PollinationsImageGenerator",
+            );
+            await new Promise((r) => setTimeout(r, 5000));
           } else throw err;
         }
       }
-      return '';
+      return "";
     };
 
     // Attempt 1: full detailed prompt
@@ -121,44 +136,55 @@ Replace the example with real content from the image. Include ALL items visible.
       const rawText = await callAI(this.buildExtractionPrompt(ocrHint));
       const content = this.parseContentJSON(rawText);
       pipelineLogger.info(
-        `Content extracted: "${content.title} ${content.titleAccent}" (${content.items.length} items)${content.visualContext ? ` | visuals: ${content.visualContext}` : ''}`,
-        'PollinationsImageGenerator'
+        `Content extracted: "${content.title} ${content.titleAccent}" (${content.items.length} items)${content.visualContext ? ` | visuals: ${content.visualContext}` : ""}`,
+        "PollinationsImageGenerator",
       );
       return content;
     } catch (err) {
-      pipelineLogger.warn(`Attempt 1 failed (${err instanceof Error ? err.message : err}) — retrying with simpler prompt`, 'PollinationsImageGenerator');
+      pipelineLogger.warn(
+        `Attempt 1 failed (${err instanceof Error ? err.message : err}) — retrying with simpler prompt`,
+        "PollinationsImageGenerator",
+      );
     }
 
     // Attempt 2: simpler prompt, less strict
     const rawText2 = await callAI(this.buildSimpleExtractionPrompt(ocrHint));
-    pipelineLogger.info(`Attempt 2 raw response (first 300): ${rawText2.slice(0, 300)}`, 'PollinationsImageGenerator');
+    pipelineLogger.info(
+      `Attempt 2 raw response (first 300): ${rawText2.slice(0, 300)}`,
+      "PollinationsImageGenerator",
+    );
     const content = this.parseContentJSON(rawText2);
     pipelineLogger.info(
       `Content extracted (retry): "${content.title} ${content.titleAccent}" (${content.items.length} items)`,
-      'PollinationsImageGenerator'
+      "PollinationsImageGenerator",
     );
     return content;
   }
 
   // Step 2: Pollinations → generate AI visual background incorporating post's visual elements
-  private async generateBackground(content: InfographicContent & { visualContext?: string }): Promise<Buffer> {
+  private async generateBackground(
+    content: InfographicContent & { visualContext?: string },
+  ): Promise<Buffer> {
     const visualExtra = content.visualContext
       ? `, incorporating visual elements: ${content.visualContext}`
-      : '';
+      : "";
 
     const stylePrompt = [
       `dark cyberpunk infographic background for "${content.title} ${content.titleAccent}"${visualExtra}`,
-      'pure black background, neon yellow (#FFB800) glowing rectangular card outlines arranged in a 2-column grid',
-      'circuit board grid texture, subtle yellow neon light rays, corner bracket decorations in yellow',
+      "pure black background, neon yellow (#FFB800) glowing rectangular card outlines arranged in a 2-column grid",
+      "circuit board grid texture, subtle yellow neon light rays, corner bracket decorations in yellow",
       `${content.items.length} dark card slots with glowing yellow borders, no readable text`,
-      'premium tech documentary aesthetic, high contrast, vertical portrait 9:16 format',
-      'yellow neon glow emanating from card borders, dark ambient lighting, cinematic',
-    ].join(', ');
+      "premium tech documentary aesthetic, high contrast, vertical portrait 9:16 format",
+      "yellow neon glow emanating from card borders, dark ambient lighting, cinematic",
+    ].join(", ");
 
     const encodedPrompt = encodeURIComponent(stylePrompt);
     const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${CANVAS_W}&height=${CANVAS_H}&model=flux&nologo=true&enhance=false`;
 
-    pipelineLogger.info('Step 2: Generating visual background with Pollinations.ai…', 'PollinationsImageGenerator');
+    pipelineLogger.info(
+      "Step 2: Generating visual background with Pollinations.ai…",
+      "PollinationsImageGenerator",
+    );
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 120_000);
@@ -168,7 +194,10 @@ Replace the example with real content from the image. Include ALL items visible.
       if (!res.ok) throw new Error(`Pollinations returned HTTP ${res.status}`);
       const buf = Buffer.from(await res.arrayBuffer());
       // Ensure exact canvas dimensions
-      return sharp(buf).resize(CANVAS_W, CANVAS_H, { fit: 'cover', position: 'center' }).png().toBuffer();
+      return sharp(buf)
+        .resize(CANVAS_W, CANVAS_H, { fit: "cover", position: "center" })
+        .png()
+        .toBuffer();
     } finally {
       clearTimeout(timeout);
     }
@@ -178,27 +207,38 @@ Replace the example with real content from the image. Include ALL items visible.
   private async compositeTextOverlay(
     background: Buffer,
     content: InfographicContent,
-    outputPath: string
+    outputPath: string,
   ): Promise<void> {
-    pipelineLogger.info('Step 3: Compositing text overlay…', 'PollinationsImageGenerator');
+    pipelineLogger.info(
+      "Step 3: Compositing text overlay…",
+      "PollinationsImageGenerator",
+    );
 
     // Render infographic with transparent background so AI image shows through
     const textOverlay = await this.renderer.renderToBuffer(content, true);
 
     await sharp(background)
-      .composite([{ input: textOverlay, blend: 'over' }])
+      .composite([{ input: textOverlay, blend: "over" }])
       .png()
       .toFile(outputPath);
   }
 
-  public async generate(sourceImagePath: string, outputPath: string, ocrText?: string): Promise<string> {
+  public async generate(
+    sourceImagePath: string,
+    outputPath: string,
+    ocrText?: string,
+  ): Promise<string> {
     // Always use image vision so Gemini sees logos, images, and visual elements — not just text.
     // OCR text is passed as a hint to speed up text parsing, not as a replacement for vision.
-    const content    = await this.extractContent(sourceImagePath, ocrText);
+    const content = await this.extractContent(sourceImagePath, ocrText);
     const background = await this.generateBackground(content);
     await this.compositeTextOverlay(background, content, outputPath);
 
-    pipelineLogger.checkpoint('Hybrid image generated', true, `→ ${outputPath}`);
+    pipelineLogger.checkpoint(
+      "Hybrid image generated",
+      true,
+      `→ ${outputPath}`,
+    );
     return outputPath;
   }
 }

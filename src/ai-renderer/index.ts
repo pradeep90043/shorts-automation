@@ -1,58 +1,80 @@
-import { spawn } from 'child_process';
-import { InfographicContent } from '../types';
-import { InfographicRenderer } from '../infographic-renderer';
-import { PollinationsImageGenerator } from '../image-gen';
-import { pipelineLogger } from '../utils/logger';
+import { spawn } from "child_process";
+import { InfographicContent } from "../types";
+import { InfographicRenderer } from "../infographic-renderer";
+import { PollinationsImageGenerator } from "../image-gen";
+import { pipelineLogger } from "../utils/logger";
 
-function runClaudeCLI(bin: string, prompt: string, timeoutMs = 240_000): Promise<string> {
+function runClaudeCLI(
+  bin: string,
+  prompt: string,
+  timeoutMs = 240_000,
+): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(bin, ['-p', prompt], {
-      stdio: ['ignore', 'pipe', 'pipe'],
+    const child = spawn(bin, ["-p", prompt], {
+      stdio: ["ignore", "pipe", "pipe"],
     });
 
-    let stdout = '';
-    let stderr = '';
-    child.stdout?.on('data', (d: Buffer) => { stdout += d.toString(); });
-    child.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
+    let stdout = "";
+    let stderr = "";
+    child.stdout?.on("data", (d: Buffer) => {
+      stdout += d.toString();
+    });
+    child.stderr?.on("data", (d: Buffer) => {
+      stderr += d.toString();
+    });
 
-    const timer = setTimeout(() => { child.kill(); reject(new Error('CLI timed out')); }, timeoutMs);
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error("CLI timed out"));
+    }, timeoutMs);
 
-    child.on('close', (code: number | null) => {
+    child.on("close", (code: number | null) => {
       clearTimeout(timer);
-      if (code !== 0 && !stdout.includes('{')) {
+      if (code !== 0 && !stdout.includes("{")) {
         reject(new Error(`CLI exited ${code}: ${stderr.slice(0, 300)}`));
       } else {
         resolve(stdout);
       }
     });
 
-    child.on('error', reject);
+    child.on("error", reject);
   });
 }
 
-function runAGYCLI(bin: string, prompt: string, timeoutMs = 240_000): Promise<string> {
+function runAGYCLI(
+  bin: string,
+  prompt: string,
+  timeoutMs = 240_000,
+): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(bin, ['ask'], {
-      stdio: ['pipe', 'pipe', 'pipe'],
+    const child = spawn(bin, ["ask"], {
+      stdio: ["pipe", "pipe", "pipe"],
     });
 
-    let stdout = '';
-    let stderr = '';
-    child.stdout?.on('data', (d: Buffer) => { stdout += d.toString(); });
-    child.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
+    let stdout = "";
+    let stderr = "";
+    child.stdout?.on("data", (d: Buffer) => {
+      stdout += d.toString();
+    });
+    child.stderr?.on("data", (d: Buffer) => {
+      stderr += d.toString();
+    });
 
-    const timer = setTimeout(() => { child.kill(); reject(new Error('CLI timed out')); }, timeoutMs);
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error("CLI timed out"));
+    }, timeoutMs);
 
-    child.on('close', (code: number | null) => {
+    child.on("close", (code: number | null) => {
       clearTimeout(timer);
-      if (code !== 0 && !stdout.includes('{')) {
+      if (code !== 0 && !stdout.includes("{")) {
         reject(new Error(`CLI exited ${code}: ${stderr.slice(0, 300)}`));
       } else {
         resolve(stdout);
       }
     });
 
-    child.on('error', reject);
+    child.on("error", reject);
 
     child.stdin?.write(prompt);
     child.stdin?.end();
@@ -63,15 +85,22 @@ export class AIRenderer {
   public async generateBrandedFrame(
     imagePath: string,
     outputPath: string,
-    provider: 'claude' | 'antigravity' | 'freellmapi' = 'claude',
-    ocrText?: string
+    provider: "claude" | "antigravity" | "freellmapi" = "claude",
+    ocrText?: string,
   ): Promise<string> {
-    pipelineLogger.info(`AI Renderer starting (provider: ${provider})`, 'AIRenderer');
+    pipelineLogger.info(
+      `AI Renderer starting (provider: ${provider})`,
+      "AIRenderer",
+    );
 
-    if (provider === 'freellmapi') {
+    if (provider === "freellmapi") {
       const generator = new PollinationsImageGenerator();
       await generator.generate(imagePath, outputPath, ocrText);
-      pipelineLogger.checkpoint('AI-generated image background created', true, `Output: ${outputPath}`);
+      pipelineLogger.checkpoint(
+        "AI-generated image background created",
+        true,
+        `Output: ${outputPath}`,
+      );
       return outputPath;
     }
 
@@ -79,39 +108,64 @@ export class AIRenderer {
     const renderer = new InfographicRenderer();
     await renderer.render(content, outputPath);
 
-    pipelineLogger.checkpoint('AI infographic rendered', true, `Output: ${outputPath}`);
+    pipelineLogger.checkpoint(
+      "AI infographic rendered",
+      true,
+      `Output: ${outputPath}`,
+    );
     return outputPath;
   }
 
-  private async callAI(imagePath: string, provider: 'claude' | 'antigravity'): Promise<InfographicContent> {
+  private async callAI(
+    imagePath: string,
+    provider: "claude" | "antigravity",
+  ): Promise<InfographicContent> {
     const prompt = this.buildPrompt(imagePath);
 
-    pipelineLogger.info(`Calling ${provider} CLI for structured infographic content…`, 'AIRenderer');
+    pipelineLogger.info(
+      `Calling ${provider} CLI for structured infographic content…`,
+      "AIRenderer",
+    );
 
     let stdout: string;
-    if (provider === 'claude') {
-      const cliPath = process.env.CLAUDE_CLI_PATH || 'claude';
+    if (provider === "claude") {
+      const cliPath = process.env.CLAUDE_CLI_PATH || "claude";
       stdout = await runClaudeCLI(cliPath, prompt, 240_000);
     } else {
-      const cliPath = process.env.ANTIGRAVITY_CLI_PATH || 'agy';
+      const cliPath = process.env.ANTIGRAVITY_CLI_PATH || "agy";
       stdout = await runAGYCLI(cliPath, prompt, 240_000);
     }
 
     const content = this.parseJSON(stdout);
-    pipelineLogger.info(`JSON parsed: "${content.title} ${content.titleAccent}" (${content.items.length} items)`, 'AIRenderer');
+    pipelineLogger.info(
+      `JSON parsed: "${content.title} ${content.titleAccent}" (${content.items.length} items)`,
+      "AIRenderer",
+    );
     return content;
   }
 
   private parseJSON(raw: string): InfographicContent {
-    const s     = raw.replace(/^```json\s*/i, '').replace(/\s*```\s*$/, '').trim();
-    const start = s.indexOf('{');
-    const end   = s.lastIndexOf('}');
+    const s = raw
+      .replace(/^```json\s*/i, "")
+      .replace(/\s*```\s*$/, "")
+      .trim();
+    const start = s.indexOf("{");
+    const end = s.lastIndexOf("}");
     if (start === -1 || end === -1) {
-      throw new Error(`AI did not return valid JSON. Raw output length: ${raw.length}`);
+      throw new Error(
+        `AI did not return valid JSON. Raw output length: ${raw.length}`,
+      );
     }
     const obj = JSON.parse(s.slice(start, end + 1)) as Record<string, unknown>;
-    if (!obj.title || !obj.titleAccent || !Array.isArray(obj.items) || obj.items.length === 0) {
-      throw new Error('AI JSON missing required fields: title, titleAccent, items');
+    if (
+      !obj.title ||
+      !obj.titleAccent ||
+      !Array.isArray(obj.items) ||
+      obj.items.length === 0
+    ) {
+      throw new Error(
+        "AI JSON missing required fields: title, titleAccent, items",
+      );
     }
     return obj as unknown as InfographicContent;
   }
