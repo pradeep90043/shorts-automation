@@ -85,8 +85,8 @@ export class DirectUploader {
   private async runUnifiedAiVision(imagePath: string, context: PipelineContext): Promise<void> {
     pipelineLogger.info('Running unified AI Vision for metadata and branding detection…', 'DirectUploader');
 
-    if (!this.ai && !this.freellmapi) {
-      pipelineLogger.warn('No AI provider configured for Unified Vision', 'DirectUploader');
+    if (!this.freellmapi) {
+      pipelineLogger.warn('FreeLLMAPI client is not initialized', 'DirectUploader');
       context.metadata = this.fallbackMetadata();
       context.brandingDetection = { detected: false, zones: [] };
       return;
