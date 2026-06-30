@@ -1,5 +1,4 @@
 import sharp from 'sharp';
-import { GoogleGenAI } from '@google/genai';
 import { FreeLlmApiClient } from '../ai/freellmapi';
 import { config } from '../config';
 import { 
@@ -131,14 +130,11 @@ class SocialHandleDetector implements IBrandingSubDetector {
 
 class AiBrandingDetector implements IBrandingSubDetector {
   public name = 'AiBrandingDetector';
-  private ai: GoogleGenAI | null = null;
   private freellmapi: FreeLlmApiClient | null = null;
 
   constructor() {
     if (config.ai.provider === 'freellmapi') {
       this.freellmapi = new FreeLlmApiClient();
-    } else if (config.ai.geminiApiKey) {
-      this.ai = new GoogleGenAI({ apiKey: config.ai.geminiApiKey });
     }
   }
 
@@ -146,8 +142,8 @@ class AiBrandingDetector implements IBrandingSubDetector {
     imagePath: string,
     _analysis: ImageAnalysisResult
   ): Promise<BrandingZone[]> {
-    if (!this.ai && !this.freellmapi) {
-      pipelineLogger.warn('AI provider not configured for AiBrandingDetector', 'AiBrandingDetector');
+    if (!this.freellmapi) {
+      pipelineLogger.warn('FreeLLMAPI not configured for AiBrandingDetector', 'AiBrandingDetector');
       return [];
     }
 
@@ -191,15 +187,6 @@ Return ONLY a raw JSON array of objects with the following schema — no markdow
       let raw = '';
       if (this.freellmapi) {
         raw = await this.freellmapi.generateVision(prompt, base64, mimeType);
-      } else if (this.ai) {
-        const res = await this.ai.models.generateContent({
-          model: 'gemini-2.0-flash',
-          contents: [{
-            role: 'user',
-            parts: [{ inlineData: { mimeType, data: base64 } }, { text: prompt }],
-          }],
-        });
-        raw = res.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
       }
 
       const startIndex = raw.indexOf('[');

@@ -1,4 +1,3 @@
-import { GoogleGenAI } from '@google/genai';
 import sharp from 'sharp';
 import fs from 'fs';
 import { InfographicContent } from '../types';
@@ -11,15 +10,12 @@ const CANVAS_W = 1080;
 const CANVAS_H = 1920;
 
 export class PollinationsImageGenerator {
-  private ai: GoogleGenAI | null = null;
   private freellmapi: FreeLlmApiClient | null = null;
   private renderer: InfographicRenderer;
 
   constructor() {
     if (config.ai.provider === 'freellmapi') {
       this.freellmapi = new FreeLlmApiClient();
-    } else if (config.ai.geminiApiKey) {
-      this.ai = new GoogleGenAI({ apiKey: config.ai.geminiApiKey });
     }
     this.renderer = new InfographicRenderer();
   }
@@ -124,17 +120,8 @@ Replace the example with real content from the image. Include ALL items visible.
     const callAI = async (prompt: string): Promise<string> => {
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          if (config.ai.provider === 'freellmapi') {
-            if (!this.freellmapi) throw new Error('FreeLLMAPI client is not initialized');
-            return await this.freellmapi.generateVision(prompt, base64, mimeType);
-          } else {
-            if (!this.ai) throw new Error('Gemini API key is missing.');
-            const res = await this.ai.models.generateContent({
-              model: 'gemini-2.0-flash',
-              contents: [{ role: 'user', parts: [{ inlineData: { mimeType, data: base64 } }, { text: prompt }] }]
-            });
-            return res.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-          }
+          if (!this.freellmapi) throw new Error('FreeLLMAPI client is not initialized');
+          return await this.freellmapi.generateVision(prompt, base64, mimeType);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           if (attempt < 2 && /503|unavailable|quota|rate/i.test(msg)) {
