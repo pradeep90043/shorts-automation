@@ -2,7 +2,6 @@ import fs from 'fs';
 import path from 'path';
 import sharp from 'sharp';
 import { exec } from 'child_process';
-import { GoogleGenAI } from '@google/genai';
 import { config } from './config';
 import { VideoRenderer } from './renderer';
 import { MusicService } from './music';
@@ -29,7 +28,6 @@ interface PendingUpload {
 }
 
 export class DirectUploader {
-  private ai: GoogleGenAI | null = null;
   private freellmapi: FreeLlmApiClient | null = null;
   private renderer: VideoRenderer;
   private music: MusicService;
@@ -41,8 +39,6 @@ export class DirectUploader {
   constructor(telegram: TelegramService) {
     if (config.ai.provider === 'freellmapi') {
       this.freellmapi = new FreeLlmApiClient();
-    } else if (config.ai.geminiApiKey) {
-      this.ai = new GoogleGenAI({ apiKey: config.ai.geminiApiKey });
     }
     this.renderer = new VideoRenderer();
     this.music    = new MusicService();
@@ -154,16 +150,12 @@ Important:
 
       let raw = '';
       if (this.freellmapi) {
+        pipelineLogger.info('Attempting metadata generation via FreeLLMAPI...', 'DirectUploader');
         raw = await this.freellmapi.generateVision(prompt, base64, mimeType);
-      } else if (this.ai) {
-        const res = await this.ai.models.generateContent({
-          model: 'gemini-2.0-flash',
-          contents: [{
-            role: 'user',
-            parts: [{ inlineData: { mimeType, data: base64 } }, { text: prompt }],
-          }],
-        });
-        raw = res.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+      }
+
+      if (!raw) {
+        throw new Error('FreeLLMAPI failed to respond.');
       }
 
       const startIndex = raw.indexOf('{');
@@ -256,19 +248,13 @@ Return ONLY a raw JSON object — no markdown, no explanation:
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         let raw = '';
-        if (config.ai.provider === 'freellmapi') {
-          if (!this.freellmapi) throw new Error('FreeLLMAPI client is not initialized');
+        if (this.freellmapi) {
+          pipelineLogger.info('Attempting metadata generation via FreeLLMAPI...', 'DirectUploader');
           raw = await this.freellmapi.generateVision(prompt, base64, mimeType);
-        } else {
-          if (!this.ai) throw new Error('Gemini API key is missing.');
-          const res = await this.ai.models.generateContent({
-            model: 'gemini-2.0-flash',
-            contents: [{
-              role: 'user',
-              parts: [{ inlineData: { mimeType, data: base64 } }, { text: prompt }],
-            }],
-          });
-          raw = res.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+        }
+
+        if (!raw) {
+          throw new Error('FreeLLMAPI failed to respond.');
         }
 
         const s   = raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1);
@@ -321,19 +307,13 @@ Return ONLY raw JSON — no markdown:
 
     try {
       let raw = '';
-      if (config.ai.provider === 'freellmapi') {
-        if (!this.freellmapi) throw new Error('FreeLLMAPI client is not initialized');
+      if (this.freellmapi) {
+        pipelineLogger.info('Attempting metadata generation via FreeLLMAPI...', 'DirectUploader');
         raw = await this.freellmapi.generateVision(prompt, base64, mimeType);
-      } else {
-        if (!this.ai) throw new Error('Gemini API key is missing.');
-        const res = await this.ai.models.generateContent({
-          model: 'gemini-2.0-flash',
-          contents: [{
-            role: 'user',
-            parts: [{ inlineData: { mimeType, data: base64 } }, { text: prompt }],
-          }],
-        });
-        raw = res.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+      }
+
+      if (!raw) {
+        throw new Error('FreeLLMAPI failed to respond.');
       }
 
       const s   = raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1);
