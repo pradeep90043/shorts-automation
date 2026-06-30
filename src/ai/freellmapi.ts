@@ -13,25 +13,38 @@ export class FreeLlmApiClient {
 
   public async generateChat(messages: any[]): Promise<string> {
     const url = `${this.baseUrl}/v1/chat/completions`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: this.model,
-        messages: messages,
-      }),
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout
 
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(`FreeLLMAPI request failed with status ${res.status}: ${errText}`);
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: this.model,
+          messages: messages,
+        }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`FreeLLMAPI request failed with status ${res.status}: ${errText}`);
+      }
+
+      const json = await res.json() as any;
+      return json.choices?.[0]?.message?.content ?? '';
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        throw new Error(`FreeLLMAPI request timed out after 60 seconds`);
+      }
+      throw err;
+    } finally {
+      clearTimeout(timeoutId);
     }
-
-    const json = await res.json() as any;
-    return json.choices?.[0]?.message?.content ?? '';
   }
 
   public async generateText(prompt: string): Promise<string> {
