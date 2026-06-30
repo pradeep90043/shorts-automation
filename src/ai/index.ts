@@ -5,6 +5,7 @@ import { IAiService, VideoMetadata } from '../types';
 import { config } from '../config';
 import { pipelineLogger } from '../utils/logger';
 import { FreeLlmApiClient } from './freellmapi';
+import { parseAiJson } from '../utils/json';
 
 export class AiService implements IAiService {
   constructor() {}
@@ -60,15 +61,7 @@ Output JSON format:
         const client = new FreeLlmApiClient();
         const stdout = await client.generateText(prompt);
 
-        let jsonText = stdout.trim();
-        if (jsonText.includes('```')) {
-          const matches = jsonText.match(/```(?:json)?([\s\S]*?)```/);
-          if (matches && matches[1]) {
-            jsonText = matches[1].trim();
-          }
-        }
-
-        const parsed: VideoMetadata = JSON.parse(jsonText);
+        const parsed: VideoMetadata = parseAiJson<VideoMetadata>(stdout);
         if (!parsed.title || !parsed.description || !Array.isArray(parsed.tags)) {
           throw new Error('FreeLLMAPI returned JSON, but structure is missing required fields.');
         }

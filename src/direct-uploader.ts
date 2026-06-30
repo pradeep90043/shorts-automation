@@ -10,6 +10,7 @@ import { TelegramService } from './telegram';
 import { PipelineContext, VideoMetadata } from './types';
 import { pipelineLogger } from './utils/logger';
 import { FreeLlmApiClient } from './ai/freellmapi';
+import { parseAiJson } from './utils/json';
 
 const REVIEW_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
 
@@ -158,21 +159,14 @@ Important:
         throw new Error('FreeLLMAPI failed to respond.');
       }
 
-      const startIndex = raw.indexOf('{');
-      const endIndex = raw.lastIndexOf('}');
-      if (startIndex === -1 || endIndex === -1) {
-        throw new Error('AI response did not contain JSON object');
-      }
-
-      const s = raw.slice(startIndex, endIndex + 1);
-      const data = JSON.parse(s) as {
+      const data = parseAiJson<{
         metadata: VideoMetadata;
         brandingZones: Array<{
           type: 'logo' | 'watermark' | 'handle' | 'profile_name';
           box: { x: number; y: number; width: number; height: number };
           description: string;
         }>;
-      };
+      }>(raw);
 
       if (!data.metadata || !data.metadata.title || !data.metadata.description || !Array.isArray(data.metadata.tags)) {
         throw new Error('AI JSON missing metadata fields');
@@ -257,8 +251,7 @@ Return ONLY a raw JSON object — no markdown, no explanation:
           throw new Error('FreeLLMAPI failed to respond.');
         }
 
-        const s   = raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1);
-        const obj = JSON.parse(s) as VideoMetadata;
+        const obj = parseAiJson<VideoMetadata>(raw);
         if (!obj.title || !obj.description || !Array.isArray(obj.tags)) {
           throw new Error('Missing required fields');
         }
@@ -316,8 +309,7 @@ Return ONLY raw JSON — no markdown:
         throw new Error('FreeLLMAPI failed to respond.');
       }
 
-      const s   = raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1);
-      const obj = JSON.parse(s) as VideoMetadata;
+      const obj = parseAiJson<VideoMetadata>(raw);
       if (!obj.title || !obj.description || !Array.isArray(obj.tags)) throw new Error('Missing fields');
       pipelineLogger.checkpoint('Viral metadata generated', true, `"${obj.title}"`);
       return obj;

@@ -1,6 +1,7 @@
 import sharp from 'sharp';
 import { FreeLlmApiClient } from '../ai/freellmapi';
 import { config } from '../config';
+import { parseAiJson } from '../utils/json';
 import { 
   IBrandingDetector, 
   BrandingDetectionResult, 
@@ -189,19 +190,11 @@ Return ONLY a raw JSON array of objects with the following schema — no markdow
         raw = await this.freellmapi.generateVision(prompt, base64, mimeType);
       }
 
-      const startIndex = raw.indexOf('[');
-      const endIndex = raw.lastIndexOf(']');
-      if (startIndex === -1 || endIndex === -1) {
-        pipelineLogger.info('AI Branding Detector returned empty or invalid response', 'AiBrandingDetector');
-        return [];
-      }
-
-      const s = raw.slice(startIndex, endIndex + 1);
-      const items = JSON.parse(s) as Array<{
+      const items = parseAiJson<Array<{
         type: 'logo' | 'watermark' | 'handle' | 'profile_name' | 'main_post_content';
         box: { x: number; y: number; width: number; height: number };
         description: string;
-      }>;
+      }>>(raw);
 
       const zones: BrandingZone[] = items.map((item, index) => ({
         id: `ai-branding-${index}`,

@@ -5,6 +5,7 @@ import { InfographicRenderer } from '../infographic-renderer';
 import { pipelineLogger } from '../utils/logger';
 import { config } from '../config';
 import { FreeLlmApiClient } from '../ai/freellmapi';
+import { parseAiJson } from '../utils/json';
 
 const CANVAS_W = 1080;
 const CANVAS_H = 1920;
@@ -21,32 +22,14 @@ export class PollinationsImageGenerator {
   }
 
   private parseContentJSON(raw: string): InfographicContent & { visualContext?: string } {
-    // Strip markdown fences
-    let s = raw.replace(/^```json\s*/i, '').replace(/\s*```\s*$/, '').trim();
-
-    // Extract the outermost JSON object
-    const start = s.indexOf('{');
-    const end   = s.lastIndexOf('}');
-    if (start === -1 || end === -1) {
-      pipelineLogger.warn(`Gemini response has no JSON object. Raw (first 500 chars):\n${raw.slice(0, 500)}`, 'PollinationsImageGenerator');
-      throw new Error('Gemini did not return a JSON object');
-    }
-    s = s.slice(start, end + 1);
-
-    let obj: Record<string, unknown>;
-    try {
-      obj = JSON.parse(s) as Record<string, unknown>;
-    } catch (e) {
-      pipelineLogger.warn(`Gemini JSON parse error: ${e}. Raw (first 500 chars):\n${raw.slice(0, 500)}`, 'PollinationsImageGenerator');
-      throw new Error(`Gemini returned malformed JSON: ${e}`);
-    }
+    const obj = parseAiJson<Record<string, unknown>>(raw);
 
     // Patch missing required fields rather than failing outright
     if (!obj.title)       obj.title       = 'TECH LIST';
     if (!obj.titleAccent) obj.titleAccent = 'TOOLS';
     if (!Array.isArray(obj.items) || (obj.items as unknown[]).length === 0) {
-      pipelineLogger.warn(`Gemini JSON missing items. Full object keys: ${Object.keys(obj).join(', ')}`, 'PollinationsImageGenerator');
-      throw new Error('Gemini JSON has no items array — cannot build infographic');
+      pipelineLogger.warn(`AI JSON missing items. Full object keys: ${Object.keys(obj).join(', ')}`, 'PollinationsImageGenerator');
+      throw new Error('AI JSON has no items array — cannot build infographic');
     }
 
     return obj as unknown as InfographicContent & { visualContext?: string };
