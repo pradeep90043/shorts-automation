@@ -40,6 +40,15 @@ async function bootstrap() {
 
   const uploader = new DirectUploader(telegramService);
 
+  // Resume any active pending jobs interrupted by a crash/restart
+  uploader.resumeAllPendingJobs().catch((err) => {
+    pipelineLogger.error(
+      "Failed to resume active jobs during bootstrap",
+      err,
+      "Bootstrap",
+    );
+  });
+
   // 4. Register pipeline trigger — image in → music + upload out
   telegramService.registerPipelineTrigger(async (context) => {
     await uploader.run(context);

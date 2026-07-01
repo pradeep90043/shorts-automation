@@ -12,6 +12,7 @@ import { pipelineLogger } from "./utils/logger";
 import { FreeLlmApiClient } from "./ai/freellmapi";
 import { parseAiJson } from "./utils/json";
 import { CacheManager, getFileHash } from "./utils/cache";
+import { JobDatabase } from "./utils/db";
 
 const REVIEW_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
 
@@ -36,6 +37,7 @@ export class DirectUploader {
   private youtube: YouTubeService;
   private telegram: TelegramService;
   private cacheManager = new CacheManager();
+  private db = new JobDatabase();
   private pending = new Map<string, PendingUpload>();
   private pendingFrameReviews = new Map<
     string,
@@ -449,6 +451,13 @@ Return ONLY raw JSON — no markdown:
         successMessageId,
       });
 
+      this.db.updateJob(id, {
+        status: "completed",
+        currentStep: "Short uploaded to all channels successfully",
+        youtubeUrl: results[0]?.url,
+        context: pending.context,
+      });
+
       // Clean up/delete the review video message and the original user message from Telegram
       await this.telegram.deleteMessage(chatId, reviewMessageId);
       if (messageId) {
@@ -468,6 +477,13 @@ Return ONLY raw JSON — no markdown:
         `❌ *Upload failed*\n\`${msg.slice(0, 300)}\``,
         messageId,
       );
+
+      this.db.updateJob(id, {
+        status: "failed",
+        currentStep: "Upload failed",
+        error: msg,
+        context: pending.context,
+      });
     }
 
     this.pending.delete(id);
@@ -687,6 +703,14 @@ Return ONLY raw JSON — no markdown:
     }
 
     try {
+      this.db.createJob(id, {
+        status: "pending",
+        currentStep: "Ingestion and setup completed",
+        source: `chat_${chatId}_msg_${messageId}`,
+        mediaType: isVideo ? "video" : "image",
+        context,
+      });
+
       await this.telegram.sendMessage(
         chatId,
         `⚙️ *Processing your ${mediaLabel}…*\n\`ID: ${id}\`\n\nGenerating metadata, editing video, adding music…`,
@@ -764,6 +788,15 @@ Return ONLY raw JSON — no markdown:
       if (!context.metadata || !context.brandingDetection) {
         await this.runUnifiedAiVision(originalImagePath, context);
       }
+
+      this.db.updateJob(id, {
+        status: "analyzing",
+        currentStep: "AI vision and metadata parsing complete",
+        visionResult: context.brandingDetection,
+        metadata: context.metadata,
+        mediaHash: context.mediaHash,
+        context,
+      });
 
       // Override with caption-provided metadata only if there's no active user prompt adjustment
       if (context.captionMetadata && !context.userPrompt) {
@@ -1282,6 +1315,14 @@ Return ONLY the rephrased caption text. No quotes, no explanations.`;
         });
       }
 
+      this.db.updateJob(id, {
+        status: "rendering_video",
+        currentStep: "Remotion rendering completed",
+        ocrResult: context.ocr,
+        caption: context.rephrasedCaption,
+        context,
+      });
+
       // ── FIRST FRAME LAYOUT REVIEW STEP ─────────────────────────────────────
       pipelineLogger.info(
         "Extracting first frame review image...",
@@ -1314,6 +1355,12 @@ Return ONLY the rephrased caption text. No quotes, no explanations.`;
         "DirectUploader",
       );
 
+      this.db.updateJob(id, {
+        status: "frame_review",
+        currentStep: "Frame sent for review. Waiting 1 minute.",
+        context,
+      });
+
       // Set 1-minute auto-approve timer
       const autoApproveTimer = setTimeout(async () => {
         pipelineLogger.info(
@@ -1345,6 +1392,13 @@ Return ONLY the rephrased caption text. No quotes, no explanations.`;
         `❌ *Processing failed*\n\`${context.error?.slice(0, 300)}\``,
         messageId,
       );
+
+      this.db.updateJob(id, {
+        status: "failed",
+        currentStep: "Pipeline execution failed",
+        error: context.error,
+        context,
+      });
     }
   }
 
@@ -1360,6 +1414,12 @@ Return ONLY the rephrased caption text. No quotes, no explanations.`;
     const messageId = context.telegramMeta.messageId;
 
     try {
+      this.db.updateJob(id, {
+        status: "adding_music",
+        currentStep: "Compiling video and mixing background audio",
+        context,
+      });
+
       // 3 — Add music
       const finalVideoPath = path.join(tempDir, "video_final.mp4");
       await this.music.addBackgroundMusic(
@@ -1427,6 +1487,12 @@ Return ONLY the rephrased caption text. No quotes, no explanations.`;
         context,
       });
 
+      this.db.updateJob(id, {
+        status: "final_review",
+        currentStep: "Video compiled. Waiting for final publish review.",
+        context,
+      });
+
       pipelineLogger.checkpoint(
         "Review sent to Telegram",
         true,
@@ -1443,6 +1509,13 @@ Return ONLY the rephrased caption text. No quotes, no explanations.`;
         `❌ *Video compilation failed:* \`${err instanceof Error ? err.message : err}\``,
         messageId,
       );
+
+      this.db.updateJob(id, {
+        status: "failed",
+        currentStep: "Video compilation failed",
+        error: err instanceof Error ? err.message : String(err),
+        context,
+      });
     }
   }
 
@@ -1530,5 +1603,51 @@ Return ONLY the rephrased caption text. No quotes, no explanations.`;
     });
 
     return true;
+  }
+
+  public async resumeAllPendingJobs(): Promise<void> {
+    const activeJobs = this.db.listActiveJobs();
+    if (activeJobs.length === 0) return;
+
+    pipelineLogger.checkpoint(
+      `Found ${activeJobs.length} active job(s) in DB to resume...`,
+      true,
+    );
+
+    for (const job of activeJobs) {
+      pipelineLogger.info(
+        `Resuming job ${job.id} (Status: ${job.status})...`,
+        "DirectUploader",
+      );
+
+      if (job.status === "frame_review") {
+        // Re-run pipeline to render layout and re-send review photo
+        this.run(job.context).catch((err) => {
+          pipelineLogger.error(
+            `Failed to resume job ${job.id}`,
+            err,
+            "DirectUploader",
+          );
+        });
+      } else if (job.status === "final_review") {
+        // Re-run layout approval steps to mix audio and re-send review video
+        this.resumeFromFrameApproval(job.context).catch((err) => {
+          pipelineLogger.error(
+            `Failed to resume job ${job.id}`,
+            err,
+            "DirectUploader",
+          );
+        });
+      } else {
+        // Re-run pipeline from the start (will hit cache for OCR/Vision speeds)
+        this.run(job.context).catch((err) => {
+          pipelineLogger.error(
+            `Failed to resume job ${job.id}`,
+            err,
+            "DirectUploader",
+          );
+        });
+      }
+    }
   }
 }
