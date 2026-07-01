@@ -884,6 +884,279 @@ Return ONLY raw JSON — no markdown:
         );
       }
 
+      // 2c — Render animated text layers via Remotion over the processed video
+      if (
+        context.ocr &&
+        context.ocr.detailedWords &&
+        context.ocr.detailedWords.length > 0
+      ) {
+        try {
+          // AI Caption Rephrasing & User Prompt logic
+          let rephrasedCaption = "";
+          const rawOcrText = context.ocr.text || "";
+
+          let aiPrompt = "";
+          if (context.userPrompt) {
+            aiPrompt = `You are a copywriting expert for a tech meme channel.
+Modify the video caption based on the user's instructions.
+User Instruction: "${context.userPrompt}"
+Original Video Text: "${rawOcrText}"
+
+Return ONLY the final caption text. Do not include social handles (words with '@'). No quotes, no explanations.`;
+          } else {
+            aiPrompt = `You are a copywriting expert for a tech meme channel.
+Take the raw OCR text extracted from a video clip, remove any social media handles (words containing '@') or watermarks, and rephrase it into a single, punchy, high-engagement caption in standard capitalization (Title Case). Keep it clean, under 12-15 words.
+
+OCR Text: "${rawOcrText}"
+
+Return ONLY the rephrased caption text. No quotes, no explanations.`;
+          }
+
+          if (this.freellmapi) {
+            try {
+              pipelineLogger.info(
+                "Rephrasing caption with AI...",
+                "DirectUploader",
+              );
+              const aiResponse = await this.freellmapi.generateText(aiPrompt);
+              rephrasedCaption = aiResponse.trim().replace(/^["']|["']$/g, "");
+              pipelineLogger.checkpoint(
+                "AI caption generated",
+                true,
+                rephrasedCaption,
+              );
+            } catch (err) {
+              pipelineLogger.warn(
+                `AI caption generation failed: ${err}. Falling back to clean OCR text.`,
+                "DirectUploader",
+              );
+              rephrasedCaption = rawOcrText
+                .split(/\s+/)
+                .filter((w) => !w.includes("@"))
+                .join(" ");
+            }
+          } else {
+            rephrasedCaption = rawOcrText
+              .split(/\s+/)
+              .filter((w) => !w.includes("@"))
+              .join(" ");
+          }
+
+          context.rephrasedCaption = rephrasedCaption;
+
+          pipelineLogger.info(
+            "Rendering animated text layers via Remotion...",
+            "DirectUploader",
+          );
+
+          // 1. Copy video_raw.mp4 to Remotion public/ directory
+          const remotionProjectDir = path.join(
+            __dirname,
+            "../website-audit-reel",
+          );
+          const remotionPublicDir = path.join(remotionProjectDir, "public");
+          if (!fs.existsSync(remotionPublicDir)) {
+            fs.mkdirSync(remotionPublicDir, { recursive: true });
+          }
+
+          const remotionInputPath = path.join(
+            remotionPublicDir,
+            "video_input.mp4",
+          );
+          fs.copyFileSync(rawVideoPath, remotionInputPath);
+
+          // 2. Map OCR words to final 1080x1920 coordinates
+          const analysis = context.analysis!;
+          const detection = context.brandingDetection!;
+
+          let yCropped = 0;
+          let hCropped = analysis.height;
+          let wCropped = analysis.width;
+          let hScaled = 1920;
+          let yOffset = 0;
+
+          if (isVideo) {
+            // Find edge zones to get exact cropping coordinates used by VideoRenderer
+            const edgeTopZones = detection.zones.filter(
+              (z) =>
+                !z.id.startsWith("ai-branding-") &&
+                z.boundingBox.y === 0 &&
+                z.boundingBox.height <= 0.12,
+            );
+            const edgeBottomZones = detection.zones.filter(
+              (z) =>
+                !z.id.startsWith("ai-branding-") &&
+                z.boundingBox.y + z.boundingBox.height >= 0.98 &&
+                z.boundingBox.height <= 0.12,
+            );
+
+            let cropTop = 0;
+            let cropBottom = 0;
+            if (edgeTopZones.length > 0) {
+              cropTop = Math.max(
+                ...edgeTopZones.map((z) => z.boundingBox.height),
+              );
+            }
+            if (edgeBottomZones.length > 0) {
+              cropBottom = Math.max(
+                ...edgeBottomZones.map((z) => z.boundingBox.height),
+              );
+            }
+
+            // Fallback defaults if they were used
+            const finalCropTop = cropTop > 0 ? cropTop : 0.08;
+            const finalCropBottom = cropBottom > 0 ? cropBottom : 0.08;
+
+            yCropped = Math.round(analysis.height * finalCropTop);
+            hCropped =
+              analysis.height -
+              yCropped -
+              Math.round(analysis.height * finalCropBottom);
+
+            const aspectTarget = 1080 / 1920;
+            const aspectCropped = wCropped / hCropped;
+
+            if (aspectCropped < aspectTarget) {
+              // Zoom-to-fill or height scaled
+              hScaled = 1920;
+              yOffset = 0;
+            } else {
+              hScaled = Math.round(1080 / aspectCropped);
+              yOffset = Math.round((1920 - hScaled) / 2);
+            }
+          }
+
+          const textLayers = context.ocr.detailedWords
+            .filter((word) => word.confidence >= 85)
+            .map((word) => {
+              const origX = word.bbox.x0;
+              const origY = word.bbox.y0;
+              const origW = word.bbox.x1 - word.bbox.x0;
+              const origH = word.bbox.y1 - word.bbox.y0;
+
+              const cropX = origX - 0; // xCropped is 0
+              const cropY = origY - yCropped;
+
+              const X_px = Math.round(cropX * (1080 / wCropped));
+              const Y_px = Math.round(cropY * (hScaled / hCropped)) + yOffset;
+              const W_px = Math.round(origW * (1080 / wCropped));
+              const H_px = Math.round(origH * (hScaled / hCropped));
+
+              const isMemeText = word.bbox.y0 < 665;
+
+              return {
+                text: word.text,
+                left: X_px,
+                top: Y_px,
+                width: W_px,
+                height: H_px,
+                isMemeText,
+              };
+            });
+
+          // 3. Prepare render props
+          const renderProps = {
+            mediaUrl: "video_input.mp4",
+            mediaType: "video",
+            textLayers,
+            memeCaption: context.rephrasedCaption || "",
+          };
+
+          const propsFile = path.join(tempDir, "remotion_props.json");
+          fs.writeFileSync(propsFile, JSON.stringify(renderProps));
+
+          // 4. Execute npx remotion render
+          const remotionOutputPath = path.join(
+            remotionPublicDir,
+            "video_output.mp4",
+          );
+
+          // Delete old output to prevent caching
+          if (fs.existsSync(remotionOutputPath)) {
+            fs.unlinkSync(remotionOutputPath);
+          }
+
+          // Detect raw video duration using ffprobe to match original duration exactly
+          let durationInFrames = 450; // fallback to 15 seconds
+          try {
+            const ffprobeCmd = `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${rawVideoPath}"`;
+            const durationSec = await new Promise<number>((resolve, reject) => {
+              exec(ffprobeCmd, (err, stdout) => {
+                if (err) reject(err);
+                else resolve(parseFloat(stdout.trim()));
+              });
+            });
+            if (!isNaN(durationSec) && durationSec > 0) {
+              durationInFrames = Math.round(durationSec * config.rendering.fps);
+              pipelineLogger.info(
+                `Detected raw video duration: ${durationSec}s (${durationInFrames} frames)`,
+                "DirectUploader",
+              );
+            }
+          } catch (err) {
+            pipelineLogger.warn(
+              `Failed to detect video duration via ffprobe: ${err instanceof Error ? err.message : err}. Falling back to default duration.`,
+              "DirectUploader",
+            );
+          }
+
+          pipelineLogger.info(
+            "Executing Remotion rendering CLI command...",
+            "DirectUploader",
+          );
+          const renderCmd = `npx remotion render DynamicText "${remotionOutputPath}" --props="${propsFile}" --duration=${durationInFrames}`;
+
+          await new Promise<void>((resolve, reject) => {
+            exec(
+              renderCmd,
+              { cwd: remotionProjectDir },
+              (err, stdout, stderr) => {
+                if (err) {
+                  pipelineLogger.error(
+                    "Remotion render CLI execution failed",
+                    stderr || err,
+                    "DirectUploader",
+                  );
+                  reject(err);
+                } else {
+                  pipelineLogger.info(
+                    `Remotion CLI output: ${stdout}`,
+                    "DirectUploader",
+                  );
+                  resolve();
+                }
+              },
+            );
+          });
+
+          // 5. Copy outputs back to rawVideoPath
+          if (fs.existsSync(remotionOutputPath)) {
+            fs.copyFileSync(remotionOutputPath, rawVideoPath);
+            pipelineLogger.checkpoint(
+              "✓ Remotion rendering completed successfully",
+              true,
+            );
+          } else {
+            throw new Error(
+              "Remotion output file not found after successful render command",
+            );
+          }
+
+          // Cleanup temp files
+          try {
+            fs.unlinkSync(remotionInputPath);
+            fs.unlinkSync(remotionOutputPath);
+            fs.unlinkSync(propsFile);
+          } catch (_) {}
+        } catch (remotionErr) {
+          pipelineLogger.error(
+            "Remotion rendering failed, falling back to standard video",
+            remotionErr,
+            "DirectUploader",
+          );
+        }
+      }
+
       // 3 — Add music
       const finalVideoPath = path.join(tempDir, "video_final.mp4");
       await this.music.addBackgroundMusic(

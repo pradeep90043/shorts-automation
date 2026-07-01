@@ -140,6 +140,7 @@ export interface PipelineContext {
   instagramSourceType?: "image" | "image_with_music" | "video";
   captionMetadata?: { title: string; description: string }; // user-provided title+description from Telegram caption
   userPrompt?: string; // custom re-generation prompt instruction from the user
+  rephrasedCaption?: string; // AI rephrased caption
 }
 
 export interface ITelegramService {
