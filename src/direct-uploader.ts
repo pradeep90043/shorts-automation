@@ -11,6 +11,7 @@ import { PipelineContext, VideoMetadata } from "./types";
 import { pipelineLogger } from "./utils/logger";
 import { FreeLlmApiClient } from "./ai/freellmapi";
 import { parseAiJson } from "./utils/json";
+import { CacheManager, getFileHash } from "./utils/cache";
 
 const REVIEW_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
 
@@ -34,6 +35,7 @@ export class DirectUploader {
   private music: MusicService;
   private youtube: YouTubeService;
   private telegram: TelegramService;
+  private cacheManager = new CacheManager();
   private pending = new Map<string, PendingUpload>();
   private pendingFrameReviews = new Map<
     string,
@@ -691,6 +693,54 @@ Return ONLY raw JSON — no markdown:
         messageId,
       );
 
+      // Compute media hash for caching
+      const sourceFileForHash =
+        isVideo && context.originalVideoPath
+          ? context.originalVideoPath
+          : originalImagePath;
+      let mediaHash = "";
+      try {
+        mediaHash = await getFileHash(sourceFileForHash);
+        context.mediaHash = mediaHash;
+        pipelineLogger.info(
+          `Calculated media file hash: ${mediaHash}`,
+          "DirectUploader",
+        );
+      } catch (hashErr) {
+        pipelineLogger.warn(
+          `Failed to calculate media file hash: ${hashErr}`,
+          "DirectUploader",
+        );
+      }
+
+      // Check cache
+      if (mediaHash) {
+        const cached = this.cacheManager.get(mediaHash);
+        if (cached) {
+          pipelineLogger.info(
+            `AI Cache hit for hash: ${mediaHash}`,
+            "DirectUploader",
+          );
+          context.brandingDetection = cached.brandingDetection;
+          context.ocr = cached.ocr;
+
+          if (!context.userPrompt) {
+            context.metadata = cached.metadata;
+            context.rephrasedCaption = cached.rephrasedCaption;
+            pipelineLogger.checkpoint(
+              "AI Cache hit — loaded metadata, vision, and OCR",
+              true,
+              mediaHash,
+            );
+          } else {
+            pipelineLogger.info(
+              "User prompt override present — reusing cached OCR and vision, but regenerating caption",
+              "DirectUploader",
+            );
+          }
+        }
+      }
+
       // If video, extract a frame first so AI vision and detection have access to it
       if (isVideo && context.originalVideoPath) {
         context.status = "analyzing";
@@ -710,8 +760,10 @@ Return ONLY raw JSON — no markdown:
         });
       }
 
-      // 1 — Metadata & Branding Detection (always run vision model to detect watermarks/branding)
-      await this.runUnifiedAiVision(originalImagePath, context);
+      // 1 — Metadata & Branding Detection (always run vision model to detect watermarks/branding if not cached)
+      if (!context.metadata || !context.brandingDetection) {
+        await this.runUnifiedAiVision(originalImagePath, context);
+      }
 
       // Override with caption-provided metadata only if there's no active user prompt adjustment
       if (context.captionMetadata && !context.userPrompt) {
@@ -1218,6 +1270,16 @@ Return ONLY the rephrased caption text. No quotes, no explanations.`;
             "DirectUploader",
           );
         }
+      }
+
+      // Save results to AI Cache
+      if (context.mediaHash) {
+        this.cacheManager.set(context.mediaHash, {
+          metadata: context.metadata,
+          brandingDetection: context.brandingDetection,
+          ocr: context.ocr,
+          rephrasedCaption: context.rephrasedCaption,
+        });
       }
 
       // ── FIRST FRAME LAYOUT REVIEW STEP ─────────────────────────────────────

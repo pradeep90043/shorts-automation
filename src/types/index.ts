@@ -141,6 +141,7 @@ export interface PipelineContext {
   captionMetadata?: { title: string; description: string }; // user-provided title+description from Telegram caption
   userPrompt?: string; // custom re-generation prompt instruction from the user
   rephrasedCaption?: string; // AI rephrased caption
+  mediaHash?: string; // SHA-256 fingerprint of media
 }
 
 export interface ITelegramService {
