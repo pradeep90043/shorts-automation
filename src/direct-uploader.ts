@@ -13,6 +13,7 @@ import { FreeLlmApiClient } from "./ai/freellmapi";
 import { parseAiJson } from "./utils/json";
 import { CacheManager, getFileHash } from "./utils/cache";
 import { JobDatabase } from "./utils/db";
+import { ViralAnalyzer } from "./utils/viral-analyzer";
 
 const REVIEW_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
 
@@ -38,6 +39,7 @@ export class DirectUploader {
   private telegram: TelegramService;
   private cacheManager = new CacheManager();
   private db = new JobDatabase();
+  private viralAnalyzer = new ViralAnalyzer();
   private pending = new Map<string, PendingUpload>();
   private pendingFrameReviews = new Map<
     string,
@@ -493,6 +495,15 @@ Return ONLY raw JSON — no markdown:
         youtubeUrl: results[0]?.url,
         context: pending.context,
       });
+
+      // Log upload to analytics feedback loop
+      this.viralAnalyzer.logUpload(
+        id,
+        metadata.title,
+        metadata.description,
+        metadata.tags,
+        results[0]?.url,
+      );
 
       // Clean up/delete the review video message and the original user message from Telegram
       await this.telegram.deleteMessage(chatId, reviewMessageId);
@@ -1083,6 +1094,7 @@ Return ONLY raw JSON — no markdown:
           const rawOcrText = context.ocr.text || "";
 
           let aiPrompt = "";
+          const viralPatterns = this.viralAnalyzer.getViralPatterns();
           if (context.userPrompt) {
             aiPrompt = `You are a copywriting expert for a tech meme channel.
 Modify the video caption based on the user's instructions.
@@ -1097,6 +1109,9 @@ Structure the caption into three sequential segments representing the viral stru
 Insert a double slash '//' at natural semantic phrasing boundaries where line breaks should occur. Keep each segment short (2 to 5 words). 
 For example:
 "[HOOK] This new AI tool // will replace // all devs [BODY] It builds websites // from a simple sketch // in seconds [CTA] Try it now! // Link in bio"
+
+Use the following historical copywriting analytics feedback as inspiration of viral patterns:
+${viralPatterns}
 
 Return ONLY the final caption text containing the segment prefix tags and double slashes. Do not include social handles (words with '@'). No quotes, no explanations.`;
           } else {
@@ -1113,6 +1128,9 @@ For example:
 "[HOOK] This new AI tool // will replace // all devs [BODY] It builds websites // from a simple sketch // in seconds [CTA] Try it now! // Link in bio"
 
 OCR Text: "${rawOcrText}"
+
+Use the following historical copywriting analytics feedback as inspiration of viral patterns:
+${viralPatterns}
 
 Return ONLY the rephrased caption text containing the segment prefix tags and double slashes. No quotes, no explanations.`;
           }
