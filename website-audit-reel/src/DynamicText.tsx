@@ -24,19 +24,38 @@ interface Props {
 }
 
 const splitTextIntoLines = (text: string, wordsPerLine = 4): TextLayer[][] => {
-  const words = text.split(/\s+/).filter(Boolean);
   const lines: TextLayer[][] = [];
-  for (let i = 0; i < words.length; i += wordsPerLine) {
-    const chunk = words.slice(i, i + wordsPerLine);
-    lines.push(
-      chunk.map((word) => ({
-        text: word,
-        left: 0,
-        top: 0,
-        width: 0,
-        height: 60, // base height for font scaling
-      }))
-    );
+
+  if (text.includes("//")) {
+    const segments = text.split("//").map((s) => s.trim()).filter(Boolean);
+    for (const segment of segments) {
+      const segmentWords = segment.split(/\s+/).filter(Boolean);
+      if (segmentWords.length > 0) {
+        lines.push(
+          segmentWords.map((word) => ({
+            text: word,
+            left: 0,
+            top: 0,
+            width: 0,
+            height: 60,
+          }))
+        );
+      }
+    }
+  } else {
+    const words = text.split(/\s+/).filter(Boolean);
+    for (let i = 0; i < words.length; i += wordsPerLine) {
+      const chunk = words.slice(i, i + wordsPerLine);
+      lines.push(
+        chunk.map((word) => ({
+          text: word,
+          left: 0,
+          top: 0,
+          width: 0,
+          height: 60,
+        }))
+      );
+    }
   }
   return lines;
 };

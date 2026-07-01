@@ -1050,14 +1050,20 @@ Modify the video caption based on the user's instructions.
 User Instruction: "${context.userPrompt}"
 Original Video Text: "${rawOcrText}"
 
-Return ONLY the final caption text. Do not include social handles (words with '@'). No quotes, no explanations.`;
+Insert a double slash '//' at natural semantic phrasing boundaries where line breaks should occur. Keep each segment short (2 to 5 words). 
+For example: "This new AI tool // will replace // all frontend developers // in months"
+
+Return ONLY the final caption text containing the double slashes. Do not include social handles (words with '@'). No quotes, no explanations.`;
           } else {
             aiPrompt = `You are a copywriting expert for a tech meme channel.
 Take the raw OCR text extracted from a video clip, remove any social media handles (words containing '@') or watermarks, and rephrase it into a single, punchy, high-engagement caption in standard capitalization (Title Case). Keep it clean, under 12-15 words.
 
+Insert a double slash '//' at natural semantic phrasing boundaries where line breaks should occur. Keep each segment short (2 to 5 words). 
+For example: "This new AI tool // will replace // all frontend developers // in months"
+
 OCR Text: "${rawOcrText}"
 
-Return ONLY the rephrased caption text. No quotes, no explanations.`;
+Return ONLY the rephrased caption text containing the double slashes. No quotes, no explanations.`;
           }
 
           if (this.freellmapi) {
