@@ -141,6 +141,13 @@ export class ViralAnalyzer {
   }
 
   /**
+   * Retrieve all records from the analytics database.
+   */
+  public getRecords(): AnalyticsRecord[] {
+    return this.readDb();
+  }
+
+  /**
    * Extract high-performing keywords, title shapes, and hashtags to feed into LLM prompts.
    */
   public getViralPatterns(): string {

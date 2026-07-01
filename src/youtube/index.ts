@@ -194,4 +194,65 @@ export class YouTubeService {
       return false;
     }
   }
+
+  /**
+   * Fetch statistics (views, likes, comments) for a YouTube video.
+   * Runs actual YouTube list query or returns simulated statistics in test modes.
+   */
+  public async getVideoMetrics(
+    channelName: string,
+    videoId: string,
+  ): Promise<{ views: number; likes: number; comments: number } | null> {
+    const { clientId, clientSecret, redirectUri } = config.youtube;
+    const channel = config.youtube.channels.find(
+      (ch) => ch.name === channelName,
+    );
+
+    if (
+      videoId.startsWith("sim-") ||
+      !clientId ||
+      !clientSecret ||
+      !channel ||
+      !channel.refreshToken
+    ) {
+      // Simulation mode fallback
+      const fakeViews = Math.floor(Math.random() * 4500) + 100;
+      return {
+        views: fakeViews,
+        likes: Math.floor(fakeViews * 0.07),
+        comments: Math.floor(fakeViews * 0.008),
+      };
+    }
+
+    try {
+      const oauth2 = new google.auth.OAuth2(
+        clientId,
+        clientSecret,
+        redirectUri,
+      );
+      oauth2.setCredentials({ refresh_token: channel.refreshToken });
+
+      const yt = google.youtube({ version: "v3", auth: oauth2 });
+      const response = await yt.videos.list({
+        id: [videoId],
+        part: ["statistics"],
+      });
+
+      const stats = response.data.items?.[0]?.statistics;
+      if (!stats) return null;
+
+      return {
+        views: parseInt(stats.viewCount || "0", 10),
+        likes: parseInt(stats.likeCount || "0", 10),
+        comments: parseInt(stats.commentCount || "0", 10),
+      };
+    } catch (err) {
+      pipelineLogger.error(
+        `[${channelName}] Failed to fetch metrics for video ${videoId}`,
+        err,
+        "YouTubeService",
+      );
+      return null;
+    }
+  }
 }
