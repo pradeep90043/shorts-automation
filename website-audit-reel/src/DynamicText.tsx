@@ -142,8 +142,38 @@ export const DynamicTextComposition: React.FC<Props> = ({
     };
   }
 
-  const memeLines = memeCaption.trim().length > 0
-    ? splitTextIntoLines(memeCaption)
+  // Parse HOOK, BODY, CTA segments for dynamic caption timing
+  let hookText = "";
+  let bodyText = "";
+  let ctaText = "";
+
+  const hookMatch = memeCaption.match(/\[HOOK\](.*?)(\[BODY\]|\[CTA\]|$)/is);
+  const bodyMatch = memeCaption.match(/\[BODY\](.*?)(\[CTA\]|$)/is);
+  const ctaMatch = memeCaption.match(/\[CTA\](.*?)$/is);
+
+  if (hookMatch || bodyMatch || ctaMatch) {
+    hookText = hookMatch ? hookMatch[1].trim() : "";
+    bodyText = bodyMatch ? bodyMatch[1].trim() : "";
+    ctaText = ctaMatch ? ctaMatch[1].trim() : "";
+  }
+
+  let activeCaption = memeCaption;
+  if (hookText || bodyText || ctaText) {
+    const hookDurationFrames = 3 * fps; // first 3s
+    const ctaDurationFrames = 2 * fps; // last 2s
+    const totalDurationFrames = durationInFrames;
+
+    if (frame < hookDurationFrames && hookText) {
+      activeCaption = hookText;
+    } else if (frame >= totalDurationFrames - ctaDurationFrames && ctaText) {
+      activeCaption = ctaText;
+    } else {
+      activeCaption = bodyText || hookText || ctaText;
+    }
+  }
+
+  const memeLines = activeCaption.trim().length > 0
+    ? splitTextIntoLines(activeCaption)
     : groupWordsIntoLines(memeLayers);
   const nonMemeLayers = textLayers.filter((l) => !l.isMemeText);
 

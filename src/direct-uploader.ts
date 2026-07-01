@@ -1074,8 +1074,8 @@ Return ONLY raw JSON — no markdown:
       // 2c — Render animated text layers via Remotion over the processed video
       if (
         context.ocr &&
-        context.ocr.detailedWords &&
-        context.ocr.detailedWords.length > 0
+        context.ocr.text &&
+        context.ocr.text.trim().length > 0
       ) {
         try {
           // AI Caption Rephrasing & User Prompt logic
@@ -1089,20 +1089,32 @@ Modify the video caption based on the user's instructions.
 User Instruction: "${context.userPrompt}"
 Original Video Text: "${rawOcrText}"
 
-Insert a double slash '//' at natural semantic phrasing boundaries where line breaks should occur. Keep each segment short (2 to 5 words). 
-For example: "This new AI tool // will replace // all frontend developers // in months"
+Structure the caption into three sequential segments representing the viral structure of the Short:
+1. Hook (shown in the first 3 seconds): A scroll-stopping hook statement prefixed with '[HOOK]'.
+2. Body (shown in the middle): The main insight/content prefixed with '[BODY]'.
+3. CTA (shown in the last 2 seconds): A clear call to action (e.g. 'Follow for more!', 'Try it now!') prefixed with '[CTA]'.
 
-Return ONLY the final caption text containing the double slashes. Do not include social handles (words with '@'). No quotes, no explanations.`;
+Insert a double slash '//' at natural semantic phrasing boundaries where line breaks should occur. Keep each segment short (2 to 5 words). 
+For example:
+"[HOOK] This new AI tool // will replace // all devs [BODY] It builds websites // from a simple sketch // in seconds [CTA] Try it now! // Link in bio"
+
+Return ONLY the final caption text containing the segment prefix tags and double slashes. Do not include social handles (words with '@'). No quotes, no explanations.`;
           } else {
             aiPrompt = `You are a copywriting expert for a tech meme channel.
 Take the raw OCR text extracted from a video clip, remove any social media handles (words containing '@') or watermarks, and rephrase it into a single, punchy, high-engagement caption in standard capitalization (Title Case). Keep it clean, under 12-15 words.
 
+Structure the caption into three sequential segments representing the viral structure of the Short:
+1. Hook (shown in the first 3 seconds): A scroll-stopping hook statement prefixed with '[HOOK]'.
+2. Body (shown in the middle): The main insight/content prefixed with '[BODY]'.
+3. CTA (shown in the last 2 seconds): A clear call to action (e.g. 'Follow for more!', 'Try it now!') prefixed with '[CTA]'.
+
 Insert a double slash '//' at natural semantic phrasing boundaries where line breaks should occur. Keep each segment short (2 to 5 words). 
-For example: "This new AI tool // will replace // all frontend developers // in months"
+For example:
+"[HOOK] This new AI tool // will replace // all devs [BODY] It builds websites // from a simple sketch // in seconds [CTA] Try it now! // Link in bio"
 
 OCR Text: "${rawOcrText}"
 
-Return ONLY the rephrased caption text containing the double slashes. No quotes, no explanations.`;
+Return ONLY the rephrased caption text containing the segment prefix tags and double slashes. No quotes, no explanations.`;
           }
 
           if (this.freellmapi) {
