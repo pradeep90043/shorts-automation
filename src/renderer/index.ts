@@ -491,7 +491,7 @@ export class VideoRenderer implements IVideoRenderer {
     const fps = options.fps;
     let finalCmd = "";
     if (hasWatermark) {
-      finalCmd = `ffmpeg -y -i "${videoPath}" -i "${watermarkPath}" -filter_complex "${filterChain}; [${currentLabel}][1:v]overlay=(W-w)/2:(H-h)/2[out]" -map "[out]" -map 0:a? -c:v libx264 -preset ultrafast -pix_fmt yuv420p -r ${fps} -c:a copy "${outputPath}"`;
+      finalCmd = `ffmpeg -y -i "${videoPath}" -i "${watermarkPath}" -filter_complex "${filterChain}; [${currentLabel}][1:v]overlay=W-w-40:H-h-40[out]" -map "[out]" -map 0:a? -c:v libx264 -preset ultrafast -pix_fmt yuv420p -r ${fps} -c:a copy "${outputPath}"`;
     } else {
       finalCmd = `ffmpeg -y -i "${videoPath}" -filter_complex "${filterChain}" -map "[${currentLabel}]" -map 0:a? -c:v libx264 -preset ultrafast -pix_fmt yuv420p -r ${fps} -c:a copy "${outputPath}"`;
     }
