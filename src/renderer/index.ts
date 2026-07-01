@@ -397,7 +397,11 @@ export class VideoRenderer implements IVideoRenderer {
     const middleWatermarks = zones.filter((z) => {
       if (!z.id.startsWith("ai-branding-") && !z.id.startsWith("ocr-"))
         return false;
-      if (z.type === "main_post_content") return false;
+      if (
+        z.type === "main_post_content" ||
+        (z.type as string) === "original_captions"
+      )
+        return false;
       const box = z.boundingBox;
 
       const xRel = box.x * analysis.width;

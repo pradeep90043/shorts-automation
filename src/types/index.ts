@@ -26,7 +26,8 @@ export interface BrandingZone {
     | "handle"
     | "profile_name"
     | "other"
-    | "main_post_content";
+    | "main_post_content"
+    | "original_captions";
   // Bounding box: normalized coordinates [0, 1] relative to image width and height
   boundingBox: {
     x: number; // Top-left X

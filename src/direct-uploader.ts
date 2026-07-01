@@ -139,22 +139,26 @@ export class DirectUploader {
 Analyze this video frame/image and perform two tasks:
 
 TASK 1: Brand/Watermark/Content Detection
-Detect the exact coordinates of any branding, watermarks, profile pictures, usernames/handles, logos, or app overlays of other creators. Also, if this image shows a full Instagram page/embed layout, detect the boundaries of the main content media box. Locate them and return their bounding boxes in normalized coordinates relative to the image size (value between 0.0 and 1.0).
+Detect the exact coordinates of any branding, watermarks, profile pictures, usernames/handles, logos, or app overlays of other creators. Also, if this image shows a full Instagram page/embed layout, detect the boundaries of the main content media box. Detect the exact bounding box of any original captions or meme text written on the image. Locate them and return their bounding boxes in normalized coordinates relative to the image size (value between 0.0 and 1.0).
 Search for:
 - profile picture (e.g. circle image showing a person/logo in top-left or bottom-left)
 - profile name / username / handle (e.g. "@username", "username" in top-left or bottom-left)
 - watermarks or logos (e.g. Instagram logo, TikTok watermark, other channel logo)
 - actions panel (e.g. reels interaction panel on the right with like/comment/share icons)
 - main_post_content (e.g. if the image contains a full post layout, comments, or web view headers, detect the bounding box of the central post image/media box itself, excluding headers, comments, likes, and footer chrome)
+- original_captions (e.g. the main meme text/caption written on the top or center of the frame in white/black outlines)
 
 If no such elements are present, return an empty array for brandingZones.
 
-  TASK 2: YouTube Shorts Metadata & Mood Generation
+TASK 2: YouTube Shorts Metadata & Mood Generation
 Based on the content in the image, write high-CTR, scroll-stopping, SEO-optimized metadata and identify the mood of the content.
 - title: curiosity-driven, punchy, under 80 chars. Use power words and emojis.
 - description: 2-3 sentences explaining the value. End with 5-6 hashtags. Max 400 chars.
 - tags: 10-12 specific tags.
-- mood: Determine the emotional tone or theme of the content. Choose exactly one of: "funny", "sad", or "other" (for general, educational, motivational, or tech tips).
+- mood: Determine the emotional tone or theme of the content. Choose exactly one of: "funny", "sad", or "other".
+
+TASK 3: Verbatim Text Extraction
+Read all text written on the image exactly as it appears verbatim, without correcting spelling, punctuation, or formatting. If there is no text, return an empty string.
 
 Return ONLY a raw JSON object matching this schema — no markdown, no explanation:
 {
@@ -166,7 +170,7 @@ Return ONLY a raw JSON object matching this schema — no markdown, no explanati
   },
   "brandingZones": [
     {
-      "type": "logo" | "watermark" | "handle" | "profile_name" | "main_post_content",
+      "type": "logo" | "watermark" | "handle" | "profile_name" | "main_post_content" | "original_captions",
       "box": {
         "x": number,
         "y": number,
@@ -175,7 +179,8 @@ Return ONLY a raw JSON object matching this schema — no markdown, no explanati
       },
       "description": string
     }
-  ]
+  ],
+  "extractedText": string
 }`;
 
       if (context.userPrompt) {
@@ -203,10 +208,17 @@ Important:
       const data = parseAiJson<{
         metadata: VideoMetadata;
         brandingZones: Array<{
-          type: "logo" | "watermark" | "handle" | "profile_name";
+          type:
+            | "logo"
+            | "watermark"
+            | "handle"
+            | "profile_name"
+            | "main_post_content"
+            | "original_captions";
           box: { x: number; y: number; width: number; height: number };
           description: string;
         }>;
+        extractedText?: string;
       }>(raw);
 
       if (
@@ -219,6 +231,21 @@ Important:
       }
 
       context.metadata = data.metadata;
+
+      // Vision-first Text Extraction: If Vision LLM read text verbatim, set it as pre-populated OCR
+      if (data.extractedText && data.extractedText.trim().length > 0) {
+        const verbatimText = data.extractedText.trim();
+        context.ocr = {
+          text: verbatimText,
+          confidence: 98,
+          words: verbatimText.split(/\s+/).filter(Boolean),
+          detailedWords: [],
+        };
+        pipelineLogger.info(
+          `Vision AI successfully extracted verbatim text from image. OCR will be bypassed: "${verbatimText}"`,
+          "DirectUploader",
+        );
+      }
 
       const zones = (data.brandingZones || []).map((item, index) => ({
         id: `ai-branding-${index}`,
@@ -838,9 +865,11 @@ Return ONLY raw JSON — no markdown:
           },
         );
       } else {
-        // 2a — Blur other branding zones (logo, watermark, handle, profile_name, other) on the static image
+        // 2a — Blur other branding zones (logo, watermark, handle, profile_name, other) on the static image (excluding original_captions)
         const otherZones = context.brandingDetection?.zones.filter(
-          (z) => z.type !== "main_post_content",
+          (z) =>
+            z.type !== "main_post_content" &&
+            (z.type as string) !== "original_captions",
         );
         if (otherZones && otherZones.length > 0) {
           try {
@@ -1180,33 +1209,60 @@ Return ONLY the rephrased caption text containing the double slashes. No quotes,
             }
           }
 
-          const textLayers = context.ocr.detailedWords
-            .filter((word) => word.confidence >= 85)
-            .map((word) => {
-              const origX = word.bbox.x0;
-              const origY = word.bbox.y0;
-              const origW = word.bbox.x1 - word.bbox.x0;
-              const origH = word.bbox.y1 - word.bbox.y0;
+          let textLayers = [];
+          if (
+            context.ocr.detailedWords &&
+            context.ocr.detailedWords.length > 0
+          ) {
+            textLayers = context.ocr.detailedWords
+              .filter((word) => word.confidence >= 85)
+              .map((word) => {
+                const origX = word.bbox.x0;
+                const origY = word.bbox.y0;
+                const origW = word.bbox.x1 - word.bbox.x0;
+                const origH = word.bbox.y1 - word.bbox.y0;
 
-              const cropX = origX - 0; // xCropped is 0
-              const cropY = origY - yCropped;
+                const cropX = origX - 0; // xCropped is 0
+                const cropY = origY - yCropped;
 
-              const X_px = Math.round(cropX * (1080 / wCropped));
-              const Y_px = Math.round(cropY * (hScaled / hCropped)) + yOffset;
-              const W_px = Math.round(origW * (1080 / wCropped));
-              const H_px = Math.round(origH * (hScaled / hCropped));
+                const X_px = Math.round(cropX * (1080 / wCropped));
+                const Y_px = Math.round(cropY * (hScaled / hCropped)) + yOffset;
+                const W_px = Math.round(origW * (1080 / wCropped));
+                const H_px = Math.round(origH * (hScaled / hCropped));
 
-              const isMemeText = word.bbox.y0 < 665;
+                const isMemeText = word.bbox.y0 < 665;
 
-              return {
-                text: word.text,
-                left: X_px,
-                top: Y_px,
-                width: W_px,
-                height: H_px,
-                isMemeText,
-              };
-            });
+                return {
+                  text: word.text,
+                  left: X_px,
+                  top: Y_px,
+                  width: W_px,
+                  height: H_px,
+                  isMemeText,
+                };
+              });
+          } else {
+            // Fallback: Map original_captions branding detection zones to textLayers
+            const captionZones = detection.zones.filter(
+              (z) => (z.type as string) === "original_captions",
+            );
+            for (const cz of captionZones) {
+              const box = cz.boundingBox;
+              const x = Math.round(box.x * 1080);
+              const y = Math.round(box.y * 1920);
+              const w = Math.round(box.width * 1080);
+              const h = Math.round(box.height * 1920);
+
+              textLayers.push({
+                text: "CAPTION_PLACEHOLDER",
+                left: x,
+                top: y,
+                width: w,
+                height: h,
+                isMemeText: true,
+              });
+            }
+          }
 
           // 3. Prepare render props
           const renderProps = {
