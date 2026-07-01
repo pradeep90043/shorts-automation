@@ -105,11 +105,11 @@ export const DynamicTextComposition: React.FC<Props> = ({
     const minLeft = Math.min(...memeLayers.map((l) => l.left));
     const maxRight = Math.max(...memeLayers.map((l) => l.left + l.width));
 
-    // Pad the covering block slightly (12px horizontal, 8px vertical) for complete coverage
+    // Pad the covering block slightly (8px vertical) for complete coverage and stretch full width
     maskBox = {
-      left: Math.max(0, minLeft - 12),
+      left: 0,
       top: Math.max(0, minTop - 8),
-      width: Math.min(1080, maxRight - minLeft + 24),
+      width: 1080,
       height: Math.min(1920, maxBottom - minTop + 16),
     };
   }

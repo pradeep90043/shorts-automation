@@ -434,15 +434,13 @@ export class VideoRenderer implements IVideoRenderer {
       (w) => w.bbox.y0 < 665,
     );
     if (memeWords.length > 0) {
-      const minX = Math.min(...memeWords.map((w) => w.bbox.x0));
-      const maxX = Math.max(...memeWords.map((w) => w.bbox.x1));
       const minY = Math.min(...memeWords.map((w) => w.bbox.y0));
       const maxY = Math.max(...memeWords.map((w) => w.bbox.y1));
 
-      // Pad slightly to cover the text area completely
-      const origX = Math.max(0, minX - 12);
+      // Pad slightly to cover the text area completely and stretch full horizontal width
+      const origX = 0;
       const origY = Math.max(0, minY - 8);
-      const origW = Math.min(analysis.width - origX, maxX - minX + 24);
+      const origW = analysis.width;
       const origH = Math.min(analysis.height - origY, maxY - minY + 16);
 
       const cropX = origX - xCropped;
