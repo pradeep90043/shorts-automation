@@ -24,6 +24,7 @@ export interface JobEntry {
   caption?: string;
   metadata?: VideoMetadata;
   youtubeUrl?: string;
+  safeArea?: { x: number; y: number; width: number; height: number };
   error?: string;
   createdAt: string;
   updatedAt: string;

@@ -219,6 +219,7 @@ Important:
           description: string;
         }>;
         extractedText?: string;
+        safeArea?: { x: number; y: number; width: number; height: number };
       }>(raw);
 
       if (
@@ -243,6 +244,14 @@ Important:
         };
         pipelineLogger.info(
           `Vision AI successfully extracted verbatim text from image. OCR will be bypassed: "${verbatimText}"`,
+          "DirectUploader",
+        );
+      }
+
+      if (data.safeArea) {
+        context.safeArea = data.safeArea;
+        pipelineLogger.info(
+          `Vision AI successfully detected safe area: x=${context.safeArea.x}, y=${context.safeArea.y}, w=${context.safeArea.width}, h=${context.safeArea.height}`,
           "DirectUploader",
         );
       }
@@ -774,6 +783,7 @@ Return ONLY raw JSON — no markdown:
           );
           context.brandingDetection = cached.brandingDetection;
           context.ocr = cached.ocr;
+          context.safeArea = cached.safeArea;
 
           if (!context.userPrompt) {
             context.metadata = cached.metadata;
@@ -1270,6 +1280,7 @@ Return ONLY the rephrased caption text containing the double slashes. No quotes,
             mediaType: "video",
             textLayers,
             memeCaption: context.rephrasedCaption || "",
+            safeArea: context.safeArea,
           };
 
           const propsFile = path.join(tempDir, "remotion_props.json");
@@ -1374,6 +1385,7 @@ Return ONLY the rephrased caption text containing the double slashes. No quotes,
           brandingDetection: context.brandingDetection,
           ocr: context.ocr,
           rephrasedCaption: context.rephrasedCaption,
+          safeArea: context.safeArea,
         });
       }
 
@@ -1382,6 +1394,7 @@ Return ONLY the rephrased caption text containing the double slashes. No quotes,
         currentStep: "Remotion rendering completed",
         ocrResult: context.ocr,
         caption: context.rephrasedCaption,
+        safeArea: context.safeArea,
         context,
       });
 

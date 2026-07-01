@@ -11,6 +11,7 @@ export interface CacheEntry {
   brandingDetection?: BrandingDetectionResult;
   ocr?: OcrResult;
   rephrasedCaption?: string;
+  safeArea?: { x: number; y: number; width: number; height: number };
   createdAt: string;
 }
 

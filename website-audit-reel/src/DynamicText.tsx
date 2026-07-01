@@ -21,6 +21,7 @@ interface Props {
   mediaType?: "video" | "image";
   textLayers?: TextLayer[];
   memeCaption?: string;
+  safeArea?: { x: number; y: number; width: number; height: number };
 }
 
 const splitTextIntoLines = (text: string, wordsPerLine = 4): TextLayer[][] => {
@@ -111,9 +112,19 @@ export const DynamicTextComposition: React.FC<Props> = ({
   mediaType = "video",
   textLayers = [],
   memeCaption = "",
+  safeArea,
 }) => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames } = useVideoConfig();
+
+  const safeAreaPx = safeArea
+    ? {
+        left: Math.round(safeArea.x * 1080),
+        top: Math.round(safeArea.y * 1920),
+        width: Math.round(safeArea.width * 1080),
+        height: Math.round(safeArea.height * 1920),
+      }
+    : null;
 
   // Compute the combined bounding box of all top black bar meme text to cover it completely in one solid block
   const memeLayers = textLayers.filter((l) => l.isMemeText);
@@ -319,8 +330,31 @@ export const DynamicTextComposition: React.FC<Props> = ({
         >
           {renderMemeText()}
         </div>
+      ) : safeAreaPx ? (
+        /* If AI-detected safe area is provided, render inside it to avoid covering faces/UI */
+        memeLines.length > 0 && (
+          <div
+            style={{
+              position: "absolute",
+              left: `${safeAreaPx.left}px`,
+              top: `${safeAreaPx.top}px`,
+              width: `${safeAreaPx.width}px`,
+              height: `${safeAreaPx.height}px`,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "14px",
+              transform: `scale(${blockScale})`,
+              opacity: blockOpacity,
+              zIndex: 10,
+            }}
+          >
+            {renderMemeText()}
+          </div>
+        )
       ) : (
-        /* If no text was at the top, center the captions in the lower third */
+        /* Default fallback: center the captions in the lower third */
         memeLines.length > 0 && (
           <div
             style={{

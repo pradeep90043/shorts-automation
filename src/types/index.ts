@@ -143,6 +143,7 @@ export interface PipelineContext {
   userPrompt?: string; // custom re-generation prompt instruction from the user
   rephrasedCaption?: string; // AI rephrased caption
   mediaHash?: string; // SHA-256 fingerprint of media
+  safeArea?: { x: number; y: number; width: number; height: number }; // AI detected safe area coordinates
 }
 
 export interface ITelegramService {
