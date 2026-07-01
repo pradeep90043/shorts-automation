@@ -1527,6 +1527,21 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       const outputFilePath = path.join(config.paths.outputDir, outputFileName);
       fs.copyFileSync(finalVideoPath, outputFilePath);
 
+      // Copy frame layout photo as video thumbnail
+      const thumbnailFileName = `${safeTitle}_${id}.png`;
+      const thumbnailFilePath = path.join(
+        config.paths.outputDir,
+        thumbnailFileName,
+      );
+      const reviewFramePath = path.join(tempDir, "first_frame_review.png");
+      if (fs.existsSync(reviewFramePath)) {
+        fs.copyFileSync(reviewFramePath, thumbnailFilePath);
+        pipelineLogger.info(
+          `Thumbnail generated and saved to output: ${thumbnailFileName}`,
+          "DirectUploader",
+        );
+      }
+
       // 5 — Send video to Telegram for review
       const caption =
         `📋 *Review your Short*\n\n` +
