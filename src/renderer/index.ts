@@ -429,35 +429,6 @@ export class VideoRenderer implements IVideoRenderer {
       blurRegions.push({ x: safeX, y: safeY, width: safeW, height: safeH });
     }
 
-    // Process meme text bounding box to apply a dense blur over it in dynamic video scenarios
-    const memeWords = (context.ocr?.detailedWords || []).filter(
-      (w) => w.bbox.y0 < 665,
-    );
-    if (memeWords.length > 0) {
-      const minY = Math.min(...memeWords.map((w) => w.bbox.y0));
-      const maxY = Math.max(...memeWords.map((w) => w.bbox.y1));
-
-      // Pad slightly to cover the text area completely and stretch full horizontal width
-      const origX = 0;
-      const origY = Math.max(0, minY - 8);
-      const origW = analysis.width;
-      const origH = Math.min(analysis.height - origY, maxY - minY + 16);
-
-      const cropX = origX - xCropped;
-      const cropY = origY - yCropped;
-
-      const safeX = Math.max(0, Math.min(wCropped - 10, cropX));
-      const safeY = Math.max(0, Math.min(hCropped - 10, cropY));
-      const safeW = Math.max(10, Math.min(wCropped - safeX, origW));
-      const safeH = Math.max(10, Math.min(hCropped - safeY, origH));
-
-      blurRegions.push({ x: safeX, y: safeY, width: safeW, height: safeH });
-      pipelineLogger.info(
-        `Added meme text region to FFmpeg blur filters at x:${safeX} y:${safeY} w:${safeW} h:${safeH}`,
-        "VideoRenderer",
-      );
-    }
-
     pipelineLogger.info(
       `Total blur regions prepared: ${blurRegions.length}`,
       "VideoRenderer",

@@ -102,8 +102,6 @@ export const DynamicTextComposition: React.FC<Props> = ({
   if (memeLayers.length > 0) {
     const minTop = Math.min(...memeLayers.map((l) => l.top));
     const maxBottom = Math.max(...memeLayers.map((l) => l.top + l.height));
-    const minLeft = Math.min(...memeLayers.map((l) => l.left));
-    const maxRight = Math.max(...memeLayers.map((l) => l.left + l.width));
 
     // Pad the covering block slightly (8px vertical) for complete coverage and stretch full width
     maskBox = {
@@ -266,7 +264,7 @@ export const DynamicTextComposition: React.FC<Props> = ({
       )}
 
       {/* 2. Combined Background Mask to wipe out original text block completely */}
-      {maskBox && mediaType !== "video" && (
+      {maskBox && (
         <div
           style={{
             position: "absolute",
