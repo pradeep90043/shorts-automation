@@ -413,14 +413,28 @@ export class TelegramService implements ITelegramService {
         regenerate: "🔄 Regenerating…",
         viral: "🎯 Making it viral…",
       };
-      await ctx.answerCbQuery(ackMap[action]);
+      try {
+        await ctx.answerCbQuery(ackMap[action]);
+      } catch (err) {
+        pipelineLogger.warn(
+          `Failed to answer callback query: ${err instanceof Error ? err.message : err}`,
+          "Telegram",
+        );
+      }
       if (this.reviewCallback) this.reviewCallback(action, id);
     });
 
     // Handle revoke inline button callbacks
     this.bot.action(/^rvk_(.+)$/, async (ctx) => {
       const id = ctx.match[1];
-      await ctx.answerCbQuery("🗑️ Revoking upload…");
+      try {
+        await ctx.answerCbQuery("🗑️ Revoking upload…");
+      } catch (err) {
+        pipelineLogger.warn(
+          `Failed to answer callback query: ${err instanceof Error ? err.message : err}`,
+          "Telegram",
+        );
+      }
       if (this.revokeCallback) {
         await this.revokeCallback(id);
       }
