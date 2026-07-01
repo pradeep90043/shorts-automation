@@ -12,6 +12,7 @@ export interface CacheEntry {
   ocr?: OcrResult;
   rephrasedCaption?: string;
   safeArea?: { x: number; y: number; width: number; height: number };
+  qualityScore?: any;
   createdAt: string;
 }
 

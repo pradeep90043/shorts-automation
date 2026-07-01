@@ -144,6 +144,12 @@ export interface PipelineContext {
   rephrasedCaption?: string; // AI rephrased caption
   mediaHash?: string; // SHA-256 fingerprint of media
   safeArea?: { x: number; y: number; width: number; height: number }; // AI detected safe area coordinates
+  qualityScore?: {
+    readability: number;
+    watermarkRisk: number;
+    isStandardMemeStyle: boolean;
+    recommendation: string;
+  }; // AI quality check scores
 }
 
 export interface ITelegramService {

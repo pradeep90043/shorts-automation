@@ -162,6 +162,16 @@ Based on the content in the image, write high-CTR, scroll-stopping, SEO-optimize
 TASK 3: Verbatim Text Extraction
 Read all text written on the image exactly as it appears verbatim, without correcting spelling, punctuation, or formatting. If there is no text, return an empty string.
 
+TASK 4: Safe Area for Caption Placement
+Identify a normalized bounding box clear of faces, logos, watermarks, handles, or action overlay panels where dynamic text overlays can be cleanly placed without covering essential content. If captions are at the top, select the top banner. Otherwise, select a bottom region (e.g. y=0.7 to 0.85).
+
+TASK 5: Quality Assessment
+Evaluate the image quality, text readability, watermark risk, and style format:
+- readability: rating from 0 (illegible) to 100 (high contrast, crisp text).
+- watermarkRisk: rating from 0 (no handles/branding) to 100 (unwanted handle overlays).
+- isStandardMemeStyle: boolean (true if standard black banner meme or infographic layout).
+- recommendation: text describing editing recommendations.
+
 Return ONLY a raw JSON object matching this schema — no markdown, no explanation:
 {
   "metadata": {
@@ -182,7 +192,19 @@ Return ONLY a raw JSON object matching this schema — no markdown, no explanati
       "description": string
     }
   ],
-  "extractedText": string
+  "extractedText": string,
+  "safeArea": {
+    "x": number,
+    "y": number,
+    "width": number,
+    "height": number
+  },
+  "qualityScore": {
+    "readability": number,
+    "watermarkRisk": number,
+    "isStandardMemeStyle": boolean,
+    "recommendation": string
+  }
 }`;
 
       if (context.userPrompt) {
@@ -222,6 +244,12 @@ Important:
         }>;
         extractedText?: string;
         safeArea?: { x: number; y: number; width: number; height: number };
+        qualityScore?: {
+          readability: number;
+          watermarkRisk: number;
+          isStandardMemeStyle: boolean;
+          recommendation: string;
+        };
       }>(raw);
 
       if (
@@ -256,6 +284,34 @@ Important:
           `Vision AI successfully detected safe area: x=${context.safeArea.x}, y=${context.safeArea.y}, w=${context.safeArea.width}, h=${context.safeArea.height}`,
           "DirectUploader",
         );
+      }
+
+      if (data.qualityScore) {
+        context.qualityScore = data.qualityScore;
+        pipelineLogger.info(
+          `Vision AI Quality Check: Readability=${data.qualityScore.readability}/100, Watermark Risk=${data.qualityScore.watermarkRisk}/100, Standard Style=${data.qualityScore.isStandardMemeStyle}`,
+          "DirectUploader",
+        );
+
+        if (
+          data.qualityScore.readability < 50 ||
+          data.qualityScore.watermarkRisk > 70
+        ) {
+          const chatId = context.telegramMeta?.chatId;
+          const messageId = context.telegramMeta?.messageId;
+          if (chatId) {
+            this.telegram
+              .sendMessage(
+                chatId,
+                `⚠️ *AI Quality Check Warning:*\n` +
+                  `• *Readability:* ${data.qualityScore.readability}/100\n` +
+                  `• *Watermark Risk:* ${data.qualityScore.watermarkRisk}/100\n` +
+                  `• *Recommendation:* _${data.qualityScore.recommendation}_`,
+                messageId,
+              )
+              .catch(() => {});
+          }
+        }
       }
 
       const zones = (data.brandingZones || []).map((item, index) => ({
@@ -795,6 +851,7 @@ Return ONLY raw JSON — no markdown:
           context.brandingDetection = cached.brandingDetection;
           context.ocr = cached.ocr;
           context.safeArea = cached.safeArea;
+          context.qualityScore = cached.qualityScore;
 
           if (!context.userPrompt) {
             context.metadata = cached.metadata;
@@ -843,6 +900,7 @@ Return ONLY raw JSON — no markdown:
         visionResult: context.brandingDetection,
         metadata: context.metadata,
         mediaHash: context.mediaHash,
+        qualityScore: context.qualityScore,
         context,
       });
 
@@ -1416,6 +1474,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
           ocr: context.ocr,
           rephrasedCaption: context.rephrasedCaption,
           safeArea: context.safeArea,
+          qualityScore: context.qualityScore,
         });
       }
 
@@ -1425,6 +1484,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         ocrResult: context.ocr,
         caption: context.rephrasedCaption,
         safeArea: context.safeArea,
+        qualityScore: context.qualityScore,
         context,
       });
 
