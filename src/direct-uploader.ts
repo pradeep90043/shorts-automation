@@ -14,6 +14,7 @@ import { parseAiJson } from "./utils/json";
 import { CacheManager, getFileHash } from "./utils/cache";
 import { JobDatabase } from "./utils/db";
 import { ViralAnalyzer } from "./utils/viral-analyzer";
+import { JobQueue } from "./utils/queue";
 
 const REVIEW_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
 
@@ -40,6 +41,7 @@ export class DirectUploader {
   private cacheManager = new CacheManager();
   private db = new JobDatabase();
   private viralAnalyzer = new ViralAnalyzer();
+  private queue = new JobQueue(1);
   private pending = new Map<string, PendingUpload>();
   private pendingFrameReviews = new Map<
     string,
@@ -832,6 +834,12 @@ Return ONLY raw JSON — no markdown:
   // ── Main pipeline ──────────────────────────────────────────────────────────
 
   public async run(context: PipelineContext): Promise<void> {
+    this.queue.addJob(context.id, async () => {
+      await this.executePipeline(context);
+    });
+  }
+
+  private async executePipeline(context: PipelineContext): Promise<void> {
     const { id, tempDir, originalImagePath, telegramMeta } = context;
     const { chatId, messageId } = telegramMeta;
     const isVideo = context.isVideo === true;
