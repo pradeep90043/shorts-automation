@@ -28,6 +28,10 @@ export class TelegramService implements ITelegramService {
     text: string,
     messageId: number,
   ) => Promise<boolean>;
+  private frameReviewCallback?: (
+    action: "approve" | "cancel",
+    id: string,
+  ) => void;
 
   constructor() {
     if (!config.telegramToken) {
@@ -82,6 +86,12 @@ export class TelegramService implements ITelegramService {
     this.textPromptCallback = cb;
   }
 
+  public registerFrameReviewCallback(
+    cb: (action: "approve" | "cancel", id: string) => void,
+  ): void {
+    this.frameReviewCallback = cb;
+  }
+
   private reviewKeyboard(id: string) {
     return {
       inline_keyboard: [
@@ -122,7 +132,38 @@ export class TelegramService implements ITelegramService {
     );
     return res.message_id;
   }
-
+  /**
+   * Send a photo of the first frame for manual layout verification before rendering video.
+   * Returns the message_id of the sent photo message.
+   */
+  public async sendPhotoForReview(
+    chatId: number,
+    photoPath: string,
+    caption: string,
+    id: string,
+    replyToMessageId?: number,
+  ): Promise<number> {
+    const res = await this.bot.telegram.sendPhoto(
+      chatId,
+      { source: fs.readFileSync(photoPath) },
+      {
+        caption,
+        parse_mode: "Markdown",
+        reply_parameters: replyToMessageId
+          ? { message_id: replyToMessageId }
+          : undefined,
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: "✅ Approve Frame", callback_data: `frm_app_${id}` },
+              { text: "❌ Cancel", callback_data: `frm_can_${id}` },
+            ],
+          ],
+        },
+      } as any,
+    );
+    return res.message_id;
+  }
   /**
    * Update the caption of the review message (after regenerating metadata)
    */
@@ -438,6 +479,30 @@ export class TelegramService implements ITelegramService {
       if (this.revokeCallback) {
         await this.revokeCallback(id);
       }
+    });
+
+    // Handle first frame review inline button callbacks
+    this.bot.action(/^frm_(app|can)_(.+)$/, async (ctx) => {
+      const code = ctx.match[1];
+      const id = ctx.match[2];
+      const actionMap: Record<string, "approve" | "cancel"> = {
+        app: "approve",
+        can: "cancel",
+      };
+      const action = actionMap[code];
+      const ackMap = {
+        approve: "✅ Frame approved!",
+        cancel: "❌ Cancelled",
+      };
+      try {
+        await ctx.answerCbQuery(ackMap[action]);
+      } catch (err) {
+        pipelineLogger.warn(
+          `Failed to answer callback query: ${err instanceof Error ? err.message : err}`,
+          "Telegram",
+        );
+      }
+      if (this.frameReviewCallback) this.frameReviewCallback(action, id);
     });
 
     // Handle text messages — detect Instagram reel links

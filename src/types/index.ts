@@ -158,6 +158,16 @@ export interface ITelegramService {
     id: string,
     replyToMessageId?: number,
   ): Promise<number>;
+  sendPhotoForReview(
+    chatId: number,
+    photoPath: string,
+    caption: string,
+    id: string,
+    replyToMessageId?: number,
+  ): Promise<number>;
+  registerFrameReviewCallback(
+    cb: (action: "approve" | "cancel", id: string) => void,
+  ): void;
 }
 
 export interface IImageAnalyzer {

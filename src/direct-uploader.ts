@@ -35,6 +35,16 @@ export class DirectUploader {
   private youtube: YouTubeService;
   private telegram: TelegramService;
   private pending = new Map<string, PendingUpload>();
+  private pendingFrameReviews = new Map<
+    string,
+    {
+      context: PipelineContext;
+      timer: ReturnType<typeof setTimeout>;
+      reviewMessageId: number;
+      chatId: number;
+      messageId: number;
+    }
+  >();
   private uploaded = new Map<
     string,
     { channelResults: UploadResult[]; chatId: number; successMessageId: number }
@@ -59,6 +69,11 @@ export class DirectUploader {
 
     telegram.registerRevokeCallback(async (id) => {
       await this.onRevoke(id);
+    });
+
+    telegram.registerFrameReviewCallback((action, id) => {
+      if (action === "approve") this.onApproveFrame(id);
+      else if (action === "cancel") this.onCancelFrame(id);
     });
 
     telegram.registerTextPromptCallback(async (chatId, text, messageId) => {
@@ -481,6 +496,56 @@ Return ONLY raw JSON — no markdown:
     pipelineLogger.info(`Upload cancelled by user for ${id}`, "DirectUploader");
   }
 
+  private async onApproveFrame(id: string): Promise<void> {
+    const pending = this.pendingFrameReviews.get(id);
+    if (!pending) return;
+
+    // Clear timeout and remove from map
+    clearTimeout(pending.timer);
+    this.pendingFrameReviews.delete(id);
+
+    // Clean up buttons from photo message
+    await this.telegram
+      .removeInlineButtons(pending.chatId, pending.reviewMessageId)
+      .catch(() => {});
+
+    pipelineLogger.info(
+      `Frame approved for ${id}. Resuming video compilation...`,
+      "DirectUploader",
+    );
+
+    // Proceed to next steps
+    this.resumeFromFrameApproval(pending.context).catch((err) => {
+      pipelineLogger.error(
+        `Failed to resume pipeline after frame approval for ${id}`,
+        err,
+        "DirectUploader",
+      );
+    });
+  }
+
+  private async onCancelFrame(id: string): Promise<void> {
+    const pending = this.pendingFrameReviews.get(id);
+    if (!pending) return;
+
+    clearTimeout(pending.timer);
+    this.pendingFrameReviews.delete(id);
+
+    await this.telegram
+      .removeInlineButtons(pending.chatId, pending.reviewMessageId)
+      .catch(() => {});
+    await this.telegram.sendMessage(
+      pending.chatId,
+      `❌ *Generation cancelled by user.*`,
+      pending.reviewMessageId,
+    );
+
+    pipelineLogger.info(
+      `Generation ${id} cancelled during frame review.`,
+      "DirectUploader",
+    );
+  }
+
   private onRegenerate(id: string, viral: boolean): void {
     const pending = this.pending.get(id);
     if (!pending) return;
@@ -672,8 +737,6 @@ Return ONLY raw JSON — no markdown:
           `"${context.metadata.title}"`,
         );
       }
-
-      const metadata = context.metadata!;
 
       // 2 — Render/Process video
       context.status = "rendering_video";
@@ -1157,6 +1220,84 @@ Return ONLY the rephrased caption text. No quotes, no explanations.`;
         }
       }
 
+      // ── FIRST FRAME LAYOUT REVIEW STEP ─────────────────────────────────────
+      pipelineLogger.info(
+        "Extracting first frame review image...",
+        "DirectUploader",
+      );
+      const reviewFramePath = path.join(tempDir, "first_frame_review.png");
+      const extractCmd = `ffmpeg -y -ss 00:00:01 -i "${rawVideoPath}" -vframes 1 -q:v 2 "${reviewFramePath}"`;
+      await new Promise<void>((resolve, reject) => {
+        exec(extractCmd, (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+
+      const reviewCaption =
+        `🖼️ *Verify Frame Layout & Caption*\n\n` +
+        `*Caption:* "${context.rephrasedCaption || ""}"\n\n` +
+        `⏳ _Auto-approves and renders video in 1 minute if no action is taken._`;
+
+      const frameReviewMessageId = await this.telegram.sendPhotoForReview(
+        chatId,
+        reviewFramePath,
+        reviewCaption,
+        id,
+        messageId,
+      );
+
+      pipelineLogger.info(
+        `Holding pipeline ${id} for 1-minute frame review...`,
+        "DirectUploader",
+      );
+
+      // Set 1-minute auto-approve timer
+      const autoApproveTimer = setTimeout(async () => {
+        pipelineLogger.info(
+          `Auto-approving frame review for ${id} (timeout expired)`,
+          "DirectUploader",
+        );
+        await this.onApproveFrame(id);
+      }, 60000);
+
+      this.pendingFrameReviews.set(id, {
+        context,
+        timer: autoApproveTimer,
+        reviewMessageId: frameReviewMessageId,
+        chatId,
+        messageId,
+      });
+
+      return;
+    } catch (err) {
+      context.status = "failed";
+      context.error = err instanceof Error ? err.message : String(err);
+      pipelineLogger.error(
+        `DirectUploader failed for ${id}`,
+        err,
+        "DirectUploader",
+      );
+      await this.telegram.sendMessage(
+        chatId,
+        `❌ *Processing failed*\n\`${context.error?.slice(0, 300)}\``,
+        messageId,
+      );
+    }
+  }
+
+  private async resumeFromFrameApproval(
+    context: PipelineContext,
+  ): Promise<void> {
+    const id = context.id;
+    const tempDir = context.tempDir;
+    const metadata = context.metadata!;
+    const rawVideoPath = path.join(tempDir, "video_raw.mp4");
+    const originalImagePath = context.originalImagePath;
+    const chatId = context.telegramMeta.chatId;
+    const messageId = context.telegramMeta.messageId;
+
+    try {
       // 3 — Add music
       const finalVideoPath = path.join(tempDir, "video_final.mp4");
       await this.music.addBackgroundMusic(
@@ -1230,16 +1371,14 @@ Return ONLY the rephrased caption text. No quotes, no explanations.`;
         `${id} — waiting up to 2 min`,
       );
     } catch (err) {
-      context.status = "failed";
-      context.error = err instanceof Error ? err.message : String(err);
       pipelineLogger.error(
-        `DirectUploader failed for ${id}`,
+        `Video compilation pipeline failed for ${id}`,
         err,
         "DirectUploader",
       );
       await this.telegram.sendMessage(
         chatId,
-        `❌ *Processing failed*\n\`${context.error?.slice(0, 300)}\``,
+        `❌ *Video compilation failed:* \`${err instanceof Error ? err.message : err}\``,
         messageId,
       );
     }
@@ -1250,15 +1389,27 @@ Return ONLY the rephrased caption text. No quotes, no explanations.`;
     promptText: string,
     messageId: number,
   ): Promise<boolean> {
-    // Find if there is a pending review in this chat
+    // Find if there is a pending review or pending frame review in this chat
     let pendingId: string | null = null;
-    let pendingUpload: PendingUpload | null = null;
+    let pendingUpload: any = null;
+    let isFrameReview = false;
 
     for (const [id, val] of this.pending.entries()) {
       if (val.chatId === chatId) {
         pendingId = id;
         pendingUpload = val;
         break;
+      }
+    }
+
+    if (!pendingId || !pendingUpload) {
+      for (const [id, val] of this.pendingFrameReviews.entries()) {
+        if (val.chatId === chatId) {
+          pendingId = id;
+          pendingUpload = val;
+          isFrameReview = true;
+          break;
+        }
       }
     }
 
@@ -1300,8 +1451,12 @@ Return ONLY the rephrased caption text. No quotes, no explanations.`;
       if (fs.existsSync(finalVideo)) fs.unlinkSync(finalVideo);
     } catch (_) {}
 
-    // 5. Clean from pending map (since run() will create a new entry on success)
-    this.pending.delete(pendingId);
+    // 5. Clean from pending map
+    if (isFrameReview) {
+      this.pendingFrameReviews.delete(pendingId);
+    } else {
+      this.pending.delete(pendingId);
+    }
 
     // 6. Run pipeline
     this.run(context).catch((err) => {
