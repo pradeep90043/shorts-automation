@@ -110,7 +110,7 @@ export class TelegramService implements ITelegramService {
   ): Promise<number> {
     const res = await this.bot.telegram.sendVideo(
       chatId,
-      { source: fs.createReadStream(videoPath) },
+      { source: fs.readFileSync(videoPath) },
       {
         caption,
         parse_mode: "Markdown",
