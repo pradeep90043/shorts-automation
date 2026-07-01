@@ -13,6 +13,7 @@ export interface CacheEntry {
   rephrasedCaption?: string;
   safeArea?: { x: number; y: number; width: number; height: number };
   qualityScore?: any;
+  captionVariants?: { A: string; B: string; C: string };
   createdAt: string;
 }
 

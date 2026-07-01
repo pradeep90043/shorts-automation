@@ -29,7 +29,7 @@ export class TelegramService implements ITelegramService {
     messageId: number,
   ) => Promise<boolean>;
   private frameReviewCallback?: (
-    action: "approve" | "cancel",
+    action: "approve" | "cancel" | "select_a" | "select_b" | "select_c",
     id: string,
   ) => void;
 
@@ -87,7 +87,10 @@ export class TelegramService implements ITelegramService {
   }
 
   public registerFrameReviewCallback(
-    cb: (action: "approve" | "cancel", id: string) => void,
+    cb: (
+      action: "approve" | "cancel" | "select_a" | "select_b" | "select_c",
+      id: string,
+    ) => void,
   ): void {
     this.frameReviewCallback = cb;
   }
@@ -142,7 +145,21 @@ export class TelegramService implements ITelegramService {
     caption: string,
     id: string,
     replyToMessageId?: number,
+    variants?: { A: string; B: string; C: string },
   ): Promise<number> {
+    const buttons = [];
+    if (variants) {
+      buttons.push([
+        { text: "🅰️ Select A", callback_data: `frm_sela_${id}` },
+        { text: "🅱️ Select B", callback_data: `frm_selb_${id}` },
+        { text: "🅲 Select C", callback_data: `frm_selc_${id}` },
+      ]);
+    }
+    buttons.push([
+      { text: "✅ Approve Frame", callback_data: `frm_app_${id}` },
+      { text: "❌ Cancel", callback_data: `frm_can_${id}` },
+    ]);
+
     const res = await this.bot.telegram.sendPhoto(
       chatId,
       { source: fs.readFileSync(photoPath) },
@@ -153,12 +170,7 @@ export class TelegramService implements ITelegramService {
           ? { message_id: replyToMessageId }
           : undefined,
         reply_markup: {
-          inline_keyboard: [
-            [
-              { text: "✅ Approve Frame", callback_data: `frm_app_${id}` },
-              { text: "❌ Cancel", callback_data: `frm_can_${id}` },
-            ],
-          ],
+          inline_keyboard: buttons,
         },
       } as any,
     );
@@ -482,17 +494,26 @@ export class TelegramService implements ITelegramService {
     });
 
     // Handle first frame review inline button callbacks
-    this.bot.action(/^frm_(app|can)_(.+)$/, async (ctx) => {
+    this.bot.action(/^frm_(app|can|sela|selb|selc)_(.+)$/, async (ctx) => {
       const code = ctx.match[1];
       const id = ctx.match[2];
-      const actionMap: Record<string, "approve" | "cancel"> = {
+      const actionMap: Record<
+        string,
+        "approve" | "cancel" | "select_a" | "select_b" | "select_c"
+      > = {
         app: "approve",
         can: "cancel",
+        sela: "select_a",
+        selb: "select_b",
+        selc: "select_c",
       };
       const action = actionMap[code];
       const ackMap = {
         approve: "✅ Frame approved!",
         cancel: "❌ Cancelled",
+        select_a: "🅰️ Selected Variant A!",
+        select_b: "🅱️ Selected Variant B!",
+        select_c: "🅲 Selected Variant C!",
       };
       try {
         await ctx.answerCbQuery(ackMap[action]);

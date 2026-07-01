@@ -80,6 +80,16 @@ export class DirectUploader {
     telegram.registerFrameReviewCallback((action, id) => {
       if (action === "approve") this.onApproveFrame(id);
       else if (action === "cancel") this.onCancelFrame(id);
+      else if (action.startsWith("select_")) {
+        const variantCode = action.replace("select_", "");
+        this.onSelectFrameVariant(id, variantCode).catch((err) => {
+          pipelineLogger.error(
+            `Failed to handle frame variant selection: ${id}`,
+            err,
+            "DirectUploader",
+          );
+        });
+      }
     });
 
     telegram.registerTextPromptCallback(async (chatId, text, messageId) => {
@@ -667,6 +677,52 @@ Return ONLY raw JSON — no markdown:
     );
   }
 
+  private async onSelectFrameVariant(
+    id: string,
+    variantCode: string,
+  ): Promise<void> {
+    const pending = this.pendingFrameReviews.get(id);
+    if (!pending) return;
+
+    // Clear timeout and remove from map
+    clearTimeout(pending.timer);
+    this.pendingFrameReviews.delete(id);
+
+    // Clean up buttons from photo message
+    await this.telegram
+      .removeInlineButtons(pending.chatId, pending.reviewMessageId)
+      .catch(() => {});
+
+    const variants = pending.context.captionVariants;
+    let selectedCaption = pending.context.rephrasedCaption;
+    if (variants) {
+      if (variantCode === "a") selectedCaption = variants.A;
+      else if (variantCode === "b") selectedCaption = variants.B;
+      else if (variantCode === "c") selectedCaption = variants.C;
+    }
+
+    pending.context.rephrasedCaption = selectedCaption;
+    pipelineLogger.info(
+      `User selected variant ${variantCode.toUpperCase()}: "${selectedCaption}" for job ${id}`,
+      "DirectUploader",
+    );
+
+    await this.telegram.sendMessage(
+      pending.chatId,
+      `🅰️ *Selected Variant ${variantCode.toUpperCase()}*:\n\`"${selectedCaption}"\`\n\nRe-rendering layout preview…`,
+      pending.messageId,
+    );
+
+    // Re-run pipeline to render the layout with the selected variant
+    this.run(pending.context).catch((err) => {
+      pipelineLogger.error(
+        `Failed to run pipeline for selected variant: ${id}`,
+        err,
+        "DirectUploader",
+      );
+    });
+  }
+
   private onRegenerate(id: string, viral: boolean): void {
     const pending = this.pending.get(id);
     if (!pending) return;
@@ -852,6 +908,7 @@ Return ONLY raw JSON — no markdown:
           context.ocr = cached.ocr;
           context.safeArea = cached.safeArea;
           context.qualityScore = cached.qualityScore;
+          context.captionVariants = cached.captionVariants;
 
           if (!context.userPrompt) {
             context.metadata = cached.metadata;
@@ -1193,18 +1250,54 @@ ${viralPatterns}
 Return ONLY the rephrased caption text containing the segment prefix tags and double slashes. No quotes, no explanations.`;
           }
 
+          let captionVariants = {
+            A: rephrasedCaption,
+            B: rephrasedCaption,
+            C: rephrasedCaption,
+          };
+
           if (this.freellmapi) {
             try {
               pipelineLogger.info(
-                "Rephrasing caption with AI...",
+                "Rephrasing caption variants with AI...",
                 "DirectUploader",
               );
               const aiResponse = await this.freellmapi.generateText(aiPrompt);
-              rephrasedCaption = aiResponse.trim().replace(/^["']|["']$/g, "");
+
+              let varA = "";
+              let varB = "";
+              let varC = "";
+
+              const lines = aiResponse
+                .split("\n")
+                .map((l) => l.trim())
+                .filter(Boolean);
+              for (const line of lines) {
+                if (line.startsWith("[A]"))
+                  varA = line.replace("[A]", "").trim();
+                else if (line.startsWith("[B]"))
+                  varB = line.replace("[B]", "").trim();
+                else if (line.startsWith("[C]"))
+                  varC = line.replace("[C]", "").trim();
+              }
+
+              if (!varA) {
+                varA = aiResponse.trim().replace(/^["']|["']$/g, "");
+                varB = varA;
+                varC = varA;
+              } else {
+                varA = varA.replace(/^["']|["']$/g, "");
+                varB = varB ? varB.replace(/^["']|["']$/g, "") : varA;
+                varC = varC ? varC.replace(/^["']|["']$/g, "") : varA;
+              }
+
+              captionVariants = { A: varA, B: varB, C: varC };
+              rephrasedCaption = varA;
+
               pipelineLogger.checkpoint(
-                "AI caption generated",
+                "AI caption variants generated",
                 true,
-                rephrasedCaption,
+                `A: ${varA}\nB: ${varB}\nC: ${varC}`,
               );
             } catch (err) {
               pipelineLogger.warn(
@@ -1215,15 +1308,31 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
                 .split(/\s+/)
                 .filter((w) => !w.includes("@"))
                 .join(" ");
+              captionVariants = {
+                A: rephrasedCaption,
+                B: rephrasedCaption,
+                C: rephrasedCaption,
+              };
             }
           } else {
             rephrasedCaption = rawOcrText
               .split(/\s+/)
               .filter((w) => !w.includes("@"))
               .join(" ");
+            captionVariants = {
+              A: rephrasedCaption,
+              B: rephrasedCaption,
+              C: rephrasedCaption,
+            };
           }
 
-          context.rephrasedCaption = rephrasedCaption;
+          if (context.rephrasedCaption && !context.userPrompt) {
+            // Keep selected variant caption
+          } else {
+            context.rephrasedCaption = rephrasedCaption;
+          }
+
+          context.captionVariants = captionVariants;
 
           pipelineLogger.info(
             "Rendering animated text layers via Remotion...",
@@ -1475,6 +1584,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
           rephrasedCaption: context.rephrasedCaption,
           safeArea: context.safeArea,
           qualityScore: context.qualityScore,
+          captionVariants: context.captionVariants,
         });
       }
 
@@ -1504,7 +1614,9 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
 
       const reviewCaption =
         `🖼️ *Verify Frame Layout & Caption*\n\n` +
-        `*Caption:* "${context.rephrasedCaption || ""}"\n\n` +
+        `🅰️ *Variant A:* "${context.captionVariants?.A || context.rephrasedCaption}"\n` +
+        `🅱️ *Variant B:* "${context.captionVariants?.B || ""}"\n` +
+        `🅲 *Variant C:* "${context.captionVariants?.C || ""}"\n\n` +
         `⏳ _Auto-approves and renders video in 1 minute if no action is taken._`;
 
       const frameReviewMessageId = await this.telegram.sendPhotoForReview(
@@ -1513,6 +1625,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         reviewCaption,
         id,
         messageId,
+        context.captionVariants,
       );
 
       pipelineLogger.info(

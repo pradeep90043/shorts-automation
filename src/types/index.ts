@@ -150,6 +150,7 @@ export interface PipelineContext {
     isStandardMemeStyle: boolean;
     recommendation: string;
   }; // AI quality check scores
+  captionVariants?: { A: string; B: string; C: string }; // Multiple rephrased variants
 }
 
 export interface ITelegramService {
@@ -175,7 +176,10 @@ export interface ITelegramService {
     replyToMessageId?: number,
   ): Promise<number>;
   registerFrameReviewCallback(
-    cb: (action: "approve" | "cancel", id: string) => void,
+    cb: (
+      action: "approve" | "cancel" | "select_a" | "select_b" | "select_c",
+      id: string,
+    ) => void,
   ): void;
 }
 
