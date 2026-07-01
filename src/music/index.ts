@@ -120,10 +120,13 @@ export class MusicService implements IMusicService {
       const volume = config.rendering.musicVolume;
       const startOffset = config.rendering.musicStartOffset;
 
-      // 3. Construct FFmpeg command with conditional audio mixing
       let filterComplex = "";
       if (hasAudio) {
-        filterComplex = `[1:a]volume=${volume},afade=t=in:ss=0:d=${fadeDuration},afade=t=out:st=${fadeOutStart}:d=${fadeDuration}[bg];[0:a][bg]amix=inputs=2:duration=first:dropout_transition=2[a]`;
+        // Apply sidechain compression to automatically duck background music when voiceover speech is detected
+        filterComplex =
+          `[1:a]volume=${volume},afade=t=in:ss=0:d=${fadeDuration},afade=t=out:st=${fadeOutStart}:d=${fadeDuration}[bg];` +
+          `[bg][0:a]sidechaincompress=threshold=0.08:ratio=12:attack=20:release=350[bg_ducked];` +
+          `[0:a][bg_ducked]amix=inputs=2:duration=first:dropout_transition=2[a]`;
       } else {
         filterComplex = `[1:a]volume=${volume},afade=t=in:ss=0:d=${fadeDuration},afade=t=out:st=${fadeOutStart}:d=${fadeDuration}[a]`;
       }
