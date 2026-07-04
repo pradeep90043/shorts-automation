@@ -4,7 +4,7 @@ import path from "path";
 import { pipeline } from "stream";
 import { promisify } from "util";
 import { config } from "../config";
-import { ITelegramService, PipelineContext, TelegramMetadata } from "../types";
+import { ITelegramService, PipelineContext, TelegramMetadata, AssetKind } from "../types";
 import { pipelineLogger } from "../utils/logger";
 import {
   isInstagramReelUrl,
@@ -14,12 +14,21 @@ import {
 
 const streamPipeline = promisify(pipeline);
 
+export function escapeMarkdown(text: string): string {
+  if (!text) return "";
+  return text
+    .replace(/_/g, "\\_")
+    .replace(/\*/g, "\\*")
+    .replace(/`/g, "\\`")
+    .replace(/\[/g, "\\[");
+}
+
 export class TelegramService implements ITelegramService {
   private bot: Telegraf;
   private pipelineTrigger?: (context: PipelineContext) => Promise<void>;
   private approvalTrigger?: (genId: string) => Promise<void>;
   private reviewCallback?: (
-    action: "publish" | "cancel" | "regenerate" | "viral",
+    action: "publish" | "cancel" | "regenerate" | "viral" | "replace_music",
     id: string,
   ) => void;
   private revokeCallback?: (id: string) => Promise<void>;
@@ -66,7 +75,7 @@ export class TelegramService implements ITelegramService {
    */
   public registerReviewCallback(
     cb: (
-      action: "publish" | "cancel" | "regenerate" | "viral",
+      action: "publish" | "cancel" | "regenerate" | "viral" | "replace_music",
       id: string,
     ) => void,
   ): void {
@@ -106,6 +115,9 @@ export class TelegramService implements ITelegramService {
           { text: "🔄 Regenerate", callback_data: `rv_reg_${id}` },
           { text: "🎯 More Viral", callback_data: `rv_vrl_${id}` },
         ],
+        [
+          { text: "🎵 Replace Music", callback_data: `rv_mus_${id}` },
+        ],
       ],
     };
   }
@@ -123,7 +135,7 @@ export class TelegramService implements ITelegramService {
   ): Promise<number> {
     const res = await this.bot.telegram.sendVideo(
       chatId,
-      { source: fs.readFileSync(videoPath) },
+      { source: fs.createReadStream(videoPath) },
       {
         caption,
         parse_mode: "Markdown",
@@ -200,6 +212,39 @@ export class TelegramService implements ITelegramService {
   }
 
   /**
+   * Update the video of the review message (e.g. after replacing music)
+   */
+  public async editReviewVideo(
+    chatId: number,
+    messageId: number,
+    videoPath: string,
+    caption: string,
+    id: string,
+  ): Promise<void> {
+    try {
+      await this.bot.telegram.editMessageMedia(
+        chatId,
+        messageId,
+        undefined,
+        {
+          type: "video",
+          media: { source: fs.createReadStream(videoPath) },
+          caption,
+          parse_mode: "Markdown",
+        },
+        {
+          reply_markup: this.reviewKeyboard(id),
+        } as any
+      );
+    } catch (err) {
+      pipelineLogger.warn(
+        `Failed to edit message media: ${err instanceof Error ? err.message : err}`,
+        "Telegram",
+      );
+    }
+  }
+
+  /**
    * Remove inline buttons from a message (after publish or cancel)
    */
   public async removeInlineButtons(
@@ -236,6 +281,23 @@ export class TelegramService implements ITelegramService {
         ],
       },
     });
+    return res.message_id;
+  }
+
+  // New method to send a raw video without review buttons, used for final video delivery
+  public async sendRawVideo(
+    chatId: number,
+    videoPath: string,
+    caption: string,
+  ): Promise<number> {
+    const res = await this.bot.telegram.sendVideo(
+      chatId,
+      { source: fs.createReadStream(videoPath) },
+      {
+        caption,
+        parse_mode: "Markdown",
+      } as any,
+    );
     return res.message_id;
   }
 
@@ -447,17 +509,18 @@ export class TelegramService implements ITelegramService {
     });
 
     // Handle review inline button callbacks
-    this.bot.action(/^rv_(pub|can|reg|vrl)_(.+)$/, async (ctx) => {
+    this.bot.action(/^rv_(pub|can|reg|vrl|mus)_(.+)$/, async (ctx) => {
       const code = ctx.match[1];
       const id = ctx.match[2];
       const actionMap: Record<
         string,
-        "publish" | "cancel" | "regenerate" | "viral"
+        "publish" | "cancel" | "regenerate" | "viral" | "replace_music"
       > = {
         pub: "publish",
         can: "cancel",
         reg: "regenerate",
         vrl: "viral",
+        mus: "replace_music",
       };
       const action = actionMap[code];
       const ackMap = {
@@ -465,6 +528,7 @@ export class TelegramService implements ITelegramService {
         cancel: "❌ Cancelled",
         regenerate: "🔄 Regenerating…",
         viral: "🎯 Making it viral…",
+        replace_music: "🎵 Replacing music…",
       };
       try {
         await ctx.answerCbQuery(ackMap[action]);
@@ -535,8 +599,10 @@ export class TelegramService implements ITelegramService {
           return; // Ignore command messages
         }
 
-        // 1. Check if this is an interactive text prompt for a pending review
-        if (this.textPromptCallback) {
+        const isReel = isInstagramReelUrl(text);
+
+        // 1. Check if this is an interactive text prompt for a pending review (only if it's not a new Reel link)
+        if (!isReel && this.textPromptCallback) {
           const handled = await this.textPromptCallback(
             ctx.chat.id,
             text,
@@ -548,7 +614,7 @@ export class TelegramService implements ITelegramService {
         }
 
         // 2. Fallback to Instagram Reel Url detection
-        if (!isInstagramReelUrl(text)) {
+        if (!isReel) {
           // Not an Instagram link — ignore (or give a hint)
           ctx.reply(
             "📸 Send a screenshot image or an Instagram reel link to start the pipeline.",
@@ -649,6 +715,7 @@ export class TelegramService implements ITelegramService {
       status: "received",
       instagramSource: true,
       instagramSourceType,
+      assetKind: AssetKind.Reel,
     };
 
     let contentTypeDesc = "";
@@ -736,8 +803,10 @@ export class TelegramService implements ITelegramService {
       tempDir: tempGenDir,
       telegramMeta,
       originalImagePath,
+      isTelegram: true,
       status: "received",
       captionMetadata,
+      assetKind: AssetKind.MemeImage,
     };
 
     pipelineLogger.info(
@@ -835,8 +904,10 @@ export class TelegramService implements ITelegramService {
       originalImagePath,
       originalVideoPath,
       isVideo: true,
+      isTelegram: true,
       status: "received",
       captionMetadata,
+      assetKind: AssetKind.MemeVideo,
     };
 
     pipelineLogger.info(

@@ -6,7 +6,132 @@ import { pipelineLogger } from "../utils/logger";
 import { config } from "../config";
 import { ImageAnalyzer } from "../image-analysis";
 import { BrandingDetector, SocialHandleDetector } from "../branding-detector";
-import { OcrService } from "../ocr";
+import { OcrService } from "../ocr/index";
+
+export function calculateVideoCrop(context: PipelineContext): {
+  cropTop: number;
+  cropBottom: number;
+  hasManualCrop: boolean;
+  expandFrame: boolean;
+} {
+  const detection = context.brandingDetection;
+  const zones = detection ? [...detection.zones] : [];
+
+  let cropTop = 0;
+  let cropBottom = 0;
+
+  // Check system status bar / header / footer edge zones first
+  const edgeTopZones = zones.filter(
+    (z) =>
+      !z.id.startsWith("ai-branding-") &&
+      z.boundingBox.y === 0 &&
+      z.boundingBox.height <= 0.12,
+  );
+  const edgeBottomZones = zones.filter(
+    (z) =>
+      !z.id.startsWith("ai-branding-") &&
+      z.boundingBox.y >= 0.88 &&
+      z.boundingBox.height <= 0.12,
+  );
+
+  if (edgeTopZones.length > 0) {
+    cropTop = Math.max(...edgeTopZones.map((z) => z.boundingBox.height));
+  }
+  if (edgeBottomZones.length > 0) {
+    cropBottom = Math.max(
+      ...edgeBottomZones.map((z) => z.boundingBox.height),
+    );
+  }
+
+  let expandFrame = false;
+  let hasManualCrop = false;
+
+  if (context.userPrompt) {
+    const p = context.userPrompt.toLowerCase();
+
+    // 1. Look for manual crop instructions: "crop top XX%", "crop XX% from top", etc.
+    const topMatch = p.match(
+      /(?:crop\s+top\s+(\d+)\s*%|crop\s+(\d+)\s*%\s*from\s+top|crop\s+(\d+)\s*%\s*top)/,
+    );
+    if (topMatch) {
+      const percent = parseInt(topMatch[1] || topMatch[2] || topMatch[3], 10);
+      if (!isNaN(percent)) {
+        cropTop = percent / 100;
+        hasManualCrop = true;
+      }
+    }
+
+    const bottomMatch = p.match(
+      /(?:crop\s+bottom\s+(\d+)\s*%|crop\s+(\d+)\s*%\s*from\s+bottom|crop\s+(\d+)\s*%\s*bottom)/,
+    );
+    if (bottomMatch) {
+      const percent = parseInt(
+        bottomMatch[1] || bottomMatch[2] || bottomMatch[3],
+        10,
+      );
+      if (!isNaN(percent)) {
+        cropBottom = percent / 100;
+        hasManualCrop = true;
+      }
+    }
+
+    // general crop fallback: "crop XX%"
+    if (!hasManualCrop) {
+      const generalMatch = p.match(/crop\s+(\d+)\s*%/);
+      if (generalMatch) {
+        const percent = parseInt(generalMatch[1], 10);
+        if (!isNaN(percent)) {
+          cropTop = percent / 100;
+          cropBottom = percent / 100;
+          hasManualCrop = true;
+        }
+      }
+    }
+
+    // 2. If no manual crop was specified, check for frame expansion requests
+    if (!hasManualCrop) {
+      if (
+        p.includes("expand") ||
+        p.includes("less crop") ||
+        p.includes("dont crop") ||
+        p.includes("don't crop") ||
+        p.includes("no crop") ||
+        p.includes("full screen") ||
+        p.includes("show all") ||
+        p.includes("cropped too much") ||
+        p.includes("full caption")
+      ) {
+        expandFrame = true;
+      }
+    }
+  }
+
+  // For Instagram Reels, enforce a minimum crop of 8% to clear status bars for sides not overridden
+  if (context.instagramSource && !expandFrame) {
+    const p = context.userPrompt ? context.userPrompt.toLowerCase() : "";
+    if (!p.includes("top")) {
+      cropTop = Math.max(cropTop, 0.08);
+    }
+    if (!p.includes("bottom")) {
+      cropBottom = Math.max(cropBottom, 0.08);
+    }
+  }
+
+  // Enforce existing banner top crop to remove profile headers/branding above the banner
+  if (context.existingBanner && context.bannerBounds && !expandFrame) {
+    const bannerTop = context.bannerBounds.y;
+    if (bannerTop > 0) {
+      cropTop = Math.max(cropTop, bannerTop);
+    }
+  }
+
+  // Limit crop to prevent over-cropping (max 35% normally, but up to 45% if manually specified or existing banner is present)
+  const maxCrop = (hasManualCrop || context.existingBanner) ? 0.45 : 0.35;
+  cropTop = Math.min(cropTop, maxCrop);
+  cropBottom = Math.min(cropBottom, maxCrop);
+
+  return { cropTop, cropBottom, hasManualCrop, expandFrame };
+}
 
 export class VideoRenderer implements IVideoRenderer {
   public async renderImageToVideo(
@@ -188,9 +313,10 @@ export class VideoRenderer implements IVideoRenderer {
       }
     }
     const detection = context.brandingDetection;
+    const zones = detection ? [...detection.zones] : [];
 
-    // 4. Calculate cropping dynamically based on AI detected zones to crop out edge watermarks/profiles completely
-    const zones = [...detection.zones];
+    // 4. Calculate cropping dynamically using calculateVideoCrop helper
+    const { cropTop, cropBottom } = calculateVideoCrop(context);
 
     let hCropped = 0;
     let wCropped = 0;
@@ -198,132 +324,6 @@ export class VideoRenderer implements IVideoRenderer {
     let yCropped = 0;
     let hScaled = 1920;
     let yOffset = 0;
-
-    let cropTop = 0;
-    let cropBottom = 0;
-
-    // Check system status bar / header / footer edge zones first
-    const edgeTopZones = zones.filter(
-      (z) =>
-        !z.id.startsWith("ai-branding-") &&
-        z.boundingBox.y === 0 &&
-        z.boundingBox.height <= 0.12,
-    );
-    const edgeBottomZones = zones.filter(
-      (z) =>
-        !z.id.startsWith("ai-branding-") &&
-        z.boundingBox.y >= 0.88 &&
-        z.boundingBox.height <= 0.12,
-    );
-
-    if (edgeTopZones.length > 0) {
-      cropTop = Math.max(...edgeTopZones.map((z) => z.boundingBox.height));
-    }
-    if (edgeBottomZones.length > 0) {
-      cropBottom = Math.max(
-        ...edgeBottomZones.map((z) => z.boundingBox.height),
-      );
-    }
-
-    // Process AI-detected branding zones: instead of over-cropping the video,
-    // we keep the crops minimal (status bars only) and blur the watermark/handle zones.
-    // So we do not expand cropTop/cropBottom based on aiZones here.
-
-    // Check if the user prompt requests manual cropping or frame expansion
-    let expandFrame = false;
-    let hasManualCrop = false;
-
-    if (context.userPrompt) {
-      const p = context.userPrompt.toLowerCase();
-
-      // 1. Look for manual crop instructions: "crop top XX%", "crop XX% from top", etc.
-      const topMatch = p.match(
-        /(?:crop\s+top\s+(\d+)\s*%|crop\s+(\d+)\s*%\s*from\s+top|crop\s+(\d+)\s*%\s*top)/,
-      );
-      if (topMatch) {
-        const percent = parseInt(topMatch[1] || topMatch[2] || topMatch[3], 10);
-        if (!isNaN(percent)) {
-          cropTop = percent / 100;
-          hasManualCrop = true;
-          pipelineLogger.info(
-            `Parsed manual cropTop from prompt: ${cropTop}`,
-            "VideoRenderer",
-          );
-        }
-      }
-
-      const bottomMatch = p.match(
-        /(?:crop\s+bottom\s+(\d+)\s*%|crop\s+(\d+)\s*%\s*from\s+bottom|crop\s+(\d+)\s*%\s*bottom)/,
-      );
-      if (bottomMatch) {
-        const percent = parseInt(
-          bottomMatch[1] || bottomMatch[2] || bottomMatch[3],
-          10,
-        );
-        if (!isNaN(percent)) {
-          cropBottom = percent / 100;
-          hasManualCrop = true;
-          pipelineLogger.info(
-            `Parsed manual cropBottom from prompt: ${cropBottom}`,
-            "VideoRenderer",
-          );
-        }
-      }
-
-      // general crop fallback: "crop XX%"
-      if (!topMatch && !bottomMatch) {
-        const generalMatch = p.match(/crop\s+(\d+)\s*%/);
-        if (generalMatch) {
-          const percent = parseInt(generalMatch[1], 10);
-          if (!isNaN(percent)) {
-            cropTop = percent / 100;
-            cropBottom = percent / 100;
-            hasManualCrop = true;
-            pipelineLogger.info(
-              `Parsed general manual crop from prompt: ${percent}%`,
-              "VideoRenderer",
-            );
-          }
-        }
-      }
-
-      // 2. If no manual crop was specified, check for frame expansion requests
-      if (!hasManualCrop) {
-        if (
-          p.includes("expand") ||
-          p.includes("less crop") ||
-          p.includes("dont crop") ||
-          p.includes("don't crop") ||
-          p.includes("no crop") ||
-          p.includes("full screen") ||
-          p.includes("show all") ||
-          p.includes("cropped too much") ||
-          p.includes("full caption")
-        ) {
-          expandFrame = true;
-          pipelineLogger.info(
-            "User prompt requests frame expansion/less cropping. Disabling minimum crop constraints.",
-            "VideoRenderer",
-          );
-        }
-      }
-    }
-
-    // For Instagram Reels, enforce a minimum crop of 8% to clear status bars for sides not overridden
-    if (context.instagramSource && !expandFrame) {
-      const p = context.userPrompt ? context.userPrompt.toLowerCase() : "";
-      if (!p.includes("top")) {
-        cropTop = Math.max(cropTop, 0.08);
-      }
-      if (!p.includes("bottom")) {
-        cropBottom = Math.max(cropBottom, 0.08);
-      }
-    }
-
-    // Limit crop to prevent over-cropping (max 35% normally, but up to 45% if manually specified)
-    const maxCrop = hasManualCrop ? 0.45 : 0.35;
-    cropTop = Math.min(cropTop, maxCrop);
-    cropBottom = Math.min(cropBottom, maxCrop);
 
     let requireSideCrop = false;
     if (context.userPrompt) {

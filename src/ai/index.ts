@@ -34,7 +34,7 @@ ${imageContext || "Programming screenshot, code challenge, or tech trick"}
 Generate engaging, high-CTR metadata for a 15-second YouTube Short based on this content. 
 Follow these guidelines:
 - Title: Curiosity-driven, engaging, tech-focused, under 100 characters. Use emojis (e.g., "React Developers Still Make This Mistake 🤯", "This VS Code Trick Saves Hours ⌛").
-- Description: Concise, SEO-friendly, under 300 characters, explaining the code snippet or trick. End with 4-5 relevant hashtags (e.g. #programming #coding #webdev #javascript).
+- Description: Concise, SEO-friendly, under 300 characters, explaining the code snippet or trick. End with 4-5 popular tags (hashtags) (e.g. #programming #coding #webdev #javascript).
 - Tags: List of 8-10 relevant tags.
 
 You MUST return EXACTLY a raw JSON object and nothing else. No markdown wrappers (like \`\`\`json), no introductory text.

@@ -5,11 +5,22 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
+    "postbuild": "npm run test:pipeline",
     "start": "node dist/index.js",
     "dev": "nodemon --watch src -e ts --exec ts-node src/index.ts",
     "lint": "eslint 'src/**/*.ts'",
     "format": "prettier --write 'src/**/*.ts'",
-    "get-token": "ts-node get-refresh-token.ts"
+    "get-token": "ts-node get-refresh-token.ts",
+    "test:vision": "ts-node tests/vision.test.ts",
+    "test:ocr": "ts-node tests/ocr.test.ts",
+    "test:caption": "ts-node tests/caption.test.ts",
+    "test:safearea": "ts-node tests/safearea.test.ts",
+    "test:render": "ts-node tests/render.test.ts",
+    "test:ffmpeg": "ts-node tests/ffmpeg.test.ts",
+    "test:telegram": "ts-node tests/telegram.test.ts",
+    "test:youtube": "ts-node tests/youtube.test.ts",
+    "test:pipeline": "ts-node tests/pipeline.test.ts",
+    "verify": "node scripts/verify.js"
   },
   "dependencies": {
     "@google/genai": "^2.10.0",

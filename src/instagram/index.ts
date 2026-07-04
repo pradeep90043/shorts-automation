@@ -2,20 +2,18 @@ import { spawn } from "child_process";
 import fs from "fs";
 import path from "path";
 import https from "https";
-import puppeteer from "puppeteer-core";
 import { pipelineLogger } from "../utils/logger";
 import { config } from "../config";
 
 const CHROME_PATH = config.binaries.chrome;
 const YTDLP = config.binaries.ytdlp;
 const FFMPEG = config.binaries.ffmpeg;
+const FFPROBE = config.binaries.ffprobe;
 const PYTHON3 = config.binaries.python3;
 
 // Resolve manual cookies.txt in the project root if it exists, otherwise fall back to temp file
 const PROJECT_COOKIES_PATH = path.resolve(__dirname, "../../cookies.txt");
-const COOKIES_FILE = fs.existsSync(PROJECT_COOKIES_PATH)
-  ? PROJECT_COOKIES_PATH
-  : "/tmp/instagram_cookies.txt";
+const COOKIES_FILE = "/tmp/instagram_cookies.txt";
 
 // Match all Instagram content URL formats:
 // /reel/, /p/, /tv/, /stories/, share links with ?igsh=...
@@ -37,15 +35,6 @@ export function extractInstagramUrl(text: string): string | null {
  * them properly on macOS, so we export via Python first.
  */
 async function exportCookies(): Promise<void> {
-  // If a manual cookies.txt is provided in the project root, don't run export
-  if (fs.existsSync(PROJECT_COOKIES_PATH)) {
-    pipelineLogger.info(
-      "Using manual cookies.txt from project root",
-      "Instagram",
-    );
-    return;
-  }
-
   const script = `
 import browser_cookie3, time, sys
 try:
@@ -69,9 +58,31 @@ except Exception as e:
   try {
     await runCommand(PYTHON3, ["-c", script], "cookie-export");
     pipelineLogger.info("Instagram cookies exported from Chrome", "Instagram");
+    return;
   } catch (err) {
     pipelineLogger.warn(
-      `Failed to export Instagram cookies from browser: ${err instanceof Error ? err.message : err}. Proceeding without fresh cookies.`,
+      `Failed to export Instagram cookies from browser: ${err instanceof Error ? err.message : err}. Checking for manual cookies.`,
+      "Instagram",
+    );
+  }
+
+  // Fallback to manual cookies.txt in project root if browser export failed
+  if (fs.existsSync(PROJECT_COOKIES_PATH)) {
+    pipelineLogger.info(
+      "Falling back to manual cookies.txt from project root",
+      "Instagram",
+    );
+    try {
+      fs.copyFileSync(PROJECT_COOKIES_PATH, COOKIES_FILE);
+    } catch (copyErr) {
+      pipelineLogger.error(
+        `Failed to copy manual cookies: ${copyErr instanceof Error ? copyErr.message : copyErr}`,
+        "Instagram",
+      );
+    }
+  } else {
+    pipelineLogger.warn(
+      "No manual cookies.txt found in project root. Proceeding without cookies.",
       "Instagram",
     );
   }
@@ -239,6 +250,33 @@ async function downloadFileFromUrl(
  * Extract video directly or screenshot an Instagram post using the public embed URL.
  * Works for images, carousels, and reels.
  */
+function parseNetscapeCookies(filePath: string): any[] {
+  if (!fs.existsSync(filePath)) return [];
+  try {
+    const content = fs.readFileSync(filePath, "utf-8");
+    const cookies: any[] = [];
+    const lines = content.split("\n");
+    for (const line of lines) {
+      if (!line.trim() || line.startsWith("#")) continue;
+      const parts = line.split("\t");
+      if (parts.length < 7) continue;
+      const [domain, , pathVal, secure, expires, name, value] = parts;
+      cookies.push({
+        name: name.trim(),
+        value: value.trim(),
+        domain: domain.trim(),
+        path: pathVal.trim(),
+        secure: secure.trim() === "TRUE",
+        expires: parseInt(expires.trim()) || undefined,
+      });
+    }
+    return cookies;
+  } catch (err) {
+    pipelineLogger.warn(`Failed to parse cookies file: ${err}`, "Instagram");
+    return [];
+  }
+}
+
 async function downloadViaPuppeteer(
   url: string,
   destDir: string,
@@ -250,10 +288,8 @@ async function downloadViaPuppeteer(
   const shortcode = match[1];
   const embedUrl = `https://www.instagram.com/p/${shortcode}/embed/`;
 
-  pipelineLogger.info(
-    `Loading Instagram embed via Puppeteer: ${embedUrl}`,
-    "Instagram",
-  );
+  const puppeteerModule = await new Function("return import('puppeteer-core')")();
+  const puppeteer = puppeteerModule.default;
 
   const browser = await puppeteer.launch({
     executablePath: CHROME_PATH,
@@ -267,49 +303,187 @@ async function downloadViaPuppeteer(
 
   try {
     const page = await browser.newPage();
-    // Standard desktop viewport sized for the embed widget
-    await page.setViewport({ width: 600, height: 700, deviceScaleFactor: 2 });
+    await page.setBypassCSP(true);
+    // Standard viewport (large height for direct reels page scroll)
+    await page.setViewport({ width: 1280, height: 1920, deviceScaleFactor: 2 });
     await page.setUserAgent(
       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
         "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     );
 
-    await page.goto(embedUrl, {
-      waitUntil: "domcontentloaded",
-      timeout: 20_000,
+    // Load cookies if available
+    const cookies = parseNetscapeCookies(COOKIES_FILE);
+    if (cookies.length > 0) {
+      pipelineLogger.info(
+        `Setting ${cookies.length} cookies in Puppeteer session`,
+        "Instagram",
+      );
+      await page.setCookie(...cookies);
+    }
+
+    const interceptedVideoUrls: string[] = [];
+    page.on("response", (response: any) => {
+      const resUrl = response.url();
+      if (
+        (resUrl.includes(".mp4") || resUrl.includes("mime=video")) &&
+        (resUrl.includes("fbcdn.net") || resUrl.includes("instagram.com"))
+      ) {
+        try {
+          const parsed = new URL(resUrl);
+          
+          // Decode Facebook/Instagram efg encoding metadata parameter to check if it's an audio stream
+          const efg = parsed.searchParams.get("efg");
+          if (efg) {
+            try {
+              const decoded = Buffer.from(efg, "base64").toString("utf8");
+              if (decoded.toLowerCase().includes("audio")) {
+                return; // Skip audio stream
+              }
+            } catch (_) {}
+          }
+
+          if (resUrl.toLowerCase().includes("audio")) {
+            return; // Skip standard audio paths
+          }
+
+          parsed.searchParams.delete("bytestart");
+          parsed.searchParams.delete("byteend");
+          const cleaned = parsed.toString();
+          if (!interceptedVideoUrls.includes(cleaned)) {
+            interceptedVideoUrls.push(cleaned);
+            pipelineLogger.info(
+              `Intercepted direct CDN video URL: ${cleaned.slice(0, 100)}...`,
+              "Instagram",
+            );
+          }
+        } catch (_) {}
+      }
     });
 
-    // Wait for the embedded post image or video to load
-    await page
-      .waitForSelector("img, video", { timeout: 15_000 })
-      .catch(() => {});
-    await new Promise((r) => setTimeout(r, 1500));
+    let videoSrc: string | null = null;
+    let loadedDirectReel = false;
 
-    // Try to extract video src URL
-    const videoSrc = await page.evaluate(() => {
-      const doc = (globalThis as any).document;
-      if (!doc) return null;
-      const videoEl = doc.querySelector("video");
-      if (!videoEl) return null;
-      const src = videoEl.getAttribute("src");
-      if (src) return src;
-      const sourceEl = videoEl.querySelector("source");
-      return sourceEl ? sourceEl.getAttribute("src") : null;
-    });
+    // Try Direct Reel Page first if cookies are available
+    if (cookies.length > 0) {
+      try {
+        pipelineLogger.info(
+          `Attempting direct Instagram Reel page load: ${url}`,
+          "Instagram",
+        );
+        await page.goto(url, {
+          waitUntil: "networkidle2",
+          timeout: 25_000,
+        });
+
+        // Check if redirected to login page
+        const currentUrl = page.url();
+        if (currentUrl.includes("accounts/login") || currentUrl.includes("/login/")) {
+          pipelineLogger.warn(
+            "Redirected to login page. Cookies might be expired/invalid.",
+            "Instagram",
+          );
+        } else {
+          // Wait for video element
+          await page.waitForSelector("video", { timeout: 10_000 });
+          loadedDirectReel = true;
+          pipelineLogger.info(
+            "Successfully loaded direct Reel page in Puppeteer",
+            "Instagram",
+          );
+        }
+      } catch (directErr) {
+        pipelineLogger.warn(
+          `Direct Reel load failed (${directErr instanceof Error ? directErr.message : directErr}), falling back to embed page`,
+          "Instagram",
+        );
+      }
+    }
+
+    // Fall back to embed page if direct load didn't work or no cookies
+    if (!loadedDirectReel) {
+      pipelineLogger.info(
+        `Loading Instagram embed via Puppeteer: ${embedUrl}`,
+        "Instagram",
+      );
+      await page.goto(embedUrl, {
+        waitUntil: "domcontentloaded",
+        timeout: 20_000,
+      });
+
+      // Wait for the embedded post image or video to load
+      await page
+        .waitForSelector("img, video", { timeout: 15_000 })
+        .catch(() => {});
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+
+    // Wait up to 3 seconds to let the video buffer stream so we can intercept direct CDN URLs
+    let waitCount = 0;
+    while (interceptedVideoUrls.length === 0 && waitCount < 6) {
+      await new Promise((r) => setTimeout(r, 500));
+      waitCount++;
+    }
+
+    if (interceptedVideoUrls.length > 0) {
+      videoSrc = interceptedVideoUrls[0];
+      pipelineLogger.info(
+        `Using intercepted CDN video URL: ${videoSrc.slice(0, 100)}...`,
+        "Instagram",
+      );
+    } else {
+      // Try to extract video src URL
+      videoSrc = await page.evaluate(() => {
+        const doc = (globalThis as any).document;
+        if (!doc) return null;
+        const videoEl = doc.querySelector("video");
+        if (!videoEl) return null;
+        const src = videoEl.getAttribute("src");
+        if (src) return src;
+        const sourceEl = videoEl.querySelector("source");
+        return sourceEl ? sourceEl.getAttribute("src") : null;
+      });
+    }
 
     if (videoSrc) {
       pipelineLogger.info(
-        `Found video source URL in Instagram embed: ${videoSrc}`,
+        `Found video source URL: ${videoSrc}`,
         "Instagram",
       );
       const videoPath = path.join(destDir, "reel_video.mp4");
 
       try {
-        await downloadFileFromUrl(videoSrc, videoPath);
-        pipelineLogger.info(
-          `Video downloaded successfully via Puppeteer to: ${videoPath}`,
-          "Instagram",
-        );
+        if (videoSrc.startsWith("blob:")) {
+          pipelineLogger.info(
+            `Detected blob URL. Extracting video content from browser memory: ${videoSrc}`,
+            "Instagram",
+          );
+          const base64Data = await page.evaluate(async (blobUrl: any) => {
+            const res = await fetch(blobUrl);
+            const blob = await res.blob();
+            return new Promise<string>((resolve, reject) => {
+              const reader = new (globalThis as any).FileReader();
+              reader.onloadend = () => {
+                const base64String = (reader.result as string).split(",")[1];
+                resolve(base64String);
+              };
+              reader.onerror = reject;
+              reader.readAsDataURL(blob);
+            });
+          }, videoSrc);
+
+          fs.writeFileSync(videoPath, Buffer.from(base64Data, "base64"));
+          pipelineLogger.checkpoint(
+            "Video extracted successfully from blob URL",
+            true,
+            videoPath,
+          );
+        } else {
+          await downloadFileFromUrl(videoSrc, videoPath);
+          pipelineLogger.info(
+            `Video downloaded successfully via Puppeteer to: ${videoPath}`,
+            "Instagram",
+          );
+        }
 
         const isStatic = await checkIfVideoIsStatic(videoPath);
         const instagramSourceType = isStatic ? "image_with_music" : "video";
@@ -407,67 +581,95 @@ async function downloadViaPuppeteer(
 }
 
 /**
- * Decodes the first 5 seconds of the video, downscales to 8x8 grayscale,
- * and calculates the average pixel difference between consecutive frames.
- * If the average pixel change is below a threshold (e.g. 0.15 gray levels),
- * it is considered a static image with background music.
+ * Decodes 3 frames of the video (start, middle, end), downscales to 16x16 grayscale,
+ * and compares them. If the differences are below a threshold, it is considered
+ * a static image disguised as a video.
  */
 async function checkIfVideoIsStatic(videoPath: string): Promise<boolean> {
   try {
-    // We downscale to 8x8 and force gray color space at 1 frame per second.
-    // This allows us to handle compression noise, progress bars, and minor artifacts.
-    const buffer = await runCommandWithBufferOutput(
-      FFMPEG,
+    // 1. Get video duration using ffprobe
+    const durationBuffer = await runCommandWithBufferOutput(
+      FFPROBE,
       [
-        "-t",
-        "5",
-        "-i",
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
         videoPath,
-        "-an",
-        "-vf",
-        "fps=fps=1,scale=8:8,format=gray",
-        "-f",
-        "rawvideo",
-        "-",
       ],
-      "check-static-video",
+      "get-duration",
     );
-
-    const numFrames = Math.floor(buffer.length / 64);
-    if (numFrames <= 1) {
-      // Not enough frames to determine change (assume static)
-      return true;
+    const duration = parseFloat(durationBuffer.toString().trim());
+    if (isNaN(duration) || duration <= 0) {
+      pipelineLogger.warn(
+        `Failed to parse video duration. Assuming dynamic video.`,
+        "Instagram",
+      );
+      return false;
     }
 
-    const frames: Buffer[] = [];
-    for (let i = 0; i < numFrames; i++) {
-      frames.push(buffer.subarray(i * 64, (i + 1) * 64));
-    }
+    // 2. Define the 3 timestamps (start, middle, end)
+    const t1 = Math.min(1.0, duration * 0.1);
+    const t2 = duration * 0.5;
+    const t3 = Math.max(duration - 1.0, duration * 0.9);
 
-    let totalDiff = 0;
-    let comparisons = 0;
-
-    for (let i = 1; i < frames.length; i++) {
-      const f1 = frames[i];
-      const f0 = frames[i - 1];
-      let frameDiff = 0;
-      for (let j = 0; j < 64; j++) {
-        frameDiff += Math.abs(f1[j] - f0[j]);
-      }
-      totalDiff += frameDiff / 64;
-      comparisons++;
-    }
-
-    const avgDiffPerPixel = comparisons > 0 ? totalDiff / comparisons : 0;
     pipelineLogger.info(
-      `Average frame difference score: ${avgDiffPerPixel.toFixed(3)}`,
+      `Checking if video is static. Duration: ${duration.toFixed(2)}s, sampling at: ${t1.toFixed(2)}s, ${t2.toFixed(2)}s, ${t3.toFixed(2)}s`,
       "Instagram",
     );
 
-    // Threshold of 0.15 gray levels difference per pixel on average.
-    // Static reels (image + music) have practically 0 difference.
-    // Zooming edits have >0.9 difference, real videos have even higher.
-    const isStatic = avgDiffPerPixel < 0.15;
+    // Helper to extract a single frame as a raw grayscale 16x16 buffer
+    const extractFrame = async (ts: number): Promise<Buffer> => {
+      return await runCommandWithBufferOutput(
+        FFMPEG,
+        [
+          "-y",
+          "-ss",
+          ts.toFixed(3),
+          "-i",
+          videoPath,
+          "-vframes",
+          "1",
+          "-vf",
+          "scale=16:16,format=gray",
+          "-f",
+          "rawvideo",
+          "-",
+        ],
+        `extract-frame-${ts.toFixed(1)}`,
+      );
+    };
+
+    // Extract all 3 frames
+    const [b1, b2, b3] = await Promise.all([
+      extractFrame(t1),
+      extractFrame(t2),
+      extractFrame(t3),
+    ]);
+
+    // Helper to compute difference between two raw 16x16 grayscale buffers
+    const getDiff = (bA: Buffer, bB: Buffer): number => {
+      if (bA.length !== bB.length || bA.length === 0) return 999;
+      let total = 0;
+      for (let i = 0; i < bA.length; i++) {
+        total += Math.abs(bA[i] - bB[i]);
+      }
+      return total / bA.length;
+    };
+
+    const diff12 = getDiff(b1, b2);
+    const diff23 = getDiff(b2, b3);
+
+    pipelineLogger.info(
+      `Frame difference scores: start-to-middle=${diff12.toFixed(3)}, middle-to-end=${diff23.toFixed(3)}`,
+      "Instagram",
+    );
+
+    // If both differences are extremely small (less than 1.5 gray levels on average),
+    // then the frames are virtually identical, indicating a static image.
+    const isStatic = diff12 < 1.5 && diff23 < 1.5;
     return isStatic;
   } catch (err) {
     pipelineLogger.warn(

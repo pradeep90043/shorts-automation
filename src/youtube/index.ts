@@ -20,16 +20,8 @@ export class YouTubeService {
     const { clientId, clientSecret, redirectUri } = config.youtube;
 
     if (!clientId || !clientSecret || !channel.refreshToken) {
-      pipelineLogger.warn(
-        `[${channel.name}] Missing OAuth credentials — skipping (SIMULATED)`,
-        "YouTubeService",
-      );
-      const mockId = `sim-${Date.now()}`;
-      return {
-        channelName: channel.name,
-        url: `https://youtube.com/shorts/${mockId}`,
-        videoId: mockId,
-      };
+      // Missing credentials – cannot upload. Throw error to force proper configuration.
+      throw new Error('YouTube OAuth credentials or channel refresh token missing. Configure YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, and channel refresh tokens in .env.');
     }
 
     try {

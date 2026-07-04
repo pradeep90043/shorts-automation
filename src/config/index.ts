@@ -9,6 +9,12 @@ export interface YoutubeChannel {
   refreshToken: string;
 }
 
+export interface InstagramAccount {
+  name: string;
+  accessToken: string;
+  igUserId: string;
+}
+
 export interface AppConfig {
   telegramToken: string;
   youtube: {
@@ -16,6 +22,9 @@ export interface AppConfig {
     clientSecret: string;
     redirectUri: string;
     channels: YoutubeChannel[]; // one entry per channel
+  };
+  instagram: {
+    accounts: InstagramAccount[];
   };
   ai: {
     provider: "claude" | "antigravity" | "freellmapi" | "mock";
@@ -25,6 +34,7 @@ export interface AppConfig {
     freellmapiUrl: string;
     freellmapiKey: string;
     freellmapiModel: string;
+    freellmapiVisionModel: string;
   };
   paths: {
     assetsDir: string;
@@ -70,6 +80,26 @@ function loadChannels(): YoutubeChannel[] {
   return channels;
 }
 
+function loadInstagramAccounts(): InstagramAccount[] {
+  const accounts: InstagramAccount[] = [];
+  for (let i = 1; i <= 10; i++) {
+    const token = process.env[`INSTAGRAM_ACCOUNT_${i}_ACCESS_TOKEN`];
+    const userId = process.env[`INSTAGRAM_ACCOUNT_${i}_USER_ID`];
+    if (!token || !userId) break;
+    const name = process.env[`INSTAGRAM_ACCOUNT_${i}_NAME`] || `Instagram ${i}`;
+    accounts.push({ name, accessToken: token, igUserId: userId });
+  }
+  // Also support the legacy single-account token
+  if (accounts.length === 0 && process.env.INSTAGRAM_ACCESS_TOKEN && process.env.INSTAGRAM_USER_ID) {
+    accounts.push({
+      name: "Instagram 1",
+      accessToken: process.env.INSTAGRAM_ACCESS_TOKEN,
+      igUserId: process.env.INSTAGRAM_USER_ID,
+    });
+  }
+  return accounts;
+}
+
 export const config: AppConfig = {
   telegramToken: process.env.TELEGRAM_BOT_TOKEN || "",
   youtube: {
@@ -79,6 +109,9 @@ export const config: AppConfig = {
       process.env.YOUTUBE_REDIRECT_URI ||
       "http://localhost:3000/oauth2callback",
     channels: loadChannels(),
+  },
+  instagram: {
+    accounts: loadInstagramAccounts(),
   },
   ai: {
     provider: (process.env.AI_PROVIDER || "mock") as
@@ -92,6 +125,7 @@ export const config: AppConfig = {
     freellmapiUrl: process.env.FREELLMAPI_URL || "http://localhost:3001",
     freellmapiKey: process.env.FREELLMAPI_KEY || "",
     freellmapiModel: process.env.FREELLMAPI_MODEL || "auto",
+    freellmapiVisionModel: process.env.FREELLMAPI_VISION_MODEL || "gemini-2.5-flash",
   },
   paths: {
     assetsDir: process.env.ASSETS_DIR

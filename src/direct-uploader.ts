@@ -3,10 +3,11 @@ import path from "path";
 import sharp from "sharp";
 import { exec } from "child_process";
 import { config } from "./config";
-import { VideoRenderer } from "./renderer";
+import { VideoRenderer, calculateVideoCrop } from "./renderer";
 import { MusicService } from "./music";
 import { YouTubeService, UploadResult } from "./youtube";
-import { TelegramService } from "./telegram";
+import { InstagramPublisher, InstagramUploadResult } from "./instagram/publisher";
+import { TelegramService, escapeMarkdown } from "./telegram";
 import { PipelineContext, VideoMetadata } from "./types";
 import { pipelineLogger } from "./utils/logger";
 import { FreeLlmApiClient } from "./ai/freellmapi";
@@ -15,9 +16,7 @@ import { CacheManager, getFileHash } from "./utils/cache";
 import { JobDatabase } from "./utils/db";
 import { ViralAnalyzer } from "./utils/viral-analyzer";
 import { JobQueue } from "./utils/queue";
-
-const REVIEW_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
-
+import { ImageAnalyzer } from "./image-analysis";
 interface PendingUpload {
   id: string;
   chatId: number;
@@ -28,7 +27,7 @@ interface PendingUpload {
   outputFilePath: string;
   outputFileName: string;
   originalImagePath: string;
-  timer: ReturnType<typeof setTimeout>;
+  timer?: ReturnType<typeof setTimeout>;
   context: PipelineContext;
 }
 
@@ -37,10 +36,12 @@ export class DirectUploader {
   private renderer: VideoRenderer;
   private music: MusicService;
   private youtube: YouTubeService;
+  private instagram: InstagramPublisher;
   private telegram: TelegramService;
   private cacheManager = new CacheManager();
   private db = new JobDatabase();
   private viralAnalyzer = new ViralAnalyzer();
+  private analyzer = new ImageAnalyzer();
   private queue = new JobQueue(1);
   private pending = new Map<string, PendingUpload>();
   private pendingFrameReviews = new Map<
@@ -57,6 +58,7 @@ export class DirectUploader {
     string,
     { channelResults: UploadResult[]; chatId: number; successMessageId: number }
   >();
+  private jobResolvers = new Map<string, () => void>();
 
   constructor(telegram: TelegramService) {
     if (config.ai.provider === "freellmapi") {
@@ -65,6 +67,7 @@ export class DirectUploader {
     this.renderer = new VideoRenderer();
     this.music = new MusicService();
     this.youtube = new YouTubeService();
+    this.instagram = new InstagramPublisher();
     this.telegram = telegram;
 
     // Wire up inline-button callbacks from Telegram
@@ -73,6 +76,7 @@ export class DirectUploader {
       else if (action === "cancel") this.onCancel(id);
       else if (action === "regenerate") this.onRegenerate(id, false);
       else if (action === "viral") this.onRegenerate(id, true);
+      else if (action === "replace_music") this.onReplaceMusic(id);
     });
 
     telegram.registerRevokeCallback(async (id) => {
@@ -173,17 +177,79 @@ Search for:
 If no such elements are present, return an empty array for brandingZones.
 
 TASK 2: YouTube Shorts Metadata & Mood Generation
-Based on the content in the image, write high-CTR, scroll-stopping, SEO-optimized metadata and identify the mood of the content.
-- title: curiosity-driven, punchy, under 80 chars. Use power words and emojis.
-- description: 2-3 sentences explaining the value. End with 5-6 hashtags. Max 400 chars.
-- tags: 10-12 specific tags.
-- mood: Determine the emotional tone or theme of the content. Choose exactly one of: "funny", "sad", or "other".
+You are an expert YouTube SEO strategist for the technology channel "CodeOrCap". Your job is to generate highly clickable but honest YouTube metadata.
+TITLE RULES: Max 65 chars. Primary keyword within first 30 chars. Curiosity without clickbait. Use current year if relevant. One emoji. No ALL CAPS (except AI, API, etc).
+DESCRIPTION RULES: 180-300 words. Include: 1) What the video is about (primary keyword in first sentence). 2) What you'll learn (bullet points). 3) Who it's for. 4) Subscribe CTA to @CodeOrCap. 5) Community CTA question.
+KEYWORDS: Provide 1 primary keyword, 5 secondary keywords, 15 tags, and 8-12 hashtags.
+THUMBNAIL: Max 5 words, highly clickable, curiosity driven.
+FILENAME: SEO-friendly filename (e.g., tech-video-2026.mp4).
+MOOD: Determine emotional tone: "funny", "sad", or "other".
 
 TASK 3: Verbatim Text Extraction
 Read all text written on the image exactly as it appears verbatim, without correcting spelling, punctuation, or formatting. If there is no text, return an empty string.
 
-TASK 4: Safe Area for Caption Placement
-Identify a normalized bounding box clear of faces, logos, watermarks, handles, or action overlay panels where dynamic text overlays can be cleanly placed without covering essential content. If captions are at the top, select the top banner. Otherwise, select a bottom region (e.g. y=0.7 to 0.85).
+TASK 4: Safe Area, Style Selection & Candidate Placement Detection
+Evaluate the image layout for dynamic overlay caption placement. Apply ALL of these rules:
+
+STEP 4A — Background Classification
+Look at the area where the caption will be placed and classify it:
+- "existing_banner" : A solid black or white horizontal banner strip (meme text block) already exists at top or bottom.
+- "plain"           : The region is a solid or near-solid color, sky, clouds, blank wall, or simple cartoon background with no fine detail.
+- "busy"            : The region contains characters, faces, detailed artwork, motion blur, real video footage, or complex textures.
+
+STEP 4B — Caption Style Selector
+Based on the background classification, choose ONE style:
+
+• style2_banner_replace — USE WHEN: existing_banner is detected.
+  Rule: Cover ONLY the exact pixel region of the old banner. Reuse its dimensions. No enlargement.
+  The old text must be completely hidden — paint the same background color over it before writing new text.
+
+• style1_outline — USE WHEN: backgroundType = "plain".
+  Rule: Do NOT draw any rectangle. Render bold white text with a 3px black stroke and drop shadow.
+  Perfect for cartoons, memes with solid-color backgrounds (like Tom & Jerry green background).
+
+• style4_gradient — USE WHEN: backgroundType = "busy" AND the content is a real video (live action, people, footage).
+  Rule: Render a semi-transparent dark gradient scrim (0% → 60% dark) behind the text. No hard-edged black rectangle.
+
+• style3_black_banner — USE WHEN: backgroundType = "busy" AND the content is a meme or cartoon that genuinely needs a solid black banner.
+  Rule: Use ONLY when style1/style2/style4 would make text unreadable. Keep banner height tight to the text.
+
+STEP 4C — Existing Banner Detection (RULE A)
+  If a solid black or white HORIZONTAL text-banner strip (meme caption bar, subtitle bar) exists at the very top or bottom of the frame:
+  - Set existingBanner = true
+  - Set bannerBounds to EXACTLY the pixel-accurate bounding box of ONLY that strip
+  - The first entry in safeAreas MUST be this banner (score ≥ 95, reason = "existing banner")
+  - NEVER grow the banner height — only use the region that already exists
+  - The banner background color will be sampled and matched, not always black
+
+STEP 4D — Protected Regions (RULE B)
+  NEVER place captions over ANY of these:
+  - Human faces, eyes, mouths
+  - Full bodies or characters (animated or real)
+  - Hands, arms, gestures
+  - Main foreground objects (escalators, machines, animals, vehicles, props)
+  - Motion paths and action areas (where movement is happening)
+  - Any text that is part of the scene itself
+
+STEP 4E — Safe Area Candidate Scoring (RULE C)
+  Score candidates 0-100. Candidates that overlap ANY protectedRegion score 0.
+  Prefer: existing banner (95-100) → plain-color top/bottom (70-90) → empty negative space (50-70) → gradient-safe area (30-60)
+  Include at least 2-3 candidates.
+
+STEP 4F — Banner Sizing Rules
+  - Width: if existingBanner, match the original banner width exactly.
+  - If creating a new style1/style4 area: width is text-wrapping width + 40-60px padding on each side (NOT full-width).
+  - Height: calculated from rendered text height. Never oversized.
+  - Full-width banners ONLY when the original meme already has a full-width banner.
+
+Fields to return:
+- backgroundType: "plain" | "busy" | "existing_banner"
+- captionStyle: "style1_outline" | "style2_banner_replace" | "style3_black_banner" | "style4_gradient"
+- existingBanner: boolean
+- bannerBounds: exact bounding box of existing banner or null
+- safeAreas: list of up to 5 candidate boxes sorted by score DESC, each with x/y/width/height/score/reason
+- protectedRegions: list of protected areas with type, box, description
+- recommendedPlacement: one of "existing_banner", "top", "bottom", "left", "right"
 
 TASK 5: Quality Assessment
 Evaluate the image quality, text readability, watermark risk, and style format:
@@ -197,7 +263,12 @@ Return ONLY a raw JSON object matching this schema — no markdown, no explanati
   "metadata": {
     "title": string,
     "description": string,
+    "primaryKeyword": string,
+    "secondaryKeywords": string[],
     "tags": string[],
+    "hashtags": string[],
+    "thumbnailText": string,
+    "filename": string,
     "mood": "funny" | "sad" | "other"
   },
   "brandingZones": [
@@ -213,12 +284,38 @@ Return ONLY a raw JSON object matching this schema — no markdown, no explanati
     }
   ],
   "extractedText": string,
-  "safeArea": {
+  "backgroundType": "plain" | "busy" | "existing_banner",
+  "captionStyle": "style1_outline" | "style2_banner_replace" | "style3_black_banner" | "style4_gradient",
+  "existingBanner": boolean,
+  "bannerBounds": {
     "x": number,
     "y": number,
     "width": number,
     "height": number
-  },
+  } | null,
+  "safeAreas": [
+    {
+      "x": number,
+      "y": number,
+      "width": number,
+      "height": number,
+      "score": number,
+      "reason": string
+    }
+  ],
+  "protectedRegions": [
+    {
+      "type": string,
+      "box": {
+        "x": number,
+        "y": number,
+        "width": number,
+        "height": number
+      },
+      "description": string
+    }
+  ],
+  "recommendedPlacement": "existing_banner" | "top" | "bottom" | "left" | "right",
   "qualityScore": {
     "readability": number,
     "watermarkRisk": number,
@@ -238,11 +335,31 @@ Important:
 
       let raw = "";
       if (this.freellmapi) {
-        pipelineLogger.info(
-          "Attempting metadata generation via FreeLLMAPI...",
-          "DirectUploader",
-        );
-        raw = await this.freellmapi.generateVision(prompt, base64, mimeType);
+        let attempts = 0;
+        const maxAttempts = 8;
+        while (attempts < maxAttempts) {
+          try {
+            pipelineLogger.info(
+              `Attempting metadata generation via FreeLLMAPI (Attempt ${attempts + 1}/${maxAttempts})...`,
+              "DirectUploader",
+            );
+            raw = await this.freellmapi.generateVision(prompt, base64, mimeType);
+            if (raw) break;
+          } catch (e: any) {
+            const msg = e.message || String(e);
+            if (msg.includes("429") || msg.includes("rate")) {
+              attempts++;
+              if (attempts >= maxAttempts) throw e;
+              pipelineLogger.warn(
+                `FreeLLMAPI rate limited (429). Waiting 15s before retry (${attempts}/${maxAttempts})...`,
+                "DirectUploader"
+              );
+              await new Promise((r) => setTimeout(r, 15000));
+            } else {
+              throw e;
+            }
+          }
+        }
       }
 
       if (!raw) {
@@ -263,7 +380,34 @@ Important:
           description: string;
         }>;
         extractedText?: string;
-        safeArea?: { x: number; y: number; width: number; height: number };
+        existingBanner: boolean;
+        bannerBounds: {
+          x: number;
+          y: number;
+          width: number;
+          height: number;
+        } | null;
+        safeAreas: Array<{
+          x: number;
+          y: number;
+          width: number;
+          height: number;
+          score: number;
+          reason: string;
+        }>;
+        protectedRegions: Array<{
+          type: string;
+          box: { x: number; y: number; width: number; height: number };
+          description: string;
+        }>;
+        recommendedPlacement:
+          | "existing_banner"
+          | "top"
+          | "bottom"
+          | "left"
+          | "right";
+        captionStyle?: "style1_outline" | "style2_banner_replace" | "style3_black_banner" | "style4_gradient";
+        backgroundType?: "plain" | "busy" | "existing_banner";
         qualityScore?: {
           readability: number;
           watermarkRisk: number;
@@ -298,10 +442,29 @@ Important:
         );
       }
 
-      if (data.safeArea) {
-        context.safeArea = data.safeArea;
+      context.existingBanner = data.existingBanner;
+      context.bannerBounds = data.bannerBounds || undefined;
+      context.safeAreaCandidates = data.safeAreas || [];
+      context.protectedRegions = data.protectedRegions || [];
+      context.recommendedPlacement = data.recommendedPlacement;
+      context.captionStyle = data.captionStyle || (data.existingBanner ? "style2_banner_replace" : "style1_outline");
+      context.backgroundType = data.backgroundType || (data.existingBanner ? "existing_banner" : "plain");
+
+      pipelineLogger.info(
+        `Vision AI Caption Style: ${context.captionStyle}, Background: ${context.backgroundType}`,
+        "DirectUploader",
+      );
+
+      if (context.safeAreaCandidates && context.safeAreaCandidates.length > 0) {
+        const topCandidate = context.safeAreaCandidates[0];
+        context.safeArea = {
+          x: topCandidate.x,
+          y: topCandidate.y,
+          width: topCandidate.width,
+          height: topCandidate.height,
+        };
         pipelineLogger.info(
-          `Vision AI successfully detected safe area: x=${context.safeArea.x}, y=${context.safeArea.y}, w=${context.safeArea.width}, h=${context.safeArea.height}`,
+          `Vision AI successfully detected safe areas list. Default selected candidate (Reason: ${topCandidate.reason}, Score: ${topCandidate.score}): x=${context.safeArea.x}, y=${context.safeArea.y}, w=${context.safeArea.width}, h=${context.safeArea.height}`,
           "DirectUploader",
         );
       }
@@ -326,10 +489,12 @@ Important:
                 `⚠️ *AI Quality Check Warning:*\n` +
                   `• *Readability:* ${data.qualityScore.readability}/100\n` +
                   `• *Watermark Risk:* ${data.qualityScore.watermarkRisk}/100\n` +
-                  `• *Recommendation:* _${data.qualityScore.recommendation}_`,
+                  `• *Recommendation:* _${escapeMarkdown(data.qualityScore.recommendation)}_`,
                 messageId,
               )
-              .catch(() => {});
+              .catch((sendErr) => {
+                pipelineLogger.error("Failed to send quality check warning message", sendErr, "DirectUploader");
+              });
           }
         }
       }
@@ -399,19 +564,19 @@ Generate SEO-optimised YouTube Shorts metadata that will maximise clicks and wat
 
 Rules:
 - title: curiosity-driven, punchy, under 80 chars. Use power words and emojis. Examples: "You're Using Git Wrong 😤 Here's The Fix", "10 VS Code Shortcuts Devs Don't Know ⚡", "This Python Trick Will Blow Your Mind 🔥"
-- description: 2-3 sentences explaining the value. End with 5-6 relevant hashtags. Max 400 chars.
+- description: 2-3 sentences explaining the value. End with 5-6 popular tags (hashtags). Max 400 chars.
 - tags: 10-12 specific tags covering the topic, tools, and audience (no spaces in tags).
 - mood: Determine the emotional tone or theme of the content. Choose exactly one of: "funny", "sad", or "other" (for general, educational, motivational, or tech tips).
 
 Return ONLY a raw JSON object — no markdown, no explanation:
 {"title":"...","description":"...","tags":["...","..."],"mood":"funny" | "sad" | "other"}`;
 
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < 8; attempt++) {
       try {
         let raw = "";
         if (this.freellmapi) {
           pipelineLogger.info(
-            "Attempting metadata generation via FreeLLMAPI...",
+            `Attempting metadata generation via FreeLLMAPI (Attempt ${attempt + 1}/8)...`,
             "DirectUploader",
           );
           raw = await this.freellmapi.generateVision(prompt, base64, mimeType);
@@ -429,10 +594,10 @@ Return ONLY a raw JSON object — no markdown, no explanation:
         return obj;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        if (attempt < 2 && /503|unavailable|rate|429/i.test(msg)) {
-          const wait = /429/.test(msg) ? 15000 : 5000;
+        if (attempt < 7 && /503|unavailable|rate|429/i.test(msg)) {
+          const wait = 15000;
           pipelineLogger.warn(
-            `AI attempt ${attempt + 1} failed, retrying in ${wait / 1000}s…`,
+            `AI attempt ${attempt + 1} failed (Rate Limit). Retrying in 15s…`,
             "DirectUploader",
           );
           await new Promise((r) => setTimeout(r, wait));
@@ -477,41 +642,54 @@ Return ONLY a raw JSON object — no markdown, no explanation:
 
 Analyze this image and generate the most scroll-stopping, curiosity-gap, high-CTR metadata possible.
 
-Rules:
-- title: extreme curiosity gap, controversy, or shock. Under 80 chars. Heavy emoji use. Examples: "99% of Developers Get This WRONG 💀", "I Can't Believe This Actually Works 🤯", "They Hid This Feature For Years 👀"
-- description: hook in first sentence, urgency, social proof. End with 5-6 hashtags. Max 400 chars.
-- tags: 10-12 viral/trending tags.
-- mood: Determine the emotional tone or theme of the content. Choose exactly one of: "funny", "sad", or "other" (for general, educational, motivational, or tech tips).
+TITLE RULES: Max 65 chars. Extreme curiosity gap, controversy, or shock. Primary keyword within first 30 chars. One emoji. No ALL CAPS (except AI, API, etc).
+DESCRIPTION RULES: 180-300 words. Include: 1) What the video is about (primary keyword in first sentence). 2) What you'll learn (bullet points). 3) Who it's for. 4) Subscribe CTA to @CodeOrCap. 5) Community CTA question. 6) Add popular tags (hashtags) at the end of the description.
+KEYWORDS: Provide 1 primary keyword, 5 secondary keywords, 15 tags, and 8-12 hashtags.
+THUMBNAIL: Max 5 words, highly clickable, curiosity driven.
+FILENAME: SEO-friendly filename (e.g., viral-tech-video-2026.mp4).
+MOOD: Determine emotional tone: "funny", "sad", or "other".
 
 Return ONLY raw JSON — no markdown:
-{"title":"...","description":"...","tags":["...","..."],"mood":"funny" | "sad" | "other"}`;
+{"title":"...","description":"...","primaryKeyword":"...","secondaryKeywords":["..."],"tags":["..."],"hashtags":["..."],"thumbnailText":"...","filename":"...","mood":"funny" | "sad" | "other"}`;
 
-    try {
-      let raw = "";
-      if (this.freellmapi) {
-        pipelineLogger.info(
-          "Attempting metadata generation via FreeLLMAPI...",
-          "DirectUploader",
+    for (let attempt = 0; attempt < 8; attempt++) {
+      try {
+        let raw = "";
+        if (this.freellmapi) {
+          pipelineLogger.info(
+            `Attempting metadata generation via FreeLLMAPI (Attempt ${attempt + 1}/8)...`,
+            "DirectUploader",
+          );
+          raw = await this.freellmapi.generateVision(prompt, base64, mimeType);
+        }
+
+        if (!raw) {
+          throw new Error("FreeLLMAPI failed to respond.");
+        }
+
+        const obj = parseAiJson<VideoMetadata>(raw);
+        if (!obj.title || !obj.description || !Array.isArray(obj.tags))
+          throw new Error("Missing fields");
+        pipelineLogger.checkpoint(
+          "Viral metadata generated",
+          true,
+          `"${obj.title}"`,
         );
-        raw = await this.freellmapi.generateVision(prompt, base64, mimeType);
+        return obj;
+      } catch (err: any) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (attempt < 7 && /503|unavailable|rate|429/i.test(msg)) {
+          pipelineLogger.warn(
+            `AI attempt ${attempt + 1} failed (Rate Limit). Retrying in 15s…`,
+            "DirectUploader"
+          );
+          await new Promise((r) => setTimeout(r, 15000));
+        } else {
+          return this.fallbackMetadata();
+        }
       }
-
-      if (!raw) {
-        throw new Error("FreeLLMAPI failed to respond.");
-      }
-
-      const obj = parseAiJson<VideoMetadata>(raw);
-      if (!obj.title || !obj.description || !Array.isArray(obj.tags))
-        throw new Error("Missing fields");
-      pipelineLogger.checkpoint(
-        "Viral metadata generated",
-        true,
-        `"${obj.title}"`,
-      );
-      return obj;
-    } catch {
-      return this.fallbackMetadata();
     }
+    return this.fallbackMetadata();
   }
 
   // ── Upload to all channels ─────────────────────────────────────────────────
@@ -532,7 +710,7 @@ Return ONLY raw JSON — no markdown:
 
     await this.telegram.sendMessage(
       chatId,
-      `🚀 *Uploading to ${config.youtube.channels.length} channel(s)…*`,
+      `🚀 *Uploading to ${config.youtube.channels.length} YouTube channel(s) and ${config.instagram.accounts.length} Instagram account(s)…*`,
       messageId,
     );
 
@@ -542,14 +720,24 @@ Return ONLY raw JSON — no markdown:
         metadata,
       );
 
+      const instaResults: InstagramUploadResult[] = await this.instagram.uploadToAllAccounts(
+        finalVideoPath,
+        metadata,
+      );
+
       const channelLines = results
-        .map((r) => `• *${r.channelName}:* ${r.url}`)
+        .map((r) => `• *YouTube (${r.channelName}):* ${r.url}`)
+        .join("\n");
+
+      const instaLines = instaResults
+        .map((r) => `• *Instagram (${r.accountName}):* ${r.url}`)
         .join("\n");
 
       const successText =
-        `✅ *Uploaded to ${results.length} channel(s)!*\n\n` +
-        `*Title:* ${metadata.title}\n\n` +
-        `${channelLines}\n\n` +
+        `✅ *Uploaded successfully!*\n\n` +
+        `*Title:* ${escapeMarkdown(metadata.title)}\n\n` +
+        `${channelLines}\n` +
+        `${instaLines}\n\n` +
         `*File:* output/${outputFileName.replace(/_/g, "\\_")}\n*ID:* ${id}`;
 
       const successMessageId = await this.telegram.sendSuccessMessageWithRevoke(
@@ -567,7 +755,7 @@ Return ONLY raw JSON — no markdown:
 
       this.db.updateJob(id, {
         status: "completed",
-        currentStep: "Short uploaded to all channels successfully",
+        currentStep: "Short uploaded to all configured platforms successfully",
         youtubeUrl: results[0]?.url,
         context: pending.context,
       });
@@ -581,11 +769,18 @@ Return ONLY raw JSON — no markdown:
         results[0]?.url,
       );
 
-      // Clean up/delete the review video message and the original user message from Telegram
-      await this.telegram.deleteMessage(chatId, reviewMessageId);
-      if (messageId) {
-        await this.telegram.deleteMessage(chatId, messageId);
+      // Instead of deleting the review video, keep it for manual download.
+      // Also send the final video with title and description so the user can retrieve metadata.
+      try {
+        await this.telegram.sendRawVideo(
+          chatId,
+          finalVideoPath,
+          `*Title:* ${metadata.title}\n*Description:* ${metadata.description}`,
+        );
+      } catch (sendErr) {
+        pipelineLogger.error('Failed to send final video with metadata', sendErr, 'DirectUploader');
       }
+      // Optionally retain the original review message; do not delete it.
 
       pipelineLogger.checkpoint(
         "All uploads complete",
@@ -609,7 +804,12 @@ Return ONLY raw JSON — no markdown:
       });
     }
 
+    if (pending.context.mediaHash) {
+      this.cacheManager.delete(pending.context.mediaHash);
+    }
+
     this.pending.delete(id);
+    this.resolveJob(id);
   }
 
   // ── Review button handlers ─────────────────────────────────────────────────
@@ -617,7 +817,7 @@ Return ONLY raw JSON — no markdown:
   private onPublish(id: string): void {
     const pending = this.pending.get(id);
     if (!pending) return;
-    clearTimeout(pending.timer);
+    if (pending.timer) clearTimeout(pending.timer);
     this.uploadAndReport(pending).catch((err) =>
       pipelineLogger.error(`Upload error for ${id}`, err, "DirectUploader"),
     );
@@ -626,7 +826,7 @@ Return ONLY raw JSON — no markdown:
   private onCancel(id: string): void {
     const pending = this.pending.get(id);
     if (!pending) return;
-    clearTimeout(pending.timer);
+    if (pending.timer) clearTimeout(pending.timer);
     this.pending.delete(id);
     this.telegram.removeInlineButtons(pending.chatId, pending.reviewMessageId);
     this.telegram.sendMessage(
@@ -635,6 +835,18 @@ Return ONLY raw JSON — no markdown:
       pending.messageId,
     );
     pipelineLogger.info(`Upload cancelled by user for ${id}`, "DirectUploader");
+    
+    this.db.updateJob(id, {
+      status: "failed",
+      currentStep: "Upload cancelled by user",
+      context: pending.context,
+    });
+
+    if (pending.context.mediaHash) {
+      this.cacheManager.delete(pending.context.mediaHash);
+    }
+
+    this.resolveJob(id);
   }
 
   private async onApproveFrame(id: string): Promise<void> {
@@ -685,6 +897,18 @@ Return ONLY raw JSON — no markdown:
       `Generation ${id} cancelled during frame review.`,
       "DirectUploader",
     );
+
+    this.db.updateJob(id, {
+      status: "failed",
+      currentStep: "Generation cancelled by user during frame review",
+      context: pending.context,
+    });
+
+    if (pending.context.mediaHash) {
+      this.cacheManager.delete(pending.context.mediaHash);
+    }
+
+    this.resolveJob(id);
   }
 
   private async onSelectFrameVariant(
@@ -704,14 +928,23 @@ Return ONLY raw JSON — no markdown:
       .catch(() => {});
 
     const variants = pending.context.captionVariants;
+    // Updated: option A keeps original caption (no rephrase)
     let selectedCaption = pending.context.rephrasedCaption;
     if (variants) {
-      if (variantCode === "a") selectedCaption = variants.A;
-      else if (variantCode === "b") selectedCaption = variants.B;
-      else if (variantCode === "c") selectedCaption = variants.C;
+      if (variantCode === "a") {
+        // Do not set rephrased caption, use original
+        selectedCaption = undefined;
+        pending.context.useRephrasedCaption = false;
+      } else if (variantCode === "b") {
+        selectedCaption = variants.B;
+      } else if (variantCode === "c") {
+        selectedCaption = variants.C;
+      }
     }
-
-    pending.context.rephrasedCaption = selectedCaption;
+    if (variantCode !== "a") {
+      pending.context.rephrasedCaption = selectedCaption;
+      pending.context.useRephrasedCaption = true;
+    }
     pipelineLogger.info(
       `User selected variant ${variantCode.toUpperCase()}: "${selectedCaption}" for job ${id}`,
       "DirectUploader",
@@ -722,6 +955,9 @@ Return ONLY raw JSON — no markdown:
       `🅰️ *Selected Variant ${variantCode.toUpperCase()}*:\n\`"${selectedCaption}"\`\n\nRe-rendering layout preview…`,
       pending.messageId,
     );
+
+    // Resolve the previous job promise so the queue slot is freed before re-running
+    this.resolveJob(id);
 
     // Re-run pipeline to render the layout with the selected variant
     this.run(pending.context).catch((err) => {
@@ -772,6 +1008,55 @@ Return ONLY raw JSON — no markdown:
           "DirectUploader",
         ),
       );
+  }
+
+  private async onReplaceMusic(id: string): Promise<void> {
+    const pending = this.pending.get(id);
+    if (!pending) return;
+
+    pipelineLogger.info(`Replacing music for ${id}`, "DirectUploader");
+
+    try {
+      const tempMusicVideoPath = path.join(pending.context.tempDir, "video_music_replaced.mp4");
+      const rawVideoPath = path.join(pending.context.tempDir, "video_raw.mp4");
+      
+      await this.music.addBackgroundMusic(
+        rawVideoPath,
+        config.paths.musicDir,
+        tempMusicVideoPath,
+        pending.metadata.mood,
+        undefined,
+        pending.context.isVideo,
+      );
+
+      fs.copyFileSync(tempMusicVideoPath, pending.finalVideoPath);
+      fs.copyFileSync(tempMusicVideoPath, pending.outputFilePath);
+
+      // Edit the video in the existing review message
+      const caption =
+        `📋 *Review your Short*\n\n` +
+        `*Title:* ${escapeMarkdown(pending.metadata.title)}\n\n` +
+        `*Description:* ${escapeMarkdown(pending.metadata.description.slice(0, 200))}…\n\n` +
+        `⏳ _Waiting for review action..._`;
+
+      await this.telegram.editReviewVideo(
+        pending.chatId,
+        pending.reviewMessageId,
+        pending.finalVideoPath,
+        caption,
+        id,
+      );
+      
+      
+      // Removed auto-publish timer as per user request
+
+    } catch (err) {
+      pipelineLogger.error(
+        `Failed to replace music for ${id}`,
+        err,
+        "DirectUploader",
+      );
+    }
   }
 
   private async onRevoke(id: string): Promise<void> {
@@ -856,7 +1141,7 @@ Return ONLY raw JSON — no markdown:
     const pristineImagePath = path.join(tempDir, "pristine_original.jpg");
     const pristineVideoPath = path.join(tempDir, "pristine_video.mp4");
 
-    // 1. On first run, create backup of original files
+    // 1. On first run, create backup of original video
     if (isVideo && context.originalVideoPath) {
       if (
         !fs.existsSync(pristineVideoPath) &&
@@ -864,16 +1149,13 @@ Return ONLY raw JSON — no markdown:
       ) {
         fs.copyFileSync(context.originalVideoPath, pristineVideoPath);
       }
-    } else if (fs.existsSync(originalImagePath)) {
-      if (!fs.existsSync(pristineImagePath)) {
-        fs.copyFileSync(originalImagePath, pristineImagePath);
-      }
     }
 
     // 2. Before we start processing, restore original pristine files (prevent "editing on edited")
     if (isVideo && fs.existsSync(pristineVideoPath)) {
       fs.copyFileSync(pristineVideoPath, context.originalVideoPath!);
-    } else if (fs.existsSync(pristineImagePath)) {
+    }
+    if (fs.existsSync(pristineImagePath)) {
       fs.copyFileSync(pristineImagePath, originalImagePath);
     }
 
@@ -920,15 +1202,22 @@ Return ONLY raw JSON — no markdown:
             `AI Cache hit for hash: ${mediaHash}`,
             "DirectUploader",
           );
+          context.analysis = cached.analysis;
           context.brandingDetection = cached.brandingDetection;
           context.ocr = cached.ocr;
           context.safeArea = cached.safeArea;
+          context.safeAreaCandidates = cached.safeAreaCandidates;
+          context.existingBanner = cached.existingBanner;
+          context.bannerBounds = cached.bannerBounds;
+          context.protectedRegions = cached.protectedRegions;
+          context.recommendedPlacement = cached.recommendedPlacement as any;
           context.qualityScore = cached.qualityScore;
           context.captionVariants = cached.captionVariants;
 
           if (!context.userPrompt) {
             context.metadata = cached.metadata;
-            context.rephrasedCaption = cached.rephrasedCaption;
+            // Always default to original caption for new runs, even on cache hits
+            context.rephrasedCaption = undefined;
             pipelineLogger.checkpoint(
               "AI Cache hit — loaded metadata, vision, and OCR",
               true,
@@ -960,6 +1249,23 @@ Return ONLY raw JSON — no markdown:
             }
           });
         });
+      }
+
+      // Back up pristine original image as soon as it is extracted/loaded
+      if (fs.existsSync(originalImagePath) && !fs.existsSync(pristineImagePath)) {
+        fs.copyFileSync(originalImagePath, pristineImagePath);
+      }
+
+      // Ensure image analysis is completed so dimensions are always populated (needed for layout mapping)
+      if (!context.analysis && fs.existsSync(originalImagePath)) {
+        try {
+          context.analysis = await this.analyzer.analyze(originalImagePath);
+        } catch (err) {
+          pipelineLogger.warn(
+            `Failed to analyze image: ${err instanceof Error ? err.message : err}`,
+            "DirectUploader",
+          );
+        }
       }
 
       // 1 — Metadata & Branding Detection (always run vision model to detect watermarks/branding if not cached)
@@ -1006,6 +1312,10 @@ Return ONLY raw JSON — no markdown:
       context.status = "rendering_video";
       const rawVideoPath = path.join(tempDir, "video_raw.mp4");
       if (isVideo && context.originalVideoPath) {
+        // User requested: do not override text (no blurring)
+        if (context.brandingDetection) {
+          context.brandingDetection.zones = [];
+        }
         await this.renderer.processVideo(
           context.originalVideoPath,
           rawVideoPath,
@@ -1017,6 +1327,13 @@ Return ONLY raw JSON — no markdown:
           },
         );
       } else {
+        // Skip ALL image editing (blur, branding removal) for Telegram-originated images
+        if (context.isTelegram) {
+          pipelineLogger.info(
+            "Telegram image detected — skipping all blur/branding editing",
+            "DirectUploader",
+          );
+        } else {
         // 2a — Blur other branding zones (logo, watermark, handle, profile_name, other) on the static image (excluding original_captions)
         const otherZones = context.brandingDetection?.zones.filter(
           (z) =>
@@ -1201,6 +1518,51 @@ Return ONLY raw JSON — no markdown:
             );
           }
         }
+        } // end of !isTelegram guard
+
+        // Apply user-requested or automatic crop to the static image before generating video
+        const { cropTop, cropBottom } = calculateVideoCrop(context);
+        if (cropTop > 0 || cropBottom > 0) {
+          try {
+            pipelineLogger.info(
+              `Applying crop to static image: top=${cropTop * 100}%, bottom=${cropBottom * 100}%`,
+              "DirectUploader",
+            );
+            const meta = await sharp(originalImagePath).metadata();
+            if (meta.width && meta.height) {
+              const y = Math.round(cropTop * meta.height);
+              const h = meta.height - y - Math.round(cropBottom * meta.height);
+
+              const safeY = Math.max(0, Math.min(meta.height - 10, y));
+              const safeH = Math.max(10, Math.min(meta.height - safeY, h));
+
+              const croppedTemp = path.join(tempDir, "original_cropped.jpg");
+              await sharp(originalImagePath)
+                .extract({
+                  left: 0,
+                  top: safeY,
+                  width: meta.width,
+                  height: safeH,
+                })
+                .toFile(croppedTemp);
+
+              fs.copyFileSync(croppedTemp, originalImagePath);
+              try {
+                fs.unlinkSync(croppedTemp);
+              } catch {}
+              pipelineLogger.checkpoint(
+                "Static image cropped successfully",
+                true,
+              );
+            }
+          } catch (err) {
+            pipelineLogger.error(
+              "Failed to crop static image",
+              err,
+              "DirectUploader",
+            );
+          }
+        }
 
         await this.renderer.renderImageToVideo(
           originalImagePath,
@@ -1214,15 +1576,11 @@ Return ONLY raw JSON — no markdown:
       }
 
       // 2c — Render animated text layers via Remotion over the processed video
-      if (
-        context.ocr &&
-        context.ocr.text &&
-        context.ocr.text.trim().length > 0
-      ) {
+      {
         try {
           // AI Caption Rephrasing & User Prompt logic
           let rephrasedCaption = "";
-          const rawOcrText = context.ocr.text || "";
+          const rawOcrText = context.ocr?.text || "";
 
           let aiPrompt = "";
           const viralPatterns = this.viralAnalyzer.getViralPatterns();
@@ -1232,31 +1590,36 @@ Modify the video caption based on the user's instructions.
 User Instruction: "${context.userPrompt}"
 Original Video Text: "${rawOcrText}"
 
-Structure the caption into three sequential segments representing the viral structure of the Short:
-1. Hook (shown in the first 3 seconds): A scroll-stopping hook statement prefixed with '[HOOK]'.
-2. Body (shown in the middle): The main insight/content prefixed with '[BODY]'.
-3. CTA (shown in the last 2 seconds): A clear call to action (e.g. 'Follow for more!', 'Try it now!') prefixed with '[CTA]'.
+Generate three distinct, creative caption options: [A], [B], and [C]. Each option must be different in style (e.g. funny, curious, professional, controversial, or engaging).
+
+For each option, structure the caption into three sequential segments representing the viral structure of the Short:
+1. Hook (prefixed with '[HOOK]'): A scroll-stopping hook statement.
+2. Body (prefixed with '[BODY]'): The main insight/content.
+3. CTA (prefixed with '[CTA]'): A clear call to action (e.g. 'Follow for more!', 'Try it now!').
 
 Insert a double slash '//' at natural semantic phrasing boundaries where line breaks should occur. Keep each segment short (2 to 5 words). 
-For example:
-"[HOOK] This new AI tool // will replace // all devs [BODY] It builds websites // from a simple sketch // in seconds [CTA] Try it now! // Link in bio"
 
-Use the following historical copywriting analytics feedback as inspiration of viral patterns:
-${viralPatterns}
+For example format:
+[A] [HOOK] This new AI tool // will replace // all devs [BODY] It builds websites // from a simple sketch // in seconds [CTA] Try it now! // Link in bio
+[B] [HOOK] Stop building websites // the old way [BODY] Use this new AI tool // to code in seconds // from sketches [CTA] Follow for more! // Daily AI tips
+[C] [HOOK] The end of web dev? // Look at this [BODY] AI now builds // complete web apps // from raw sketches [CTA] What do you think? // Comment below
 
-Return ONLY the final caption text containing the segment prefix tags and double slashes. Do not include social handles (words with '@'). No quotes, no explanations.`;
+Return ONLY the three lines starting with [A], [B], and [C] respectively. Do not include any other text, quotes, or explanations.`;
           } else {
             aiPrompt = `You are a copywriting expert for a tech meme channel.
-Take the raw OCR text extracted from a video clip, remove any social media handles (words containing '@') or watermarks, and rephrase it into a single, punchy, high-engagement caption in standard capitalization (Title Case). Keep it clean, under 12-15 words.
+Take the raw OCR text extracted from a video clip, remove any social media handles (words containing '@') or watermarks, and generate three distinct, creative caption options: [A], [B], and [C]. Each option must be different in style (e.g. funny, curious, professional, controversial, or engaging).
 
-Structure the caption into three sequential segments representing the viral structure of the Short:
-1. Hook (shown in the first 3 seconds): A scroll-stopping hook statement prefixed with '[HOOK]'.
-2. Body (shown in the middle): The main insight/content prefixed with '[BODY]'.
-3. CTA (shown in the last 2 seconds): A clear call to action (e.g. 'Follow for more!', 'Try it now!') prefixed with '[CTA]'.
+For each option, structure the caption into three sequential segments representing the viral structure of the Short:
+1. Hook (prefixed with '[HOOK]'): A scroll-stopping hook statement.
+2. Body (prefixed with '[BODY]'): The main insight/content.
+3. CTA (prefixed with '[CTA]'): A clear call to action (e.g. 'Follow for more!', 'Try it now!').
 
 Insert a double slash '//' at natural semantic phrasing boundaries where line breaks should occur. Keep each segment short (2 to 5 words). 
-For example:
-"[HOOK] This new AI tool // will replace // all devs [BODY] It builds websites // from a simple sketch // in seconds [CTA] Try it now! // Link in bio"
+
+For example format:
+[A] [HOOK] This new AI tool // will replace // all devs [BODY] It builds websites // from a simple sketch // in seconds [CTA] Try it now! // Link in bio
+[B] [HOOK] Stop building websites // the old way [BODY] Use this new AI tool // to code in seconds // from sketches [CTA] Follow for more! // Daily AI tips
+[C] [HOOK] The end of web dev? // Look at this [BODY] AI now builds // complete web apps // from raw sketches [CTA] What do you think? // Comment below
 
 OCR Text: "${rawOcrText}"
 
@@ -1342,10 +1705,24 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
             };
           }
 
+          const originalCaption = rawOcrText
+            .split("\n")
+            .map((line) =>
+              line
+                .split(/\s+/)
+                .filter((w) => !w.includes("@") && !w.toLowerCase().includes("http") && !w.toLowerCase().includes(".com"))
+                .join(" ")
+                .trim()
+            )
+            .filter(Boolean)
+            .join(" // ")
+            .trim();
+
           if (context.rephrasedCaption && !context.userPrompt) {
             // Keep selected variant caption
           } else {
-            context.rephrasedCaption = rephrasedCaption;
+            // Default to original caption unless a user prompt override is present
+            context.rephrasedCaption = context.userPrompt ? rephrasedCaption : originalCaption;
           }
 
           context.captionVariants = captionVariants;
@@ -1375,70 +1752,70 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
           const analysis = context.analysis!;
           const detection = context.brandingDetection!;
 
-          let yCropped = 0;
-          let hCropped = analysis.height;
+          // Find exact cropping coordinates used
+          const { cropTop, cropBottom } = calculateVideoCrop(context);
+          const finalCropTop = cropTop;
+          const finalCropBottom = cropBottom;
+
+          let yCropped = Math.round(analysis.height * finalCropTop);
+          let hCropped =
+            analysis.height -
+            yCropped -
+            Math.round(analysis.height * finalCropBottom);
           let wCropped = analysis.width;
           let hScaled = 1920;
           let yOffset = 0;
 
-          if (isVideo) {
-            // Find edge zones to get exact cropping coordinates used by VideoRenderer
-            const edgeTopZones = detection.zones.filter(
-              (z) =>
-                !z.id.startsWith("ai-branding-") &&
-                z.boundingBox.y === 0 &&
-                z.boundingBox.height <= 0.12,
-            );
-            const edgeBottomZones = detection.zones.filter(
-              (z) =>
-                !z.id.startsWith("ai-branding-") &&
-                z.boundingBox.y + z.boundingBox.height >= 0.98 &&
-                z.boundingBox.height <= 0.12,
-            );
+          const aspectTarget = 1080 / 1920;
+          const aspectCropped = wCropped / hCropped;
 
-            let cropTop = 0;
-            let cropBottom = 0;
-            if (edgeTopZones.length > 0) {
-              cropTop = Math.max(
-                ...edgeTopZones.map((z) => z.boundingBox.height),
-              );
-            }
-            if (edgeBottomZones.length > 0) {
-              cropBottom = Math.max(
-                ...edgeBottomZones.map((z) => z.boundingBox.height),
-              );
-            }
-
-            // Fallback defaults if they were used
-            const finalCropTop = cropTop > 0 ? cropTop : 0.08;
-            const finalCropBottom = cropBottom > 0 ? cropBottom : 0.08;
-
-            yCropped = Math.round(analysis.height * finalCropTop);
-            hCropped =
-              analysis.height -
-              yCropped -
-              Math.round(analysis.height * finalCropBottom);
-
-            const aspectTarget = 1080 / 1920;
-            const aspectCropped = wCropped / hCropped;
-
-            if (aspectCropped < aspectTarget) {
-              // Zoom-to-fill or height scaled
-              hScaled = 1920;
-              yOffset = 0;
-            } else {
-              hScaled = Math.round(1080 / aspectCropped);
-              yOffset = Math.round((1920 - hScaled) / 2);
-            }
+          if (aspectCropped < aspectTarget) {
+            // Zoom-to-fill or height scaled
+            hScaled = 1920;
+            yOffset = 0;
+          } else {
+            hScaled = Math.round(1080 / aspectCropped);
+            yOffset = Math.round((1920 - hScaled) / 2);
           }
 
           let textLayers = [];
           if (
-            context.ocr.detailedWords &&
+            context.ocr?.detailedWords &&
             context.ocr.detailedWords.length > 0
           ) {
+            // Filter out words that overlap significantly with detected branding zones (watermarks, handles)
+            // so they don't get redrawn by Remotion in blue text on top of the blurred zone.
+            const brandingZones = (detection?.zones || []).filter(
+              (z) => z.type !== "original_captions" && z.type !== "main_post_content"
+            );
+
+            const isInsideBrandingZone = (word: any) => {
+              if (!analysis.width || !analysis.height) return false;
+              const wordX0 = word.bbox.x0 / analysis.width;
+              const wordY0 = word.bbox.y0 / analysis.height;
+              const wordX1 = word.bbox.x1 / analysis.width;
+              const wordY1 = word.bbox.y1 / analysis.height;
+
+              return brandingZones.some((z) => {
+                const zX0 = z.boundingBox.x;
+                const zY0 = z.boundingBox.y;
+                const zX1 = z.boundingBox.x + z.boundingBox.width;
+                const zY1 = z.boundingBox.y + z.boundingBox.height;
+
+                const xOverlap = Math.max(0, Math.min(wordX1, zX1) - Math.max(wordX0, zX0));
+                const yOverlap = Math.max(0, Math.min(wordY1, zY1) - Math.max(wordY0, zY0));
+
+                if (xOverlap > 0 && yOverlap > 0) {
+                  const wordArea = (wordX1 - wordX0) * (wordY1 - wordY0);
+                  const overlapArea = xOverlap * yOverlap;
+                  return wordArea > 0 && (overlapArea / wordArea) > 0.2;
+                }
+                return false;
+              });
+            };
+
             textLayers = context.ocr.detailedWords
-              .filter((word) => word.confidence >= 85)
+              .filter((word) => word.confidence >= 85 && !isInsideBrandingZone(word))
               .map((word) => {
                 const origX = word.bbox.x0;
                 const origY = word.bbox.y0;
@@ -1487,13 +1864,24 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
             }
           }
 
+          // If the user did not select a rephrased variant, keep the original caption (do not render text overlay via Remotion)
+          const keepOriginalCaption = !context.useRephrasedCaption;
+
           // 3. Prepare render props
+          // Pass all safe-area intelligence to the Remotion component so it can
+          // apply the correct placement priority chain and rendering style.
           const renderProps = {
             mediaUrl: "video_input.mp4",
             mediaType: "video",
             textLayers,
-            memeCaption: context.rephrasedCaption || "",
+            memeCaption: keepOriginalCaption ? "" : (context.rephrasedCaption || ""),
             safeArea: context.safeArea,
+            safeAreaCandidates: context.safeAreaCandidates || [],
+            existingBanner: context.existingBanner || false,
+            bannerBounds: context.bannerBounds || null,
+            captionStyle: context.captionStyle || "style1_outline",
+            backgroundType: context.backgroundType || "plain",
+            keepOriginalCaption,
           };
 
           const propsFile = path.join(tempDir, "remotion_props.json");
@@ -1533,35 +1921,15 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
               "DirectUploader",
             );
           }
-
           pipelineLogger.info(
-            "Executing Remotion rendering CLI command...",
+            "Skipping Remotion rendering as per user request (no captions)...",
             "DirectUploader",
           );
-          const renderCmd = `npx remotion render DynamicText "${remotionOutputPath}" --props="${propsFile}" --duration=${durationInFrames}`;
-
-          await new Promise<void>((resolve, reject) => {
-            exec(
-              renderCmd,
-              { cwd: remotionProjectDir },
-              (err, stdout, stderr) => {
-                if (err) {
-                  pipelineLogger.error(
-                    "Remotion render CLI execution failed",
-                    stderr || err,
-                    "DirectUploader",
-                  );
-                  reject(err);
-                } else {
-                  pipelineLogger.info(
-                    `Remotion CLI output: ${stdout}`,
-                    "DirectUploader",
-                  );
-                  resolve();
-                }
-              },
-            );
-          });
+          fs.copyFileSync(rawVideoPath, remotionOutputPath);
+          pipelineLogger.checkpoint(
+            "✓ Video processing completed (Remotion skipped)",
+            true,
+          );
 
           // 5. Copy outputs back to rawVideoPath
           if (fs.existsSync(remotionOutputPath)) {
@@ -1574,6 +1942,162 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
             throw new Error(
               "Remotion output file not found after successful render command",
             );
+          }
+
+          // ── 5b. Post-render Visual Validation Pass ─────────────────────────
+          // Extract the first frame of the rendered video and ask Gemini Vision
+          // whether the caption is covering important scene content. If yes,
+          // drop the top candidate, try the next one, and re-render (max 2 retries).
+          if (this.freellmapi && (context.safeAreaCandidates?.length ?? 0) > 1) {
+            try {
+              const validationFramePath = path.join(tempDir, "validation_frame.png");
+              const extractValidFrame = `ffmpeg -y -ss 00:00:01 -i "${rawVideoPath}" -vframes 1 -q:v 2 "${validationFramePath}"`;
+              await new Promise<void>((res, rej) => exec(extractValidFrame, (e) => e ? rej(e) : res()));
+
+              let candidateIndex = 0;
+              let validationPassed = false;
+              const MAX_RETRIES = 2;
+
+              while (!validationPassed && candidateIndex < Math.min(MAX_RETRIES, context.safeAreaCandidates?.length ?? 0 - 1)) {
+                const { base64: valBase64, mimeType: valMime } = await this.getSmallBase64Image(validationFramePath);
+              const valPrompt = `Look at this rendered video frame. A caption text overlay has been added to it.
+Answer ONLY with a raw JSON object — no markdown, no explanation:
+{
+  "coversImportantContent": boolean,
+  "oldTextVisible": boolean,
+  "bannerOversized": boolean,
+  "looksNatural": boolean,
+  "reason": string
+}
+
+Evaluate ALL four criteria:
+
+1. coversImportantContent = true if the caption or any background rectangle behind it covers:
+   - a human face, eyes, or mouth
+   - an animated character's face or body
+   - hands or gesture motions
+   - the main subject or object of the scene (e.g. escalator, vehicle, animal, prop)
+   - important action or motion area
+   - the visual punchline of the meme
+
+2. oldTextVisible = true if ANY letters or words from the ORIGINAL meme caption are still partially readable
+   behind or around the new caption overlay (incomplete coverage of original text).
+
+3. bannerOversized = true if:
+   - The black or colored rectangle behind the caption is significantly taller than the text inside it
+   - The banner is floating and does not align with any original caption region
+   - There is clearly too much empty space above or below the text inside the banner
+
+4. looksNatural = true if the caption feels like it was part of the original meme:
+   - Text is centered in its region
+   - Old text is fully hidden
+   - No floating rectangles
+   - Style matches the scene (e.g. plain text on cartoon, not black box on green background)
+
+Set all booleans carefully and include a brief explanation in "reason".`;
+
+                const valRaw = await this.freellmapi.generateVision(valPrompt, valBase64, valMime);
+                let coversContent = false;
+                try {
+                  const valResult = parseAiJson<{
+                    coversImportantContent: boolean;
+                    oldTextVisible: boolean;
+                    bannerOversized: boolean;
+                    looksNatural: boolean;
+                    reason: string;
+                  }>(valRaw);
+                  coversContent =
+                    valResult.coversImportantContent === true ||
+                    valResult.oldTextVisible === true ||
+                    valResult.bannerOversized === true;
+                  pipelineLogger.info(
+                    `Post-render validation (candidate #${candidateIndex}): ` +
+                    `coversContent=${valResult.coversImportantContent}, ` +
+                    `oldTextVisible=${valResult.oldTextVisible}, ` +
+                    `bannerOversized=${valResult.bannerOversized}, ` +
+                    `looksNatural=${valResult.looksNatural}, ` +
+                    `reason="${valResult.reason}"`,
+                    "DirectUploader",
+                  );
+                } catch (parseErr) {
+                  pipelineLogger.warn(
+                    `Post-render validation response could not be parsed: ${valRaw.slice(0, 200)}`,
+                    "DirectUploader",
+                  );
+                  break;
+                }
+
+                if (!coversContent) {
+                  validationPassed = true;
+                  pipelineLogger.checkpoint("✓ Post-render validation passed — caption looks natural", true);
+                  break;
+                }
+
+                // Caption is covering content — try next candidate
+                candidateIndex++;
+                const safeCandidates = context.safeAreaCandidates ?? [];
+                if (candidateIndex >= safeCandidates.length) break;
+
+                const candidate = safeCandidates[candidateIndex];
+                pipelineLogger.info(
+                  `Caption covers important content — retrying with safe area candidate #${candidateIndex} (score=${candidate.score}, reason="${candidate.reason}")`,
+                  "DirectUploader",
+                );
+
+                // Re-render with next candidate promoted to position 0
+                const reorderedCandidates = [
+                  safeCandidates[candidateIndex],
+                  ...safeCandidates.filter((_, i) => i !== candidateIndex),
+                ];
+
+                const retryProps = {
+                  ...renderProps,
+                  safeAreaCandidates: reorderedCandidates,
+                  existingBanner: false, // Do not reuse banner for fallback candidates
+                  bannerBounds: null,
+                };
+
+                const retryPropsFile = path.join(tempDir, "remotion_props_retry.json");
+                fs.writeFileSync(retryPropsFile, JSON.stringify(retryProps));
+
+                const retryOutputPath = path.join(remotionPublicDir, "video_output_retry.mp4");
+                if (fs.existsSync(retryOutputPath)) fs.unlinkSync(retryOutputPath);
+
+                // Copy input video back (the original was already overwritten)
+                fs.copyFileSync(rawVideoPath, remotionInputPath);
+
+                const retryCmd = `npx remotion render DynamicText "${retryOutputPath}" --props="${retryPropsFile}" --duration=${durationInFrames}`;
+                await new Promise<void>((res, rej) => {
+                  exec(retryCmd, { cwd: remotionProjectDir }, (err) => err ? rej(err) : res());
+                });
+
+                if (fs.existsSync(retryOutputPath)) {
+                  fs.copyFileSync(retryOutputPath, rawVideoPath);
+                  pipelineLogger.checkpoint(`✓ Re-render with fallback candidate #${candidateIndex} complete`, true);
+                  // Extract new validation frame from re-rendered video
+                  await new Promise<void>((res, rej) => exec(
+                    `ffmpeg -y -ss 00:00:01 -i "${rawVideoPath}" -vframes 1 -q:v 2 "${validationFramePath}"`,
+                    (e) => e ? rej(e) : res()
+                  ));
+                  try { fs.unlinkSync(retryOutputPath); fs.unlinkSync(retryPropsFile); } catch (_) {}
+                }
+              }
+
+              if (!validationPassed) {
+                pipelineLogger.warn(
+                  "Post-render validation: could not find a fully safe placement after retries. Keeping last render.",
+                  "DirectUploader",
+                );
+              }
+
+              // Clean up validation frame
+              try { fs.unlinkSync(validationFramePath); } catch (_) {}
+            } catch (validationErr) {
+              pipelineLogger.warn(
+                `Post-render validation failed (non-fatal): ${validationErr instanceof Error ? validationErr.message : validationErr}`,
+                "DirectUploader",
+              );
+            }
           }
 
           // Cleanup temp files
@@ -1594,11 +2118,17 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       // Save results to AI Cache
       if (context.mediaHash) {
         this.cacheManager.set(context.mediaHash, {
+          analysis: context.analysis,
           metadata: context.metadata,
           brandingDetection: context.brandingDetection,
           ocr: context.ocr,
           rephrasedCaption: context.rephrasedCaption,
           safeArea: context.safeArea,
+          safeAreaCandidates: context.safeAreaCandidates,
+          existingBanner: context.existingBanner,
+          bannerBounds: context.bannerBounds,
+          protectedRegions: context.protectedRegions,
+          recommendedPlacement: context.recommendedPlacement,
           qualityScore: context.qualityScore,
           captionVariants: context.captionVariants,
         });
@@ -1620,7 +2150,11 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         "DirectUploader",
       );
       const reviewFramePath = path.join(tempDir, "first_frame_review.png");
-      const extractCmd = `ffmpeg -y -ss 00:00:01 -i "${rawVideoPath}" -vframes 1 -q:v 2 "${reviewFramePath}"`;
+      const gridFilter = "drawgrid=w=iw:h=ih/10:t=2:c=yellow@0.8";
+      const textFilters = Array.from({length: 9}, (_, i) => 
+        `drawtext=text='${(i+1)*10}':x=20:y=h*${(i+1)/10}-50:fontsize=48:fontcolor=yellow:box=1:boxcolor=black@0.5`
+      ).join(',');
+      const extractCmd = `ffmpeg -y -ss 00:00:01 -i "${rawVideoPath}" -vf "${gridFilter},${textFilters}" -vframes 1 -q:v 2 "${reviewFramePath}"`;
       await new Promise<void>((resolve, reject) => {
         exec(extractCmd, (err) => {
           if (err) reject(err);
@@ -1628,12 +2162,18 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         });
       });
 
+      const truncate = (str: string) => {
+        if (!str) return "";
+        return str.length > 150 ? str.slice(0, 150) + "..." : str;
+      };
+
       const reviewCaption =
         `🖼️ *Verify Frame Layout & Caption*\n\n` +
-        `🅰️ *Variant A:* "${context.captionVariants?.A || context.rephrasedCaption}"\n` +
-        `🅱️ *Variant B:* "${context.captionVariants?.B || ""}"\n` +
-        `🅲 *Variant C:* "${context.captionVariants?.C || ""}"\n\n` +
-        `⏳ _Auto-approves and renders video in 1 minute if no action is taken._`;
+        `📄 *Current/Original:* "${escapeMarkdown(truncate(context.rephrasedCaption || ""))}"\n\n` +
+        `🅰️ *Variant A:* "${escapeMarkdown(truncate(context.captionVariants?.A || ""))}"\n` +
+        `🅱️ *Variant B:* "${escapeMarkdown(truncate(context.captionVariants?.B || ""))}"\n` +
+        `🅲 *Variant C:* "${escapeMarkdown(truncate(context.captionVariants?.C || ""))}"\n\n` +
+        `⏳ _Auto-approves and renders video with Current/Original in 1 minute if no action is taken._`;
 
       const frameReviewMessageId = await this.telegram.sendPhotoForReview(
         chatId,
@@ -1672,7 +2212,10 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         messageId,
       });
 
-      return;
+      // Wait until the job is fully resolved (published, cancelled, or failed)
+      await new Promise<void>((resolve) => {
+        this.jobResolvers.set(id, resolve);
+      });
     } catch (err) {
       context.status = "failed";
       context.error = err instanceof Error ? err.message : String(err);
@@ -1693,6 +2236,12 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         error: context.error,
         context,
       });
+
+      if (context.mediaHash) {
+        this.cacheManager.delete(context.mediaHash);
+      }
+
+      this.resolveJob(id);
     }
   }
 
@@ -1752,9 +2301,9 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       // 5 — Send video to Telegram for review
       const caption =
         `📋 *Review your Short*\n\n` +
-        `*Title:* ${metadata.title}\n\n` +
-        `*Description:* ${metadata.description.slice(0, 200)}…\n\n` +
-        `⏳ _Auto-publishes in 2 minutes if no action taken._`;
+        `*Title:* ${escapeMarkdown(metadata.title)}\n\n` +
+        `*Description:* ${escapeMarkdown(metadata.description.slice(0, 200))}…\n\n` +
+        `⏳ _Waiting for review action..._`;
 
       const reviewMessageId = await this.telegram.sendVideoForReview(
         chatId,
@@ -1764,24 +2313,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         messageId,
       );
 
-      // 6 — Set 2-minute auto-publish timer
-      const timer = setTimeout(() => {
-        const p = this.pending.get(id);
-        if (!p) return;
-        this.telegram.sendMessage(
-          chatId,
-          `⏰ *2 minutes elapsed — auto-publishing now…*`,
-          messageId,
-        );
-        this.uploadAndReport(p).catch((err) =>
-          pipelineLogger.error(
-            `Auto-upload error for ${id}`,
-            err,
-            "DirectUploader",
-          ),
-        );
-      }, REVIEW_TIMEOUT_MS);
-
+      // 6 — Save to pending list without an auto-publish timer
       this.pending.set(id, {
         id,
         chatId,
@@ -1792,7 +2324,6 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         outputFilePath,
         outputFileName,
         originalImagePath,
-        timer,
         context,
       });
 
@@ -1805,8 +2336,12 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       pipelineLogger.checkpoint(
         "Review sent to Telegram",
         true,
-        `${id} — waiting up to 2 min`,
+        `${id} — waiting for user publish/cancel`,
       );
+
+      // Release the queue slot immediately so the next job can start
+      // while the user reviews. Publish/cancel operate on this.pending independently.
+      this.resolveJob(id);
     } catch (err) {
       pipelineLogger.error(
         `Video compilation pipeline failed for ${id}`,
@@ -1825,6 +2360,12 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         error: err instanceof Error ? err.message : String(err),
         context,
       });
+
+      if (context.mediaHash) {
+        this.cacheManager.delete(context.mediaHash);
+      }
+
+      this.resolveJob(id);
     }
   }
 
@@ -1866,8 +2407,10 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       "DirectUploader",
     );
 
-    // 1. Cancel the current auto-publish timer
-    clearTimeout(pendingUpload.timer);
+    // 1. Cancel the current auto-publish timer if it exists
+    if (pendingUpload.timer) {
+      clearTimeout(pendingUpload.timer);
+    }
 
     // 2. Remove inline buttons from the old review message
     await this.telegram
@@ -1901,6 +2444,8 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     } else {
       this.pending.delete(pendingId);
     }
+
+    this.resolveJob(pendingId);
 
     // 6. Run pipeline
     this.run(context).catch((err) => {
@@ -2012,6 +2557,14 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         err,
         "DirectUploader",
       );
+    }
+  }
+
+  private resolveJob(id: string): void {
+    const resolveFn = this.jobResolvers.get(id);
+    if (resolveFn) {
+      resolveFn();
+      this.jobResolvers.delete(id);
     }
   }
 }

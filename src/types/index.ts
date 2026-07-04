@@ -1,3 +1,12 @@
+export enum AssetKind {
+  MemeImage = "MemeImage",
+  MemeVideo = "MemeVideo",
+  Reel = "Reel",
+  Short = "Short",
+  Screenshot = "Screenshot",
+  Infographic = "Infographic"
+}
+
 export interface TelegramMetadata {
   messageId: number;
   chatId: number;
@@ -85,7 +94,12 @@ export interface InfographicContent {
 export interface VideoMetadata {
   title: string;
   description: string;
+  primaryKeyword?: string;
+  secondaryKeywords?: string[];
   tags: string[];
+  hashtags?: string[];
+  thumbnailText?: string;
+  filename?: string;
   mood?: "funny" | "sad" | "other";
 }
 
@@ -97,6 +111,7 @@ export interface RenderOptions {
 
 export interface PipelineContext {
   id: string; // Unique Generation ID
+  assetKind: AssetKind; // Type of asset
   tempDir: string;
   telegramMeta: TelegramMetadata;
 
@@ -104,6 +119,7 @@ export interface PipelineContext {
   originalImagePath: string;
   originalVideoPath?: string;
   isVideo?: boolean;
+  isTelegram?: boolean; // true for media originating from Telegram
   analysis?: ImageAnalysisResult;
   brandingDetection?: BrandingDetectionResult;
   cleanedImagePath?: string;
@@ -150,7 +166,34 @@ export interface PipelineContext {
     isStandardMemeStyle: boolean;
     recommendation: string;
   }; // AI quality check scores
+  safeAreaCandidates?: Array<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    score: number;
+    reason: string;
+  }>;
+  existingBanner?: boolean;
+  bannerBounds?: { x: number; y: number; width: number; height: number };
+  protectedRegions?: Array<{
+    type: string;
+    box: { x: number; y: number; width: number; height: number };
+    description: string;
+  }>;
+  recommendedPlacement?: "existing_banner" | "top" | "bottom" | "left" | "right";
+  /**
+   * AI-selected caption rendering style:
+   * style1_outline  — white text + black stroke (plain/cartoon backgrounds)
+   * style2_banner_replace — reuse existing meme banner exactly (covers old text)
+   * style3_black_banner  — solid black rectangle (only on busy backgrounds)
+   * style4_gradient — semi-transparent dark gradient (real video footage)
+   */
+  captionStyle?: "style1_outline" | "style2_banner_replace" | "style3_black_banner" | "style4_gradient";
+  /** Background region classification for the caption placement area */
+  backgroundType?: "plain" | "busy" | "existing_banner";
   captionVariants?: { A: string; B: string; C: string }; // Multiple rephrased variants
+  useRephrasedCaption?: boolean; // track if a rephrased caption variant was chosen
 }
 
 export interface ITelegramService {

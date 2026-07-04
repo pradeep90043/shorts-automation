@@ -58,6 +58,7 @@ class EdgeBrandingDetector implements IBrandingSubDetector {
   }
 }
 
+
 /**
  * Detects social handles or logos using OCR-based keyword/pattern matching
  */
@@ -89,16 +90,18 @@ export class SocialHandleDetector implements IBrandingSubDetector {
 
       if (detailedWords && detailedWords.length > 0) {
         detailedWords.forEach((word, index) => {
-          if (word.text.match(handleRegex)) {
+          const isHandle = word.text.match(handleRegex);
+
+          if (isHandle) {
             pipelineLogger.info(
-              `Found exact branding text match: ${word.text}`,
+              `Found handle/URL to blur: "${word.text}" (confidence: ${word.confidence}%)`,
               "SocialHandleDetector",
             );
             const w = (word.bbox.x1 - word.bbox.x0) / analysis.width;
             const h = (word.bbox.y1 - word.bbox.y0) / analysis.height;
             zones.push({
               id: `ocr-exact-handle-${index}`,
-              type: word.text.includes("@") ? "handle" : "watermark",
+              type: "handle",
               boundingBox: {
                 x: word.bbox.x0 / analysis.width,
                 y: word.bbox.y0 / analysis.height,

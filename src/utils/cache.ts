@@ -3,15 +3,21 @@ import path from "path";
 import crypto from "crypto";
 import { config } from "../config";
 import { pipelineLogger } from "./logger";
-import { OcrResult, BrandingDetectionResult, VideoMetadata } from "../types";
+import { OcrResult, BrandingDetectionResult, VideoMetadata, ImageAnalysisResult } from "../types";
 
 export interface CacheEntry {
   hash: string;
+  analysis?: ImageAnalysisResult;
   metadata?: VideoMetadata;
   brandingDetection?: BrandingDetectionResult;
   ocr?: OcrResult;
   rephrasedCaption?: string;
   safeArea?: { x: number; y: number; width: number; height: number };
+  safeAreaCandidates?: any;
+  existingBanner?: boolean;
+  bannerBounds?: any;
+  protectedRegions?: any;
+  recommendedPlacement?: string;
   qualityScore?: any;
   captionVariants?: { A: string; B: string; C: string };
   createdAt: string;
@@ -108,6 +114,17 @@ export class CacheManager {
       `Saved entry in AI cache for hash ${hash}`,
       "CacheManager",
     );
+  }
+
+  public delete(hash: string): void {
+    if (this.memoryCache.has(hash)) {
+      this.memoryCache.delete(hash);
+      this.saveCacheToFile();
+      pipelineLogger.info(
+        `Deleted entry from AI cache for hash ${hash}`,
+        "CacheManager",
+      );
+    }
   }
 
   public clear(): void {
