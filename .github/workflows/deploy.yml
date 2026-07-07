@@ -49,6 +49,7 @@ jobs:
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.VM_KEY }}
           port: 22
+          script_timeout: "30m"
           script: |
             cd ~/shorts-automation
             # Ensure runtime directories exist
