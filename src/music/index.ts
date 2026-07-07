@@ -122,6 +122,14 @@ const getVideoDuration = (pathStr: string): Promise<number> => {
 
       let vocalOnlyPath: string | null = null;
       if (hasAudio) {
+        if (!forceReplace) {
+          pipelineLogger.info(
+            `Video already has audio and forceReplace is false. Keeping original audio.`,
+            "MusicService"
+          );
+          fs.copyFileSync(videoPath, outputPath);
+          return outputPath;
+        }
         const tempDir = path.dirname(outputPath);
         vocalOnlyPath = await extractVocals(videoPath, tempDir);
       }

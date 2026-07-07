@@ -315,6 +315,44 @@ export class VideoRenderer implements IVideoRenderer {
     const detection = context.brandingDetection;
     const zones = detection ? [...detection.zones] : [];
 
+    // Parse manual blur commands from user prompt (e.g., "blur V2-V4 30-60" or "blur 30-60 V2-V4")
+    if (context.userPrompt) {
+      const p = context.userPrompt.toLowerCase();
+      // Match: blur V2-V4 30-60
+      const match1 = p.match(/blur\s+v([0-6])\s*(?:to|-)\s*v([0-6])\s*(?:and|,|)?\s*(\d+)\s*(?:to|-)\s*(\d+)/i);
+      // Match: blur 30-60 V2-V4
+      const match2 = p.match(/blur\s+(\d+)\s*(?:to|-)\s*(\d+)\s*(?:and|,|)?\s*v([0-6])\s*(?:to|-)\s*v([0-6])/i);
+      
+      let vStart, vEnd, hStart, hEnd;
+      if (match1) {
+        vStart = parseInt(match1[1], 10);
+        vEnd = parseInt(match1[2], 10);
+        hStart = parseInt(match1[3], 10);
+        hEnd = parseInt(match1[4], 10);
+      } else if (match2) {
+        hStart = parseInt(match2[1], 10);
+        hEnd = parseInt(match2[2], 10);
+        vStart = parseInt(match2[3], 10);
+        vEnd = parseInt(match2[4], 10);
+      }
+
+      if (vStart !== undefined && vEnd !== undefined && hStart !== undefined && hEnd !== undefined) {
+        const x0 = Math.min(vStart, vEnd) / 6.0;
+        const x1 = Math.max(vStart, vEnd) / 6.0;
+        const y0 = Math.min(hStart, hEnd) / 100.0;
+        const y1 = Math.max(hStart, hEnd) / 100.0;
+        
+        zones.push({
+          id: `manual-blur-${Date.now()}`,
+          type: "watermark", // Treat as watermark to force it through the blurring logic
+          boundingBox: { x: x0, y: y0, width: Math.max(x1 - x0, 0.01), height: Math.max(y1 - y0, 0.01) },
+          confidence: 1.0,
+          description: `Manual blur region V${Math.min(vStart, vEnd)}-V${Math.max(vStart, vEnd)} ${Math.min(hStart, hEnd)}-${Math.max(hStart, hEnd)}`
+        });
+        pipelineLogger.info(`Added manual blur zone: x=${x0}, y=${y0}, w=${x1-x0}, h=${y1-y0}`, "VideoRenderer");
+      }
+    }
+
     // 4. Calculate cropping dynamically using calculateVideoCrop helper
     const { cropTop, cropBottom } = calculateVideoCrop(context);
 

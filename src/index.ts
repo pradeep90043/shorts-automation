@@ -40,10 +40,10 @@ async function bootstrap() {
 
   const uploader = new DirectUploader(telegramService);
 
-  // Resume any active pending jobs interrupted by a crash/restart
-  uploader.resumeAllPendingJobs().catch((err) => {
+  // Cancel any active pending jobs interrupted by a crash/restart
+  uploader.cancelAllPendingJobs().catch((err) => {
     pipelineLogger.error(
-      "Failed to resume active jobs during bootstrap",
+      "Failed to cancel active jobs during bootstrap",
       err,
       "Bootstrap",
     );

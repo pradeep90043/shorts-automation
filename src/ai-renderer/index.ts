@@ -85,7 +85,7 @@ export class AIRenderer {
   public async generateBrandedFrame(
     imagePath: string,
     outputPath: string,
-    provider: "claude" | "antigravity" | "freellmapi" = "claude",
+    provider: "claude" | "antigravity" | "freellmapi" | "gemini" = "claude",
     ocrText?: string,
   ): Promise<string> {
     pipelineLogger.info(
@@ -118,17 +118,35 @@ export class AIRenderer {
 
   private async callAI(
     imagePath: string,
-    provider: "claude" | "antigravity",
+    provider: "claude" | "antigravity" | "gemini",
   ): Promise<InfographicContent> {
     const prompt = this.buildPrompt(imagePath);
 
     pipelineLogger.info(
-      `Calling ${provider} CLI for structured infographic content…`,
+      `Calling ${provider} API/CLI for structured infographic content…`,
       "AIRenderer",
     );
 
     let stdout: string;
-    if (provider === "claude") {
+    if (provider === "gemini") {
+      const { GoogleGenAI } = require("@google/genai");
+      const fs = require("fs");
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const imageBase64 = fs.readFileSync(imagePath).toString("base64");
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.0-flash',
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              { text: prompt },
+              { inlineData: { mimeType: 'image/jpeg', data: imageBase64 } }
+            ]
+          }
+        ]
+      });
+      stdout = response.text || "";
+    } else if (provider === "claude") {
       const cliPath = process.env.CLAUDE_CLI_PATH || "claude";
       stdout = await runClaudeCLI(cliPath, prompt, 240_000);
     } else {

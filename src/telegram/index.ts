@@ -123,7 +123,7 @@ export class TelegramService implements ITelegramService {
   }
 
   /**
-   * Send a video with all 4 review buttons.
+   * Send a video with all review buttons.
    * Returns the message_id of the sent video message.
    */
   public async sendVideoForReview(
@@ -415,6 +415,74 @@ export class TelegramService implements ITelegramService {
           `❌ Approval failed: ${err instanceof Error ? err.message : err}`,
         );
       }
+    });
+
+    // Handle status command
+    this.bot.command("status", async (ctx) => {
+      const msg = await ctx.reply("⏳ Checking API Statuses...");
+      
+      let geminiStatus = "🔴 Offline";
+      let freellmStatus = "🔴 Offline";
+      let ytStatus = "🔴 Offline";
+      let igStatus = "🔴 Offline";
+
+      // Check Gemini
+      if (config.ai.geminiApiKey) {
+        try {
+          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${config.ai.geminiApiKey}`);
+          geminiStatus = res.ok ? "🟢 Online" : `🔴 Error ${res.status}`;
+        } catch(e) { geminiStatus = "🔴 Network Error"; }
+      } else { geminiStatus = "⚪️ Not Configured"; }
+
+      // Check FreeLLMAPI
+      if (config.ai.freellmapiKey) {
+        try {
+          const res = await fetch(`${config.ai.freellmapiUrl.replace(/\/$/, "")}/v1/models`, {
+            headers: { "Authorization": `Bearer ${config.ai.freellmapiKey}` }
+          });
+          freellmStatus = res.ok ? "🟢 Online" : `🔴 Error ${res.status}`;
+        } catch(e) { freellmStatus = "🔴 Network Error"; }
+      } else { freellmStatus = "⚪️ Not Configured"; }
+
+      // Check YouTube
+      if (config.youtube.clientId && config.youtube.channels.length > 0) {
+        try {
+          const { google } = require("googleapis");
+          const oauth2 = new google.auth.OAuth2(config.youtube.clientId, config.youtube.clientSecret, config.youtube.redirectUri);
+          oauth2.setCredentials({ refresh_token: config.youtube.channels[0].refreshToken });
+          const yt = google.youtube({ version: "v3", auth: oauth2 });
+          const res = await yt.channels.list({ part: ["snippet"], mine: true });
+          if (res.data.items && res.data.items.length > 0) {
+            ytStatus = `🟢 Online (${res.data.items[0].snippet?.title})`;
+          } else {
+            ytStatus = "🔴 Auth Failed";
+          }
+        } catch(e) { ytStatus = "🔴 OAuth Error"; }
+      } else { ytStatus = "⚪️ Not Configured"; }
+
+      // Check Instagram
+      if (config.instagram.accounts.length > 0) {
+        const acc = config.instagram.accounts[0];
+        if (acc.accessToken && acc.igUserId) {
+          try {
+            const res = await fetch(`https://graph.facebook.com/v21.0/${acc.igUserId}?fields=username&access_token=${acc.accessToken}`);
+            const data = await res.json() as any;
+            igStatus = res.ok ? `🟢 Online (@${data.username})` : `🔴 API Error`;
+          } catch(e) { igStatus = "🔴 Network Error"; }
+        } else { igStatus = "⚪️ Incomplete Config"; }
+      } else { igStatus = "⚪️ Not Configured"; }
+
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        msg.message_id,
+        undefined,
+        `📊 *API Status Report*\n\n` +
+        `*Gemini AI:* ${geminiStatus}\n` +
+        `*FreeLLMAPI:* ${freellmStatus}\n` +
+        `*YouTube API:* ${ytStatus}\n` +
+        `*Instagram API:* ${igStatus}\n`,
+        { parse_mode: "Markdown" }
+      );
     });
 
     // Handle photos

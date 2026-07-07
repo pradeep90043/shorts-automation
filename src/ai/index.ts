@@ -84,6 +84,10 @@ Output JSON format:
           );
         }
 
+        if (parsed.description.length > 500) {
+          parsed.description = parsed.description.substring(0, 497) + "...";
+        }
+
         pipelineLogger.checkpoint(
           "FreeLLMAPI metadata generated",
           true,
@@ -146,6 +150,11 @@ Output JSON format:
         throw new Error(
           "AI returned JSON, but structure is missing required fields.",
         );
+      }
+      
+      // Prevent description from being too long and failing uploads
+      if (parsed.description.length > 500) {
+        parsed.description = parsed.description.substring(0, 497) + "...";
       }
 
       pipelineLogger.checkpoint(

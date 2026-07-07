@@ -12,8 +12,9 @@ import { PipelineContext, VideoMetadata } from "./types";
 import { pipelineLogger } from "./utils/logger";
 import { FreeLlmApiClient } from "./ai/freellmapi";
 import { parseAiJson } from "./utils/json";
-import { CacheManager, getFileHash } from "./utils/cache";
+import { getFileHash } from "./utils/cache";
 import { JobDatabase } from "./utils/db";
+
 import { ViralAnalyzer } from "./utils/viral-analyzer";
 import { JobQueue } from "./utils/queue";
 import { ImageAnalyzer } from "./image-analysis";
@@ -38,7 +39,6 @@ export class DirectUploader {
   private youtube: YouTubeService;
   private instagram: InstagramPublisher;
   private telegram: TelegramService;
-  private cacheManager = new CacheManager();
   private db = new JobDatabase();
   private viralAnalyzer = new ViralAnalyzer();
   private analyzer = new ImageAnalyzer();
@@ -176,10 +176,11 @@ Search for:
 
 If no such elements are present, return an empty array for brandingZones.
 
-TASK 2: YouTube Shorts Metadata & Mood Generation
-You are an expert YouTube SEO strategist for the technology channel "CodeOrCap". Your job is to generate highly clickable but honest YouTube metadata.
+TASK 2: YouTube Shorts Metadata & Fact Checking
+You are an expert YouTube SEO strategist and Fact Checker for the technology channel "CodeOrCap" (Tech Fact Check).
+FACT CHECK RULES: Analyze the code, claims, or technical text in the image. Determine if it is true, false, misleading, or a joke. Provide a factCheckScore (1-10, where 10 is 100% accurate) and a short verdict (e.g., "Mostly True", "False - Syntax Error", "Satire/Meme", "Accurate").
 TITLE RULES: Max 65 chars. Primary keyword within first 30 chars. Curiosity without clickbait. Use current year if relevant. One emoji. No ALL CAPS (except AI, API, etc).
-DESCRIPTION RULES: 180-300 words. Include: 1) What the video is about (primary keyword in first sentence). 2) What you'll learn (bullet points). 3) Who it's for. 4) Subscribe CTA to @CodeOrCap. 5) Community CTA question.
+DESCRIPTION RULES: 180-300 words. Include: 1) What the video is about (primary keyword in first sentence). 2) What you'll learn (bullet points). 3) Who it's for. 4) The Fact Check Verdict and Reasoning. 5) Subscribe CTA to @CodeOrCap. 6) Community CTA question.
 KEYWORDS: Provide 1 primary keyword, 5 secondary keywords, 15 tags, and 8-12 hashtags.
 THUMBNAIL: Max 5 words, highly clickable, curiosity driven.
 FILENAME: SEO-friendly filename (e.g., tech-video-2026.mp4).
@@ -269,7 +270,9 @@ Return ONLY a raw JSON object matching this schema — no markdown, no explanati
     "hashtags": string[],
     "thumbnailText": string,
     "filename": string,
-    "mood": "funny" | "sad" | "other"
+    "mood": "funny" | "sad" | "other",
+    "factCheckScore": number,
+    "verdict": string
   },
   "brandingZones": [
     {
@@ -416,16 +419,33 @@ Important:
         };
       }>(raw);
 
+      // Fallback if the LLM forgot the "metadata" wrapper but included the fields at the root
+      if (!data.metadata && (data as any).title && (data as any).description) {
+        data.metadata = {
+          title: (data as any).title,
+          description: (data as any).description,
+          tags: Array.isArray((data as any).tags) ? (data as any).tags : [],
+          hashtags: Array.isArray((data as any).hashtags) ? (data as any).hashtags : [],
+          primaryKeyword: (data as any).primaryKeyword,
+          mood: (data as any).mood,
+        };
+      }
+
       if (
         !data.metadata ||
         !data.metadata.title ||
         !data.metadata.description ||
         !Array.isArray(data.metadata.tags)
       ) {
+        pipelineLogger.error(`Invalid AI JSON received. Missing required metadata fields. Raw response: ${raw}`, new Error("AI JSON missing metadata fields"), "DirectUploader");
         throw new Error("AI JSON missing metadata fields");
       }
 
       context.metadata = data.metadata;
+
+      if (context.metadata.verdict && context.metadata.factCheckScore) {
+        context.metadata.description += `\n\n🤖 Tech Fact Check Verdict: [${context.metadata.verdict}] (${context.metadata.factCheckScore}/10)`;
+      }
 
       // Vision-first Text Extraction: If Vision LLM read text verbatim, set it as pre-populated OCR
       if (data.extractedText && data.extractedText.trim().length > 0) {
@@ -546,8 +566,39 @@ Important:
         }
       }
 
-      context.metadata = this.fallbackMetadata();
+      context.metadata = await this.generateTextMetadataFallback(false, context.ocr?.text);
       context.brandingDetection = { detected: false, zones: [] };
+    }
+  }
+
+  private async generateTextMetadataFallback(viral: boolean, ocrText?: string): Promise<VideoMetadata> {
+    try {
+      if (!this.freellmapi) return this.fallbackMetadata();
+      pipelineLogger.info("Attempting text-only AI metadata fallback...", "DirectUploader");
+      
+      const contentContext = ocrText && ocrText.trim().length > 10
+        ? `Here is the text extracted from the image: "${ocrText}". Use this content to generate highly relevant metadata.`
+        : `Generate generic tech-related metadata.`;
+
+      const prompt = viral
+        ? `You are a viral YouTube Shorts growth hacker for a tech channel "CodeOrCap". ${contentContext} Generate the most scroll-stopping, curiosity-gap, high-CTR metadata possible based on the text. TITLE Max 65 chars. DESCRIPTION 180-300 words. Return ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate"}}`
+        : `You are a YouTube Shorts strategist for a tech channel called "CodeOrCap". ${contentContext} Generate SEO-optimised metadata based on the text. Return ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate"}}`;
+      
+      const raw = await this.freellmapi.generateText(prompt);
+      const data = parseAiJson<{metadata?: VideoMetadata} & Partial<VideoMetadata>>(raw);
+      
+      let meta = data.metadata;
+      if (!meta && data.title && data.description) {
+         meta = data as any;
+      }
+      
+      if (meta && meta.title && meta.description && Array.isArray(meta.tags)) {
+         return meta;
+      }
+      throw new Error("Invalid format from text fallback");
+    } catch (err) {
+      pipelineLogger.warn("Text fallback failed, using hardcoded metadata", "DirectUploader");
+      return this.fallbackMetadata();
     }
   }
 
@@ -558,18 +609,20 @@ Important:
 
     const prompt = `You are a viral YouTube Shorts strategist for a tech/programming channel called "CodeOrCap".
 
-Analyze this image carefully — read all visible text, identify the topic, tools, languages, or concepts shown.
+Analyze this image carefully — read all visible text, identify the topic, tools, languages, or concepts shown. Check the authenticity and correctness of the information shown.
 
-Generate SEO-optimised YouTube Shorts metadata that will maximise clicks and watch time.
+Generate SEO-optimised YouTube Shorts metadata that will maximise clicks and watch time, and provide a fact-check verdict.
 
 Rules:
 - title: curiosity-driven, punchy, under 80 chars. Use power words and emojis. Examples: "You're Using Git Wrong 😤 Here's The Fix", "10 VS Code Shortcuts Devs Don't Know ⚡", "This Python Trick Will Blow Your Mind 🔥"
 - description: 2-3 sentences explaining the value. End with 5-6 popular tags (hashtags). Max 400 chars.
 - tags: 10-12 specific tags covering the topic, tools, and audience (no spaces in tags).
 - mood: Determine the emotional tone or theme of the content. Choose exactly one of: "funny", "sad", or "other" (for general, educational, motivational, or tech tips).
+- factCheckScore: (1-10) How technically accurate the image content is.
+- verdict: A short string summarizing the authenticity (e.g. "Accurate", "False - Syntax Error", "Misleading", "Meme/Joke").
 
 Return ONLY a raw JSON object — no markdown, no explanation:
-{"title":"...","description":"...","tags":["...","..."],"mood":"funny" | "sad" | "other"}`;
+{"title":"...","description":"...","tags":["...","..."],"mood":"funny" | "sad" | "other", "factCheckScore": 10, "verdict": "..."}`;
 
     for (let attempt = 0; attempt < 8; attempt++) {
       try {
@@ -591,6 +644,11 @@ Return ONLY a raw JSON object — no markdown, no explanation:
           throw new Error("Missing required fields");
         }
         pipelineLogger.checkpoint("Metadata generated", true, `"${obj.title}"`);
+        
+        if (obj.verdict && obj.factCheckScore) {
+          obj.description += `\n\n🤖 Tech Fact Check Verdict: [${obj.verdict}] (${obj.factCheckScore}/10)`;
+        }
+        
         return obj;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -603,14 +661,14 @@ Return ONLY a raw JSON object — no markdown, no explanation:
           await new Promise((r) => setTimeout(r, wait));
         } else {
           pipelineLogger.warn(
-            `AI metadata failed: ${msg} — using fallback`,
+            `AI metadata failed: ${msg} — using text-only fallback`,
             "DirectUploader",
           );
-          return this.fallbackMetadata();
+          return await this.generateTextMetadataFallback(false);
         }
       }
     }
-    return this.fallbackMetadata();
+    return await this.generateTextMetadataFallback(false);
   }
 
   private fallbackMetadata(): VideoMetadata {
@@ -643,14 +701,15 @@ Return ONLY a raw JSON object — no markdown, no explanation:
 Analyze this image and generate the most scroll-stopping, curiosity-gap, high-CTR metadata possible.
 
 TITLE RULES: Max 65 chars. Extreme curiosity gap, controversy, or shock. Primary keyword within first 30 chars. One emoji. No ALL CAPS (except AI, API, etc).
-DESCRIPTION RULES: 180-300 words. Include: 1) What the video is about (primary keyword in first sentence). 2) What you'll learn (bullet points). 3) Who it's for. 4) Subscribe CTA to @CodeOrCap. 5) Community CTA question. 6) Add popular tags (hashtags) at the end of the description.
+DESCRIPTION RULES: 180-300 words. Include: 1) What the video is about. 2) What you'll learn. 3) The Fact Check Verdict. 4) Subscribe CTA to @CodeOrCap. 5) Community CTA question. 6) Add popular tags (hashtags) at the end.
 KEYWORDS: Provide 1 primary keyword, 5 secondary keywords, 15 tags, and 8-12 hashtags.
 THUMBNAIL: Max 5 words, highly clickable, curiosity driven.
 FILENAME: SEO-friendly filename (e.g., viral-tech-video-2026.mp4).
 MOOD: Determine emotional tone: "funny", "sad", or "other".
+FACT CHECK: Provide a factCheckScore (1-10 accuracy) and a short verdict ("Accurate", "False", etc).
 
 Return ONLY raw JSON — no markdown:
-{"title":"...","description":"...","primaryKeyword":"...","secondaryKeywords":["..."],"tags":["..."],"hashtags":["..."],"thumbnailText":"...","filename":"...","mood":"funny" | "sad" | "other"}`;
+{"title":"...","description":"...","primaryKeyword":"...","secondaryKeywords":["..."],"tags":["..."],"hashtags":["..."],"thumbnailText":"...","filename":"...","mood":"funny" | "sad" | "other","factCheckScore":10,"verdict":"..."}`;
 
     for (let attempt = 0; attempt < 8; attempt++) {
       try {
@@ -675,6 +734,11 @@ Return ONLY raw JSON — no markdown:
           true,
           `"${obj.title}"`,
         );
+        
+        if (obj.verdict && obj.factCheckScore) {
+          obj.description += `\n\n🤖 Tech Fact Check Verdict: [${obj.verdict}] (${obj.factCheckScore}/10)`;
+        }
+        
         return obj;
       } catch (err: any) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -685,11 +749,15 @@ Return ONLY raw JSON — no markdown:
           );
           await new Promise((r) => setTimeout(r, 15000));
         } else {
-          return this.fallbackMetadata();
+          pipelineLogger.warn(
+            `AI viral metadata failed: ${msg} — using text-only fallback`,
+            "DirectUploader"
+          );
+          return await this.generateTextMetadataFallback(true);
         }
       }
     }
-    return this.fallbackMetadata();
+    return await this.generateTextMetadataFallback(true);
   }
 
   // ── Upload to all channels ─────────────────────────────────────────────────
@@ -702,7 +770,6 @@ Return ONLY raw JSON — no markdown:
       reviewMessageId,
       metadata,
       finalVideoPath,
-      outputFileName,
     } = pending;
 
     // Remove the inline buttons from the review message
@@ -738,7 +805,7 @@ Return ONLY raw JSON — no markdown:
         `*Title:* ${escapeMarkdown(metadata.title)}\n\n` +
         `${channelLines}\n` +
         `${instaLines}\n\n` +
-        `*File:* output/${outputFileName.replace(/_/g, "\\_")}\n*ID:* ${id}`;
+        `*ID:* ${id}`;
 
       const successMessageId = await this.telegram.sendSuccessMessageWithRevoke(
         chatId,
@@ -805,7 +872,22 @@ Return ONLY raw JSON — no markdown:
     }
 
     if (pending.context.mediaHash) {
-      this.cacheManager.delete(pending.context.mediaHash);
+    }
+
+    // Cleanup local files
+    try {
+      if (pending.context.tempDir && fs.existsSync(pending.context.tempDir)) {
+        fs.rmSync(pending.context.tempDir, { recursive: true, force: true });
+        pipelineLogger.info(`Cleaned up temp directory ${pending.context.tempDir}`, "DirectUploader");
+      }
+      
+      const outputPath = path.join("output", pending.outputFileName);
+      if (fs.existsSync(outputPath)) {
+        fs.rmSync(outputPath, { force: true });
+        pipelineLogger.info(`Cleaned up output file ${outputPath}`, "DirectUploader");
+      }
+    } catch (cleanupErr) {
+      pipelineLogger.error("Failed to clean up files", cleanupErr, "DirectUploader");
     }
 
     this.pending.delete(id);
@@ -831,7 +913,7 @@ Return ONLY raw JSON — no markdown:
     this.telegram.removeInlineButtons(pending.chatId, pending.reviewMessageId);
     this.telegram.sendMessage(
       pending.chatId,
-      `❌ *Cancelled.* Video saved locally at output/${pending.outputFileName.replace(/_/g, "\\_")}`,
+      `❌ *Cancelled.* Video files have been cleaned up.`,
       pending.messageId,
     );
     pipelineLogger.info(`Upload cancelled by user for ${id}`, "DirectUploader");
@@ -843,7 +925,22 @@ Return ONLY raw JSON — no markdown:
     });
 
     if (pending.context.mediaHash) {
-      this.cacheManager.delete(pending.context.mediaHash);
+    }
+
+    // Cleanup local files on cancel
+    try {
+      if (pending.context.tempDir && fs.existsSync(pending.context.tempDir)) {
+        fs.rmSync(pending.context.tempDir, { recursive: true, force: true });
+        pipelineLogger.info(`Cleaned up temp directory ${pending.context.tempDir}`, "DirectUploader");
+      }
+      
+      const outputPath = path.join("output", pending.outputFileName);
+      if (fs.existsSync(outputPath)) {
+        fs.rmSync(outputPath, { force: true });
+        pipelineLogger.info(`Cleaned up output file ${outputPath}`, "DirectUploader");
+      }
+    } catch (cleanupErr) {
+      pipelineLogger.error("Failed to clean up files", cleanupErr, "DirectUploader");
     }
 
     this.resolveJob(id);
@@ -905,7 +1002,6 @@ Return ONLY raw JSON — no markdown:
     });
 
     if (pending.context.mediaHash) {
-      this.cacheManager.delete(pending.context.mediaHash);
     }
 
     this.resolveJob(id);
@@ -1194,43 +1290,6 @@ Return ONLY raw JSON — no markdown:
         );
       }
 
-      // Check cache
-      if (mediaHash) {
-        const cached = this.cacheManager.get(mediaHash);
-        if (cached) {
-          pipelineLogger.info(
-            `AI Cache hit for hash: ${mediaHash}`,
-            "DirectUploader",
-          );
-          context.analysis = cached.analysis;
-          context.brandingDetection = cached.brandingDetection;
-          context.ocr = cached.ocr;
-          context.safeArea = cached.safeArea;
-          context.safeAreaCandidates = cached.safeAreaCandidates;
-          context.existingBanner = cached.existingBanner;
-          context.bannerBounds = cached.bannerBounds;
-          context.protectedRegions = cached.protectedRegions;
-          context.recommendedPlacement = cached.recommendedPlacement as any;
-          context.qualityScore = cached.qualityScore;
-          context.captionVariants = cached.captionVariants;
-
-          if (!context.userPrompt) {
-            context.metadata = cached.metadata;
-            // Always default to original caption for new runs, even on cache hits
-            context.rephrasedCaption = undefined;
-            pipelineLogger.checkpoint(
-              "AI Cache hit — loaded metadata, vision, and OCR",
-              true,
-              mediaHash,
-            );
-          } else {
-            pipelineLogger.info(
-              "User prompt override present — reusing cached OCR and vision, but regenerating caption",
-              "DirectUploader",
-            );
-          }
-        }
-      }
 
       // If video, extract a frame first so AI vision and detection have access to it
       if (isVideo && context.originalVideoPath) {
@@ -1267,6 +1326,7 @@ Return ONLY raw JSON — no markdown:
           );
         }
       }
+
 
       // 1 — Metadata & Branding Detection (always run vision model to detect watermarks/branding if not cached)
       if (!context.metadata || !context.brandingDetection) {
@@ -1334,6 +1394,38 @@ Return ONLY raw JSON — no markdown:
             "DirectUploader",
           );
         } else {
+        // Parse manual blur commands from user prompt for static images
+        if (context.userPrompt) {
+          const p = context.userPrompt.toLowerCase();
+          const match1 = p.match(/blur\s+v([0-6])\s*(?:to|-)\s*v([0-6])\s*(?:and|,|)?\s*(\d+)\s*(?:to|-)\s*(\d+)/i);
+          const match2 = p.match(/blur\s+(\d+)\s*(?:to|-)\s*(\d+)\s*(?:and|,|)?\s*v([0-6])\s*(?:to|-)\s*v([0-6])/i);
+          
+          let vStart, vEnd, hStart, hEnd;
+          if (match1) {
+            vStart = parseInt(match1[1], 10); vEnd = parseInt(match1[2], 10);
+            hStart = parseInt(match1[3], 10); hEnd = parseInt(match1[4], 10);
+          } else if (match2) {
+            hStart = parseInt(match2[1], 10); hEnd = parseInt(match2[2], 10);
+            vStart = parseInt(match2[3], 10); vEnd = parseInt(match2[4], 10);
+          }
+
+          if (vStart !== undefined && vEnd !== undefined && hStart !== undefined && hEnd !== undefined) {
+            if (!context.brandingDetection) context.brandingDetection = { detected: false, zones: [] };
+            context.brandingDetection.zones.push({
+              id: `manual-blur-${Date.now()}`,
+              type: "watermark",
+              boundingBox: {
+                x: Math.min(vStart, vEnd) / 6.0,
+                y: Math.min(hStart, hEnd) / 100.0,
+                width: Math.max(Math.max(vStart, vEnd) - Math.min(vStart, vEnd), 0.01) / 6.0,
+                height: Math.max(Math.max(hStart, hEnd) - Math.min(hStart, hEnd), 1) / 100.0
+              },
+              confidence: 1.0,
+              description: "Manual blur region"
+            });
+          }
+        }
+
         // 2a — Blur other branding zones (logo, watermark, handle, profile_name, other) on the static image (excluding original_captions)
         const otherZones = context.brandingDetection?.zones.filter(
           (z) =>
@@ -1635,13 +1727,13 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
             C: rephrasedCaption,
           };
 
-          if (this.freellmapi) {
+          if (false /* AI caption generation disabled */ && this.freellmapi) {
             try {
               pipelineLogger.info(
                 "Rephrasing caption variants with AI...",
                 "DirectUploader",
               );
-              const aiResponse = await this.freellmapi.generateText(aiPrompt);
+              const aiResponse = await this.freellmapi!.generateText(aiPrompt);
 
               let varA = "";
               let varB = "";
@@ -2115,24 +2207,6 @@ Set all booleans carefully and include a brief explanation in "reason".`;
         }
       }
 
-      // Save results to AI Cache
-      if (context.mediaHash) {
-        this.cacheManager.set(context.mediaHash, {
-          analysis: context.analysis,
-          metadata: context.metadata,
-          brandingDetection: context.brandingDetection,
-          ocr: context.ocr,
-          rephrasedCaption: context.rephrasedCaption,
-          safeArea: context.safeArea,
-          safeAreaCandidates: context.safeAreaCandidates,
-          existingBanner: context.existingBanner,
-          bannerBounds: context.bannerBounds,
-          protectedRegions: context.protectedRegions,
-          recommendedPlacement: context.recommendedPlacement,
-          qualityScore: context.qualityScore,
-          captionVariants: context.captionVariants,
-        });
-      }
 
       this.db.updateJob(id, {
         status: "rendering_video",
@@ -2150,10 +2224,14 @@ Set all booleans carefully and include a brief explanation in "reason".`;
         "DirectUploader",
       );
       const reviewFramePath = path.join(tempDir, "first_frame_review.png");
-      const gridFilter = "drawgrid=w=iw:h=ih/10:t=2:c=yellow@0.8";
-      const textFilters = Array.from({length: 9}, (_, i) => 
+      const gridFilter = "drawgrid=w=iw/6:h=ih/10:t=2:c=yellow@0.8";
+      const hTextFilters = Array.from({length: 9}, (_, i) => 
         `drawtext=text='${(i+1)*10}':x=20:y=h*${(i+1)/10}-50:fontsize=48:fontcolor=yellow:box=1:boxcolor=black@0.5`
       ).join(',');
+      const vTextFilters = Array.from({length: 5}, (_, i) => 
+        `drawtext=text='V${i+1}':x=w*${(i+1)/6}-30:y=40:fontsize=48:fontcolor=yellow:box=1:boxcolor=black@0.5`
+      ).join(',');
+      const textFilters = `${hTextFilters},${vTextFilters}`;
       const extractCmd = `ffmpeg -y -ss 00:00:01 -i "${rawVideoPath}" -vf "${gridFilter},${textFilters}" -vframes 1 -q:v 2 "${reviewFramePath}"`;
       await new Promise<void>((resolve, reject) => {
         exec(extractCmd, (err) => {
@@ -2170,9 +2248,6 @@ Set all booleans carefully and include a brief explanation in "reason".`;
       const reviewCaption =
         `🖼️ *Verify Frame Layout & Caption*\n\n` +
         `📄 *Current/Original:* "${escapeMarkdown(truncate(context.rephrasedCaption || ""))}"\n\n` +
-        `🅰️ *Variant A:* "${escapeMarkdown(truncate(context.captionVariants?.A || ""))}"\n` +
-        `🅱️ *Variant B:* "${escapeMarkdown(truncate(context.captionVariants?.B || ""))}"\n` +
-        `🅲 *Variant C:* "${escapeMarkdown(truncate(context.captionVariants?.C || ""))}"\n\n` +
         `⏳ _Auto-approves and renders video with Current/Original in 1 minute if no action is taken._`;
 
       const frameReviewMessageId = await this.telegram.sendPhotoForReview(
@@ -2181,7 +2256,7 @@ Set all booleans carefully and include a brief explanation in "reason".`;
         reviewCaption,
         id,
         messageId,
-        context.captionVariants,
+        undefined, // caption variants disabled
       );
 
       pipelineLogger.info(
@@ -2238,7 +2313,6 @@ Set all booleans carefully and include a brief explanation in "reason".`;
       });
 
       if (context.mediaHash) {
-        this.cacheManager.delete(context.mediaHash);
       }
 
       this.resolveJob(id);
@@ -2283,20 +2357,7 @@ Set all booleans carefully and include a brief explanation in "reason".`;
       const outputFilePath = path.join(config.paths.outputDir, outputFileName);
       fs.copyFileSync(finalVideoPath, outputFilePath);
 
-      // Copy frame layout photo as video thumbnail
-      const thumbnailFileName = `${safeTitle}_${id}.png`;
-      const thumbnailFilePath = path.join(
-        config.paths.outputDir,
-        thumbnailFileName,
-      );
-      const reviewFramePath = path.join(tempDir, "first_frame_review.png");
-      if (fs.existsSync(reviewFramePath)) {
-        fs.copyFileSync(reviewFramePath, thumbnailFilePath);
-        pipelineLogger.info(
-          `Thumbnail generated and saved to output: ${thumbnailFileName}`,
-          "DirectUploader",
-        );
-      }
+
 
       // 5 — Send video to Telegram for review
       const caption =
@@ -2362,7 +2423,6 @@ Set all booleans carefully and include a brief explanation in "reason".`;
       });
 
       if (context.mediaHash) {
-        this.cacheManager.delete(context.mediaHash);
       }
 
       this.resolveJob(id);
@@ -2459,7 +2519,7 @@ Set all booleans carefully and include a brief explanation in "reason".`;
     return true;
   }
 
-  public async resumeAllPendingJobs(): Promise<void> {
+  public async cancelAllPendingJobs(): Promise<void> {
     // Run metrics sync on boot
     this.syncYouTubeMetrics().catch(() => {});
 
@@ -2467,44 +2527,19 @@ Set all booleans carefully and include a brief explanation in "reason".`;
     if (activeJobs.length === 0) return;
 
     pipelineLogger.checkpoint(
-      `Found ${activeJobs.length} active job(s) in DB to resume...`,
+      `Found ${activeJobs.length} active job(s) in DB. Cancelling them on startup...`,
       true,
     );
 
     for (const job of activeJobs) {
+      this.db.updateJob(job.id, {
+        status: "failed",
+        currentStep: "Cancelled due to server restart",
+      });
       pipelineLogger.info(
-        `Resuming job ${job.id} (Status: ${job.status})...`,
+        `Cancelled old job ${job.id} on startup.`,
         "DirectUploader",
       );
-
-      if (job.status === "frame_review") {
-        // Re-run pipeline to render layout and re-send review photo
-        this.run(job.context).catch((err) => {
-          pipelineLogger.error(
-            `Failed to resume job ${job.id}`,
-            err,
-            "DirectUploader",
-          );
-        });
-      } else if (job.status === "final_review") {
-        // Re-run layout approval steps to mix audio and re-send review video
-        this.resumeFromFrameApproval(job.context).catch((err) => {
-          pipelineLogger.error(
-            `Failed to resume job ${job.id}`,
-            err,
-            "DirectUploader",
-          );
-        });
-      } else {
-        // Re-run pipeline from the start (will hit cache for OCR/Vision speeds)
-        this.run(job.context).catch((err) => {
-          pipelineLogger.error(
-            `Failed to resume job ${job.id}`,
-            err,
-            "DirectUploader",
-          );
-        });
-      }
     }
   }
 

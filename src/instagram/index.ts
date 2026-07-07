@@ -294,10 +294,13 @@ async function downloadViaPuppeteer(
   const browser = await puppeteer.launch({
     executablePath: CHROME_PATH,
     headless: true,
+    timeout: 90000,
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--disable-software-rasterizer",
     ],
   });
 
@@ -372,7 +375,7 @@ async function downloadViaPuppeteer(
         );
         await page.goto(url, {
           waitUntil: "networkidle2",
-          timeout: 25_000,
+          timeout: 90_000,
         });
 
         // Check if redirected to login page
@@ -407,12 +410,12 @@ async function downloadViaPuppeteer(
       );
       await page.goto(embedUrl, {
         waitUntil: "domcontentloaded",
-        timeout: 20_000,
+        timeout: 90_000,
       });
 
       // Wait for the embedded post image or video to load
       await page
-        .waitForSelector("img, video", { timeout: 15_000 })
+        .waitForSelector("img, video", { timeout: 60_000 })
         .catch(() => {});
       await new Promise((r) => setTimeout(r, 1500));
     }

@@ -1,49 +1,35 @@
 import { config } from "../config";
 
 export class FreeLlmApiClient {
-  private baseUrl: string;
-  private apiKey: string;
-  private model: string;
-  private visionModel: string;
 
-  constructor() {
-    this.baseUrl = config.ai.freellmapiUrl.replace(/\/$/, "");
-    this.apiKey = config.ai.freellmapiKey;
-    this.model = config.ai.freellmapiModel || "auto";
-    this.visionModel = config.ai.freellmapiVisionModel || "gemini-2.5-flash";
-  }
-
-  public async generateChat(messages: any[], timeoutMs = 120_000, modelOverride?: string): Promise<string> {
-    const url = `${this.baseUrl}/v1/chat/completions`;
+  public async generateChat(messages: any[]): Promise<string> {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs); // configurable timeout
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
 
     try {
-      const res = await fetch(url, {
+      const res = await fetch("https://text.pollinations.ai/", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${this.apiKey}`,
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: modelOverride || this.model,
           messages: messages,
+          jsonMode: messages.some(m => {
+            if (typeof m.content === 'string') return m.content.includes("JSON");
+            if (Array.isArray(m.content)) return m.content.some((c: any) => c.type === 'text' && c.text && c.text.includes("JSON"));
+            return false;
+          })
         }),
-        signal: controller.signal,
+        signal: controller.signal
       });
 
       if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(
-          `FreeLLMAPI request failed with status ${res.status}: ${errText}`,
-        );
+        throw new Error(`Pollinations API failed with status ${res.status}`);
       }
 
-      const json = (await res.json()) as any;
-      return json.choices?.[0]?.message?.content ?? "";
+      const text = await res.text();
+      return text;
     } catch (err: any) {
       if (err.name === "AbortError") {
-        throw new Error(`FreeLLMAPI request timed out after 60 seconds`);
+        throw new Error(`Pollinations request timed out after 60 seconds`);
       }
       throw err;
     } finally {
@@ -51,46 +37,59 @@ export class FreeLlmApiClient {
     }
   }
 
+  private async generateGeminiDirect(prompt: string, imageBase64?: string, mimeType?: string): Promise<string> {
+    if (!config.ai.geminiApiKey) {
+      throw new Error("GEMINI_API_KEY is not configured for fallback.");
+    }
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${config.ai.geminiApiKey}`;
+    
+    let parts: any[] = [{ text: prompt }];
+    if (imageBase64 && mimeType) {
+      parts.push({
+        inline_data: {
+          mime_type: mimeType,
+          data: imageBase64
+        }
+      });
+    }
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts }]
+      })
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`Direct Gemini API failed with status ${res.status}: ${errText}`);
+    }
+
+    const json = await res.json() as any;
+    return json.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+  }
+
   public async generateText(prompt: string): Promise<string> {
-    return this.generateChat([{ role: "user", content: prompt }]);
+    try {
+      // Primary for Text: FreeLLMAPI
+      return await this.generateChat([{ role: "user", content: prompt }]);
+    } catch (err: any) {
+      console.warn(`[FreeLLMAPI] Text generation failed: ${err.message}. Falling back to Direct Gemini API...`);
+      return await this.generateGeminiDirect(prompt);
+    }
   }
 
   /**
-   * Vision request with a longer timeout (120s) and one auto-retry on timeout / 5xx.
-   * Large base64 images often take 60-90s on a cold Gemini endpoint.
+   * Vision request with fallback logic
    */
   public async generateVision(
     prompt: string,
     imageBase64: string,
     mimeType: string,
   ): Promise<string> {
-    const messages = [
-      {
-        role: "user",
-        content: [
-          { type: "text", text: prompt },
-          {
-            type: "image_url",
-            image_url: {
-              url: `data:${mimeType};base64,${imageBase64}`,
-            },
-          },
-        ],
-      },
-    ];
-
-    // First attempt with 120s timeout using visionModel
-    try {
-      return await this.generateChat(messages, 120_000, this.visionModel);
-    } catch (firstErr: any) {
-      console.warn(`[FreeLLMAPI] Vision request failed using model ${this.visionModel}: ${firstErr?.message || firstErr}. Falling back to "${this.model}" model.`);
-      try {
-        // Fallback to auto/default model (this.model) with 90s window
-        return await this.generateChat(messages, 90_000, this.model);
-      } catch (secondErr: any) {
-        console.error(`[FreeLLMAPI] Fallback to "${this.model}" model also failed: ${secondErr?.message || secondErr}`);
-        throw firstErr;
-      }
-    }
+    // Primary for Vision: Direct Gemini API (Pollinations text API cannot process images)
+    console.log(`[Vision] Attempting Primary: Direct Gemini API...`);
+    return await this.generateGeminiDirect(prompt, imageBase64, mimeType);
   }
 }

@@ -34,7 +34,14 @@ export class PollinationsImageGenerator {
         `AI JSON missing items. Full object keys: ${Object.keys(obj).join(", ")}`,
         "PollinationsImageGenerator",
       );
-      throw new Error("AI JSON has no items array — cannot build infographic");
+      (obj as any).items = [
+        {
+          number: 1,
+          title: "Extracted Info",
+          description: "See original post for details",
+          icon: "📌",
+        },
+      ];
     }
 
     return obj as unknown as InfographicContent & { visualContext?: string };

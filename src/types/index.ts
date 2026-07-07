@@ -101,6 +101,8 @@ export interface VideoMetadata {
   thumbnailText?: string;
   filename?: string;
   mood?: "funny" | "sad" | "other";
+  factCheckScore?: number;
+  verdict?: string;
 }
 
 export interface RenderOptions {

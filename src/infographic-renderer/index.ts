@@ -1,4 +1,4 @@
-import puppeteer from "puppeteer-core";
+
 import sharp from "sharp";
 import { InfographicContent } from "../types";
 import { pipelineLogger } from "../utils/logger";
@@ -340,6 +340,7 @@ export class InfographicRenderer {
   ): Promise<Buffer> {
     const html = this.buildHTML(content, transparentBg);
 
+    const puppeteer = (await new Function("return import('puppeteer-core')")()).default;
     const browser = await puppeteer.launch({
       executablePath: config.binaries.chrome,
       headless: true,

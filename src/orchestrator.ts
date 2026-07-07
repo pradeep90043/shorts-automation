@@ -113,7 +113,11 @@ export class PipelineOrchestrator {
           "Instagram source detected — skipping branding detection & removal",
           "Orchestrator",
         );
-        context.cleanedImagePath = context.originalImagePath;
+        let workingImage = context.originalImagePath;
+
+
+
+        context.cleanedImagePath = workingImage;
         await this.runFromStage(context, "ocr");
         return;
       }

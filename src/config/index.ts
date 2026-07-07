@@ -125,7 +125,7 @@ export const config: AppConfig = {
     freellmapiUrl: process.env.FREELLMAPI_URL || "http://localhost:3001",
     freellmapiKey: process.env.FREELLMAPI_KEY || "",
     freellmapiModel: process.env.FREELLMAPI_MODEL || "auto",
-    freellmapiVisionModel: process.env.FREELLMAPI_VISION_MODEL || "gemini-2.5-flash",
+    freellmapiVisionModel: process.env.FREELLMAPI_VISION_MODEL || "gemini-2.0-flash",
   },
   paths: {
     assetsDir: process.env.ASSETS_DIR
