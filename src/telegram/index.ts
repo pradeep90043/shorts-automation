@@ -386,6 +386,23 @@ export class TelegramService implements ITelegramService {
       );
     });
 
+    // Handle logs command to securely retrieve prod logs via Telegram
+    this.bot.command("logs", async (ctx) => {
+      try {
+        const logPath = path.resolve(process.cwd(), "logs/combined.log");
+        if (fs.existsSync(logPath)) {
+          await ctx.replyWithDocument({
+            source: fs.createReadStream(logPath),
+            filename: "prod-combined.log"
+          }, { caption: "Here are the latest production logs." });
+        } else {
+          await ctx.reply("❌ Log file not found on the server.");
+        }
+      } catch (err) {
+        await ctx.reply(`❌ Failed to retrieve logs: ${err instanceof Error ? err.message : err}`);
+      }
+    });
+
     // Handle manual approval override command
     this.bot.command("approve", async (ctx) => {
       try {
