@@ -20,6 +20,12 @@ import { getCopyrightRisk, formatRisk } from "./audio/copyrightCheck";
 import { ViralAnalyzer } from "./utils/viral-analyzer";
 import { JobQueue } from "./utils/queue";
 import { ImageAnalyzer } from "./image-analysis";
+
+// Canonical metadata format — shared by ALL metadata prompts so every generation
+// path (unified vision, vision fallback, viral, text-only) produces the same format.
+const TITLE_RULES = `TITLE RULES: Max 65 chars. Primary keyword within first 30 chars. Curiosity without clickbait. Use current year if relevant. One emoji. No ALL CAPS (except AI, API, etc).`;
+const DESCRIPTION_RULES = `DESCRIPTION RULES: 180-300 words. Include, in this exact order: 1) What the video is about (primary keyword in first sentence). 2) What you'll learn (bullet points). 3) Who it's for. 4) The Fact Check Verdict and Reasoning. 5) Subscribe CTA to @CodeOrCap. 6) Community CTA question. 7) End with popular hashtags on the last line — ALWAYS include #science among them.`;
+
 interface PendingUpload {
   id: string;
   chatId: number;
@@ -183,9 +189,9 @@ If no such elements are present, return an empty array for brandingZones.
 TASK 2: YouTube Shorts Metadata & Fact Checking
 You are an expert YouTube SEO strategist and Fact Checker for the technology channel "CodeOrCap" (Tech Fact Check).
 FACT CHECK RULES: Analyze the code, claims, or technical text in the image. Determine if it is true, false, misleading, or a joke. Provide a factCheckScore (1-10, where 10 is 100% accurate) and a short verdict (e.g., "Mostly True", "False - Syntax Error", "Satire/Meme", "Accurate").
-TITLE RULES: Max 65 chars. Primary keyword within first 30 chars. Curiosity without clickbait. Use current year if relevant. One emoji. No ALL CAPS (except AI, API, etc).
-DESCRIPTION RULES: 180-300 words. Include: 1) What the video is about (primary keyword in first sentence). 2) What you'll learn (bullet points). 3) Who it's for. 4) The Fact Check Verdict and Reasoning. 5) Subscribe CTA to @CodeOrCap. 6) Community CTA question.
-KEYWORDS: Provide 1 primary keyword, 5 secondary keywords, 15 tags, and 8-12 hashtags.
+${TITLE_RULES}
+${DESCRIPTION_RULES}
+KEYWORDS: Provide 1 primary keyword, 5 secondary keywords, 15 tags, and 8-12 hashtags (always include #science).
 THUMBNAIL: Max 5 words, highly clickable, curiosity driven.
 FILENAME: SEO-friendly filename (e.g., tech-video-2026.mp4).
 MOOD: Determine emotional tone: "funny", "sad", or "other".
@@ -345,10 +351,8 @@ Title: ${context.previousMetadata.title}
 Description: ${context.previousMetadata.description}
 Tags: ${context.previousMetadata.tags?.join(", ")}`;
         }
-      } else if (context.captionMetadata) {
-        prompt += `\n\nUSER PROVIDED CAPTION (use this as the primary source for the title and description):
-Title: ${context.captionMetadata.title}
-Description: ${context.captionMetadata.description}`;
+      } else {
+        prompt += this.buildCaptionPromptBlock(context);
       }
 
       if (context.ocr?.text && context.ocr.text.trim().length > 10) {
@@ -460,7 +464,7 @@ Description: ${context.captionMetadata.description}`;
         throw new Error("AI JSON missing metadata fields");
       }
 
-      context.metadata = data.metadata;
+      context.metadata = this.ensureRequiredHashtags(data.metadata);
 
       if (context.metadata.verdict && context.metadata.factCheckScore) {
         context.metadata.description += `\n\n🤖 Tech Fact Check Verdict: [${context.metadata.verdict}] (${context.metadata.factCheckScore}/10)`;
@@ -590,6 +594,56 @@ Description: ${context.captionMetadata.description}`;
     }
   }
 
+  /**
+   * Guarantee the required hashtags/tags are present regardless of what the LLM
+   * returned. #science must appear in every description.
+   */
+  private ensureRequiredHashtags(meta: VideoMetadata): VideoMetadata {
+    if (meta.description && !/#science\b/i.test(meta.description)) {
+      const lines = meta.description.trimEnd().split("\n");
+      const lastLine = lines[lines.length - 1];
+      if (lastLine.includes("#")) {
+        // Description already ends with a hashtag line — append to it
+        lines[lines.length - 1] = `${lastLine} #science`;
+        meta.description = lines.join("\n");
+      } else {
+        meta.description = `${meta.description.trimEnd()}\n\n#science`;
+      }
+    }
+    if (
+      Array.isArray(meta.hashtags) &&
+      !meta.hashtags.some((h) => h.replace(/^#/, "").toLowerCase() === "science")
+    ) {
+      meta.hashtags.push("#science");
+    }
+    if (
+      Array.isArray(meta.tags) &&
+      !meta.tags.some((t) => t.toLowerCase() === "science")
+    ) {
+      meta.tags.push("science");
+    }
+    return meta;
+  }
+
+  private buildCaptionPromptBlock(context?: PipelineContext): string {
+    if (!context?.captionMetadata) return "";
+    const { title, description } = context.captionMetadata;
+    if (context.instagramSource) {
+      pipelineLogger.info(
+        `Including original reel caption as prompt context (${(description || title || "").length} chars)`,
+        "DirectUploader",
+      );
+      return `\n\nADDITIONAL CONTEXT — ORIGINAL CAPTION FROM THE SOURCE POST (Instagram/TikTok):
+"""
+${title && title !== description ? title + "\n" : ""}${description}
+"""
+Use this caption ONLY as extra context to better understand the video's actual topic, facts, and terminology. Do NOT copy its wording, style, or hashtags. Generate the title and description strictly following the format rules given above.\n`;
+    }
+    return `\n\nUSER PROVIDED CAPTION (use this as the primary source for the title and description):
+Title: ${title}
+Description: ${description}\n`;
+  }
+
   private async generateTextMetadataFallback(viral: boolean, context?: PipelineContext): Promise<VideoMetadata> {
     try {
       if (!this.freellmapi) return this.fallbackMetadata();
@@ -604,13 +658,13 @@ Description: ${context.captionMetadata.description}`;
         if (context.previousMetadata) {
           contentContext += `Current Metadata: Title: ${context.previousMetadata.title}, Description: ${context.previousMetadata.description}\n`;
         }
-      } else if (context?.captionMetadata) {
-        contentContext += `\n\nUser Provided Caption: Title: ${context.captionMetadata.title}, Description: ${context.captionMetadata.description}\nUse this as the primary source.\n`;
+      } else {
+        contentContext += this.buildCaptionPromptBlock(context);
       }
 
       const prompt = viral
-        ? `You are a viral YouTube Shorts growth hacker for a tech channel "CodeOrCap". ${contentContext} Generate the most scroll-stopping, curiosity-gap, high-CTR metadata possible based on the text. TITLE Max 65 chars. DESCRIPTION 180-300 words. Return ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate"}}`
-        : `You are a YouTube Shorts strategist for a tech channel called "CodeOrCap". ${contentContext} Generate SEO-optimised metadata based on the text. Return ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate"}}`;
+        ? `You are a viral YouTube Shorts growth hacker for a tech channel "CodeOrCap". ${contentContext} Generate the most scroll-stopping, curiosity-gap, high-CTR metadata possible based on the text.\n${TITLE_RULES}\n${DESCRIPTION_RULES}\nReturn ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate"}}`
+        : `You are a YouTube Shorts strategist for a tech channel called "CodeOrCap". ${contentContext} Generate SEO-optimised metadata based on the text.\n${TITLE_RULES}\n${DESCRIPTION_RULES}\nReturn ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate"}}`;
       
       const raw = await this.freellmapi.generateText(prompt);
       const data = parseAiJson<{metadata?: VideoMetadata} & Partial<VideoMetadata>>(raw);
@@ -621,7 +675,7 @@ Description: ${context.captionMetadata.description}`;
       }
       
       if (meta && meta.title && meta.description && Array.isArray(meta.tags)) {
-         return meta;
+         return this.ensureRequiredHashtags(meta);
       }
       throw new Error("Invalid format from text fallback");
     } catch (err) {
@@ -642,8 +696,8 @@ Analyze this image carefully — read all visible text, identify the topic, tool
 Generate SEO-optimised YouTube Shorts metadata that will maximise clicks and watch time, and provide a fact-check verdict.
 
 Rules:
-- title: curiosity-driven, punchy, under 80 chars. Use power words and emojis. Examples: "You're Using Git Wrong 😤 Here's The Fix", "10 VS Code Shortcuts Devs Don't Know ⚡", "This Python Trick Will Blow Your Mind 🔥"
-- description: 2-3 sentences explaining the value. End with 5-6 popular tags (hashtags). Max 400 chars.
+- ${TITLE_RULES}
+- ${DESCRIPTION_RULES}
 - tags: 10-12 specific tags covering the topic, tools, and audience (no spaces in tags).
 - mood: Determine the emotional tone or theme of the content. Choose exactly one of: "funny", "sad", or "other" (for general, educational, motivational, or tech tips).
 - factCheckScore: (1-10) How technically accurate the image content is.
@@ -654,8 +708,8 @@ Rules:
       if (context.previousMetadata) {
         prompt += `Current Metadata: Title: ${context.previousMetadata.title}, Description: ${context.previousMetadata.description}\n`;
       }
-    } else if (context?.captionMetadata) {
-      prompt += `\n\nUser Provided Caption: Title: ${context.captionMetadata.title}, Description: ${context.captionMetadata.description}\nUse this as the primary source.\n`;
+    } else {
+      prompt += this.buildCaptionPromptBlock(context);
     }
 
     if (context?.ocr?.text && context.ocr.text.trim().length > 10) {
@@ -685,7 +739,8 @@ Rules:
           throw new Error("Missing required fields");
         }
         pipelineLogger.checkpoint("Metadata generated", true, `"${obj.title}"`);
-        
+        this.ensureRequiredHashtags(obj);
+
         if (obj.verdict && obj.factCheckScore) {
           obj.description += `\n\n🤖 Tech Fact Check Verdict: [${obj.verdict}] (${obj.factCheckScore}/10)`;
         }
@@ -716,7 +771,7 @@ Rules:
     return {
       title: "Mind-Blowing Tech Trick You Need To Know ⚡",
       description:
-        "Level up your skills with this essential tip every developer should know. Drop a 🔥 if you found this useful!\n\n#coding #programming #developer #tech #shorts",
+        "Level up your skills with this essential tip every developer should know. Drop a 🔥 if you found this useful!\n\n#coding #programming #developer #tech #shorts #science",
       tags: [
         "coding",
         "programming",
@@ -726,6 +781,7 @@ Rules:
         "codeorcap",
         "learntocode",
         "webdev",
+        "science",
       ],
     };
   }
@@ -743,8 +799,8 @@ Rules:
 Analyze this image and generate the most scroll-stopping, curiosity-gap, high-CTR metadata possible.
 
 TITLE RULES: Max 65 chars. Extreme curiosity gap, controversy, or shock. Primary keyword within first 30 chars. One emoji. No ALL CAPS (except AI, API, etc).
-DESCRIPTION RULES: 180-300 words. Include: 1) What the video is about. 2) What you'll learn. 3) The Fact Check Verdict. 4) Subscribe CTA to @CodeOrCap. 5) Community CTA question. 6) Add popular tags (hashtags) at the end.
-KEYWORDS: Provide 1 primary keyword, 5 secondary keywords, 15 tags, and 8-12 hashtags.
+${DESCRIPTION_RULES}
+KEYWORDS: Provide 1 primary keyword, 5 secondary keywords, 15 tags, and 8-12 hashtags (always include #science).
 THUMBNAIL: Max 5 words, highly clickable, curiosity driven.
 FILENAME: SEO-friendly filename (e.g., viral-tech-video-2026.mp4).
 MOOD: Determine emotional tone: "funny", "sad", or "other".
@@ -755,8 +811,8 @@ FACT CHECK: Provide a factCheckScore (1-10 accuracy) and a short verdict ("Accur
       if (context.previousMetadata) {
         prompt += `Current Metadata: Title: ${context.previousMetadata.title}, Description: ${context.previousMetadata.description}\n`;
       }
-    } else if (context?.captionMetadata) {
-      prompt += `\n\nUser Provided Caption: Title: ${context.captionMetadata.title}, Description: ${context.captionMetadata.description}\nUse this as the primary source.\n`;
+    } else {
+      prompt += this.buildCaptionPromptBlock(context);
     }
 
     if (context?.ocr?.text && context.ocr.text.trim().length > 10) {
@@ -789,7 +845,8 @@ FACT CHECK: Provide a factCheckScore (1-10 accuracy) and a short verdict ("Accur
           true,
           `"${obj.title}"`,
         );
-        
+        this.ensureRequiredHashtags(obj);
+
         if (obj.verdict && obj.factCheckScore) {
           obj.description += `\n\n🤖 Tech Fact Check Verdict: [${obj.verdict}] (${obj.factCheckScore}/10)`;
         }
@@ -848,11 +905,11 @@ FACT CHECK: Provide a factCheckScore (1-10 accuracy) and a short verdict ("Accur
       );
 
       const channelLines = results
-        .map((r) => `• *YouTube (${r.channelName}):* ${r.url}`)
+        .map((r) => `• *YouTube (${escapeMarkdown(r.channelName)}):* ${escapeMarkdown(r.url)}`)
         .join("\n");
 
       const instaLines = instaResults
-        .map((r) => `• *Instagram (${r.accountName}):* ${r.url}`)
+        .map((r) => `• *Instagram (${escapeMarkdown(r.accountName)}):* ${escapeMarkdown(r.url)}`)
         .join("\n");
 
       const successText =
@@ -860,7 +917,7 @@ FACT CHECK: Provide a factCheckScore (1-10 accuracy) and a short verdict ("Accur
         `*Title:* ${escapeMarkdown(metadata.title)}\n\n` +
         `${channelLines}\n` +
         `${instaLines}\n\n` +
-        `*ID:* ${id}`;
+        `*ID:* ${escapeMarkdown(id)}`;
 
       const successMessageId = await this.telegram.sendSuccessMessageWithRevoke(
         chatId,
@@ -1284,12 +1341,12 @@ FACT CHECK: Provide a factCheckScore (1-10 accuracy) and a short verdict ("Accur
     } else {
       // Some or all failed
       const successLines = successDeletions
-        .map((r) => `• *${r.channelName}* (Deleted)`)
+        .map((r) => `• *${escapeMarkdown(r.channelName)}* (Deleted)`)
         .join("\n");
       const failedLines = failedDeletions
         .map(
           (r) =>
-            `• *${r.channelName}* (Failed to delete - ID: \`${r.videoId}\`)`,
+            `• *${escapeMarkdown(r.channelName)}* (Failed to delete - ID: \`${escapeMarkdown(r.videoId)}\`)`,
         )
         .join("\n");
 
@@ -1439,8 +1496,10 @@ FACT CHECK: Provide a factCheckScore (1-10 accuracy) and a short verdict ("Accur
         context,
       });
 
-      // Override with caption-provided metadata only if there's no active user prompt adjustment
-      if (context.captionMetadata && !context.userPrompt) {
+      // Override with caption-provided metadata only if there's no active user prompt adjustment.
+      // Skip for Instagram/TikTok reels: their captionMetadata is the ORIGINAL post caption,
+      // which is only extra context for the AI prompt — not a verbatim title/description.
+      if (context.captionMetadata && !context.userPrompt && !context.instagramSource) {
         pipelineLogger.info(
           "Applying caption-provided metadata override — retaining branding detection",
           "DirectUploader",
