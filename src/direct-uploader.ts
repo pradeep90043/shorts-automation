@@ -15,6 +15,7 @@ import { FreeLlmApiClient } from "./ai/freellmapi";
 import { parseAiJson } from "./utils/json";
 import { getFileHash } from "./utils/cache";
 import { JobDatabase } from "./utils/db";
+import { getCopyrightRisk, formatRisk } from "./audio/copyrightCheck";
 
 import { ViralAnalyzer } from "./utils/viral-analyzer";
 import { JobQueue } from "./utils/queue";
@@ -31,6 +32,8 @@ interface PendingUpload {
   originalImagePath: string;
   timer?: ReturnType<typeof setTimeout>;
   context: PipelineContext;
+  lastMusicTrack?: string;
+  musicCaptionLine?: string;
 }
 
 export class DirectUploader {
@@ -1148,6 +1151,7 @@ FACT CHECK: Provide a factCheckScore (1-10 accuracy) and a short verdict ("Accur
           `📋 *Review your Short* _(updated)_\n\n` +
           `*Title:* ${metadata.title}\n\n` +
           `*Description:* ${metadata.description.slice(0, 200)}…\n\n` +
+          (pending.musicCaptionLine || "") +
           `⏳ _Auto-publishes in 2 minutes if no action taken._`;
 
         await this.telegram.updateReviewCaption(
@@ -1166,6 +1170,18 @@ FACT CHECK: Provide a factCheckScore (1-10 accuracy) and a short verdict ("Accur
       );
   }
 
+  /**
+   * Caption line describing the track just mixed in by MusicService and its
+   * AcoustID copyright-risk score, e.g.
+   * "🎵 *Music:* energy-boost.mp3 — ©️ risk 1/10"
+   */
+  private async buildMusicCaptionLine(): Promise<string> {
+    const track = this.music.lastSelectedTrack;
+    if (!track) return "";
+    const risk = await getCopyrightRisk(track);
+    return `🎵 *Music:* ${escapeMarkdown(path.basename(track))} — ${escapeMarkdown(formatRisk(risk))}\n\n`;
+  }
+
   private async onReplaceMusic(id: string): Promise<void> {
     const pending = this.pending.get(id);
     if (!pending) return;
@@ -1175,35 +1191,38 @@ FACT CHECK: Provide a factCheckScore (1-10 accuracy) and a short verdict ("Accur
     try {
       const tempMusicVideoPath = path.join(pending.context.tempDir, "video_music_replaced.mp4");
       const rawVideoPath = path.join(pending.context.tempDir, "video_raw.mp4");
-      
+
       await this.music.addBackgroundMusic(
         rawVideoPath,
         config.paths.musicDir,
         tempMusicVideoPath,
         pending.metadata.mood,
-        undefined,
-        pending.context.isVideo,
+        true, // always re-mix from the raw video, replacing any existing music
+        pending.lastMusicTrack,
       );
 
       fs.copyFileSync(tempMusicVideoPath, pending.finalVideoPath);
       fs.copyFileSync(tempMusicVideoPath, pending.outputFilePath);
+
+      pending.lastMusicTrack = this.music.lastSelectedTrack || undefined;
+      pending.musicCaptionLine = await this.buildMusicCaptionLine();
 
       // Edit the video in the existing review message
       const caption =
         `📋 *Review your Short*\n\n` +
         `*Title:* ${escapeMarkdown(pending.metadata.title)}\n\n` +
         `*Description:* ${escapeMarkdown(pending.metadata.description.slice(0, 200))}…\n\n` +
+        pending.musicCaptionLine +
         `⏳ _Waiting for review action..._`;
 
-      await this.telegram.editReviewVideo(
+      pending.reviewMessageId = await this.telegram.editReviewVideo(
         pending.chatId,
         pending.reviewMessageId,
         pending.finalVideoPath,
         caption,
         id,
       );
-      
-      
+
       // Removed auto-publish timer as per user request
 
     } catch (err) {
@@ -1211,6 +1230,11 @@ FACT CHECK: Provide a factCheckScore (1-10 accuracy) and a short verdict ("Accur
         `Failed to replace music for ${id}`,
         err,
         "DirectUploader",
+      );
+      await this.telegram.sendMessage(
+        pending.chatId,
+        `⚠️ *Music replace failed:* \`${err instanceof Error ? err.message : err}\``,
+        pending.reviewMessageId,
       );
     }
   }
@@ -2297,14 +2321,7 @@ Set all booleans carefully and include a brief explanation in "reason".`;
       );
       const reviewFramePath = path.join(tempDir, "first_frame_review.png");
       const gridFilter = "drawgrid=w=iw/6:h=ih/10:t=2:c=yellow@0.8";
-      const hTextFilters = Array.from({length: 9}, (_, i) => 
-        `drawtext=text='${(i+1)*10}':x=20:y=h*${(i+1)/10}-50:fontsize=48:fontcolor=yellow:box=1:boxcolor=black@0.5`
-      ).join(',');
-      const vTextFilters = Array.from({length: 5}, (_, i) => 
-        `drawtext=text='V${i+1}':x=w*${(i+1)/6}-30:y=40:fontsize=48:fontcolor=yellow:box=1:boxcolor=black@0.5`
-      ).join(',');
-      const textFilters = `${hTextFilters},${vTextFilters}`;
-      const extractCmd = `ffmpeg -y -ss 00:00:01 -i "${rawVideoPath}" -vf "${gridFilter},${textFilters}" -vframes 1 -q:v 2 "${reviewFramePath}"`;
+      const extractCmd = `ffmpeg -y -ss 00:00:01 -i "${rawVideoPath}" -vf "${gridFilter}" -vframes 1 -q:v 2 "${reviewFramePath}"`;
       await new Promise<void>((resolve, reject) => {
         exec(extractCmd, (err) => {
           if (err) reject(err);
@@ -2451,10 +2468,12 @@ Set all booleans carefully and include a brief explanation in "reason".`;
         });
       }
 
+      const musicCaptionLine = await this.buildMusicCaptionLine();
       const caption =
         `📋 *Review your Short*\n\n` +
         `*Title:* ${escapeMarkdown(metadata.title)}\n\n` +
         `*Description:* ${escapeMarkdown(metadata.description.slice(0, 200))}…\n\n` +
+        musicCaptionLine +
         `⏳ _Waiting for review action..._`;
 
       const reviewMessageId = await this.telegram.sendVideoForReview(
@@ -2477,6 +2496,8 @@ Set all booleans carefully and include a brief explanation in "reason".`;
         outputFileName,
         originalImagePath,
         context,
+        lastMusicTrack: this.music.lastSelectedTrack || undefined,
+        musicCaptionLine,
       });
 
       this.db.updateJob(id, {
