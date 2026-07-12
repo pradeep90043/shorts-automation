@@ -1232,8 +1232,8 @@ FACT CHECK: Provide a factCheckScore (1-10 accuracy) and a short verdict ("Accur
    * AcoustID copyright-risk score, e.g.
    * "🎵 *Music:* energy-boost.mp3 — ©️ risk 1/10"
    */
-  private async buildMusicCaptionLine(): Promise<string> {
-    const track = this.music.lastSelectedTrack;
+  private async buildMusicCaptionLine(specificTrack?: string): Promise<string> {
+    const track = specificTrack || this.music.lastSelectedTrack;
     if (!track) return "";
     const risk = await getCopyrightRisk(track);
     return `🎵 *Music:* ${escapeMarkdown(path.basename(track))} — ${escapeMarkdown(formatRisk(risk))}\n\n`;
@@ -1249,20 +1249,27 @@ FACT CHECK: Provide a factCheckScore (1-10 accuracy) and a short verdict ("Accur
       const tempMusicVideoPath = path.join(pending.context.tempDir, "video_music_replaced.mp4");
       const rawVideoPath = path.join(pending.context.tempDir, "video_raw.mp4");
 
+      const newTrack = this.music.selectLocalTrack(
+        config.paths.musicDir,
+        pending.metadata.mood,
+        pending.lastMusicTrack
+      );
+
       await this.music.addBackgroundMusic(
         rawVideoPath,
         config.paths.musicDir,
         tempMusicVideoPath,
         pending.metadata.mood,
         true, // always re-mix from the raw video, replacing any existing music
-        pending.lastMusicTrack,
+        undefined, // excludeTrack is handled by selectLocalTrack above
+        newTrack // specificTrack
       );
 
       fs.copyFileSync(tempMusicVideoPath, pending.finalVideoPath);
       fs.copyFileSync(tempMusicVideoPath, pending.outputFilePath);
 
-      pending.lastMusicTrack = this.music.lastSelectedTrack || undefined;
-      pending.musicCaptionLine = await this.buildMusicCaptionLine();
+      pending.lastMusicTrack = newTrack;
+      pending.musicCaptionLine = await this.buildMusicCaptionLine(newTrack);
 
       // Edit the video in the existing review message
       const caption =
@@ -2393,9 +2400,17 @@ Set all booleans carefully and include a brief explanation in "reason".`;
         return str.length > 150 ? str.slice(0, 150) + "..." : str;
       };
 
+      // Pre-select music track to show copyright risk in the frame review
+      context.selectedMusicTrack = this.music.selectLocalTrack(
+        config.paths.musicDir,
+        context.metadata?.mood,
+      );
+      const musicCaptionLine = await this.buildMusicCaptionLine(context.selectedMusicTrack);
+
       const reviewCaption =
         `🖼️ *Verify Frame Layout & Caption*\n\n` +
         `📄 *Current/Original:* "${escapeMarkdown(truncate(context.rephrasedCaption || ""))}"\n\n` +
+        musicCaptionLine +
         `⏳ _Auto-approves and renders video with Current/Original in 1 minute if no action is taken._`;
 
       const frameReviewMessageId = await this.telegram.sendPhotoForReview(
@@ -2492,6 +2507,9 @@ Set all booleans carefully and include a brief explanation in "reason".`;
         config.paths.musicDir,
         finalVideoPath,
         metadata.mood,
+        false,
+        undefined,
+        context.selectedMusicTrack,
       );
 
       // 4 — Save to output folder
@@ -2527,7 +2545,7 @@ Set all booleans carefully and include a brief explanation in "reason".`;
         });
       }
 
-      const musicCaptionLine = await this.buildMusicCaptionLine();
+      const musicCaptionLine = await this.buildMusicCaptionLine(context.selectedMusicTrack);
       const caption =
         `📋 *Review your Short*\n\n` +
         `*Title:* ${escapeMarkdown(metadata.title)}\n\n` +
@@ -2555,7 +2573,7 @@ Set all booleans carefully and include a brief explanation in "reason".`;
         outputFileName,
         originalImagePath,
         context,
-        lastMusicTrack: this.music.lastSelectedTrack || undefined,
+        lastMusicTrack: context.selectedMusicTrack,
         musicCaptionLine,
       });
 

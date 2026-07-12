@@ -197,6 +197,7 @@ export interface PipelineContext {
   backgroundType?: "plain" | "busy" | "existing_banner";
   captionVariants?: { A: string; B: string; C: string }; // Multiple rephrased variants
   useRephrasedCaption?: boolean; // track if a rephrased caption variant was chosen
+  selectedMusicTrack?: string; // Pre-selected music track for first frame review
 }
 
 export interface ITelegramService {
@@ -290,11 +291,16 @@ export interface IVideoRenderer {
 }
 
 export interface IMusicService {
+  lastSelectedTrack: string | null;
+  selectLocalTrack(musicFolder: string, mood?: string, excludeTrack?: string): string;
   addBackgroundMusic(
     videoPath: string,
     musicFolder: string,
     outputPath: string,
-    mood?: "funny" | "sad" | "other",
+    mood?: string,
+    forceReplace?: boolean,
+    excludeTrack?: string,
+    specificTrack?: string,
   ): Promise<string>;
 }
 
