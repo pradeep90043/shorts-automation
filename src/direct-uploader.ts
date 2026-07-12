@@ -2385,15 +2385,54 @@ Set all booleans carefully and include a brief explanation in "reason".`;
         "Extracting first frame review image...",
         "DirectUploader",
       );
+      const reviewFrameRawPath = path.join(tempDir, "first_frame_raw.png");
       const reviewFramePath = path.join(tempDir, "first_frame_review.png");
-      const gridFilter = "drawgrid=w=iw/6:h=ih/10:t=2:c=yellow@0.8";
-      const extractCmd = `ffmpeg -y -ss 00:00:01 -i "${rawVideoPath}" -vf "${gridFilter}" -vframes 1 -q:v 2 "${reviewFramePath}"`;
+      // Extract raw frame without any ffmpeg filters
+      const extractCmd = `ffmpeg -y -ss 00:00:01 -i "${rawVideoPath}" -vframes 1 -q:v 2 "${reviewFrameRawPath}"`;
       await new Promise<void>((resolve, reject) => {
         exec(extractCmd, (err) => {
           if (err) reject(err);
           else resolve();
         });
       });
+
+      // Use sharp to draw SVG grid and labels (bypasses missing ffmpeg drawtext filter)
+      try {
+        const meta = await sharp(reviewFrameRawPath).metadata();
+        const w = meta.width || 1080;
+        const h = meta.height || 1920;
+
+        const hLines = Array.from({ length: 9 }, (_, i) => {
+          const y = h * ((i + 1) / 10) - 50;
+          return `<rect x="15" y="${y - 45}" width="70" height="60" fill="rgba(0,0,0,0.5)" /><text x="20" y="${y}" font-family="sans-serif" font-size="48" fill="yellow">${(i + 1) * 10}</text>`;
+        }).join("");
+
+        const vLines = Array.from({ length: 5 }, (_, i) => {
+          const x = w * ((i + 1) / 6) - 30;
+          return `<rect x="${x - 5}" y="10" width="70" height="60" fill="rgba(0,0,0,0.5)" /><text x="${x}" y="55" font-family="sans-serif" font-size="48" fill="yellow">V${i + 1}</text>`;
+        }).join("");
+
+        const svg = `
+          <svg width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <pattern id="grid" width="${w / 6}" height="${h / 10}" patternUnits="userSpaceOnUse">
+                <path d="M ${w / 6} 0 L 0 0 0 ${h / 10}" fill="none" stroke="rgba(255, 255, 0, 0.8)" stroke-width="2"/>
+              </pattern>
+            </defs>
+            <rect width="100%" height="100%" fill="url(#grid)" />
+            ${hLines}
+            ${vLines}
+          </svg>
+        `;
+
+        await sharp(reviewFrameRawPath)
+          .composite([{ input: Buffer.from(svg) }])
+          .toFile(reviewFramePath);
+      } catch (err) {
+        pipelineLogger.error("Failed to apply sharp SVG grid", err, "DirectUploader");
+        // Fallback to raw frame if sharp fails
+        fs.copyFileSync(reviewFrameRawPath, reviewFramePath);
+      }
 
       const truncate = (str: string) => {
         if (!str) return "";
