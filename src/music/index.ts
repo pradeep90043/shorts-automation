@@ -2,20 +2,31 @@ import { exec } from "child_process";
 import fs from "fs";
 import path from "path";
 import { IMusicService } from "../types";
-import { getTrackForEmotion, downloadAudio } from "../audio/emotionAudio";
-import type { Emotion } from "../audio/emotionAudio";
 import { extractVocals } from "../audio/vocalExtractor";
 import { config } from "../config";
 import { pipelineLogger } from "../utils/logger";
 
+const AUDIO_EXTENSIONS = [".mp3", ".wav", ".m4a", ".aac", ".ogg"];
+
+type Mood = "funny" | "sad" | "other";
+
+function normalizeMood(mood?: string): Mood {
+  if (mood === "funny" || mood === "sad") return mood;
+  return "other";
+}
+
 export class MusicService implements IMusicService {
+  /** Track used by the most recent addBackgroundMusic call */
+  public lastSelectedTrack: string | null = null;
+
   public async addBackgroundMusic(
     videoPath: string,
     musicFolder: string,
     outputPath: string,
-    mood?: "funny" | "sad" | "other",
-    emotion?: Emotion,
+    mood?: string,
     forceReplace: boolean = false,
+    excludeTrack?: string,
+    specificTrack?: string,
   ): Promise<string> {
     pipelineLogger.info(
       `Adding background music to video ${videoPath} (Mood: ${mood || "unspecified"})`,
@@ -23,67 +34,7 @@ export class MusicService implements IMusicService {
     );
 
     try {
-      let selectedTrack = "";
-      const targetEmotion: Emotion = emotion || (mood as Emotion) || 'energetic';
-      const freeTrack = getTrackForEmotion(targetEmotion);
-
-      try {
-        pipelineLogger.info(
-          `Fetching music from YouTube: ${freeTrack.title} (${freeTrack.videoId})`,
-          'MusicService',
-        );
-        selectedTrack = await downloadAudio(freeTrack);
-      } catch (downloadErr) {
-        pipelineLogger.warn(
-          `Failed to download YouTube track. Falling back to local music. Error: ${downloadErr instanceof Error ? downloadErr.message : downloadErr}`,
-          'MusicService',
-        );
-
-        // Fallback to local files
-        let audioTracks: string[] = [];
-        const foldersToTry = [musicFolder];
-
-        if (mood && ["funny", "sad", "other"].includes(mood)) {
-          foldersToTry.unshift(path.join(musicFolder, mood));
-          if (mood !== "other") {
-            foldersToTry.push(path.join(musicFolder, "other"));
-          }
-        } else {
-          foldersToTry.unshift(path.join(musicFolder, "other"));
-        }
-
-        for (const folder of foldersToTry) {
-          if (fs.existsSync(folder)) {
-            const files = fs
-              .readdirSync(folder)
-              .filter((file) => {
-                const ext = path.extname(file).toLowerCase();
-                return [".mp3", ".wav", ".m4a", ".aac", ".ogg"].includes(ext);
-              })
-              .map((file) => path.join(folder, file));
-
-            if (files.length > 0) {
-              audioTracks = files;
-              pipelineLogger.info(
-                `Found ${files.length} tracks in folder: ${folder}`,
-                "MusicService",
-              );
-              break;
-            }
-          }
-        }
-
-        if (audioTracks.length > 0) {
-          const randomIndex = Math.floor(Math.random() * audioTracks.length);
-          selectedTrack = audioTracks[randomIndex];
-          pipelineLogger.info(
-            `Randomly selected background track from local files: ${path.basename(selectedTrack)}`,
-            "MusicService",
-          );
-        } else {
-          throw new Error("No local or YouTube music available.");
-        }
-      }
+      this.lastSelectedTrack = null;
 
       // Helper functions to get video details
       // Helper to fetch video duration (same as before)
@@ -134,6 +85,13 @@ const getVideoDuration = (pathStr: string): Promise<number> => {
         vocalOnlyPath = await extractVocals(videoPath, tempDir);
       }
 
+      const selectedTrack = specificTrack || this.selectLocalTrack(
+        musicFolder,
+        mood,
+        excludeTrack,
+      );
+      this.lastSelectedTrack = selectedTrack;
+
       const fadeDuration = 1.5; // seconds
       const fadeOutStart = duration - fadeDuration;
       const volume = config.rendering.musicVolume;
@@ -142,7 +100,7 @@ const getVideoDuration = (pathStr: string): Promise<number> => {
       let filterComplex = "";
       let cmd = "";
 
-      if (forceReplace || !hasAudio) {
+      if (!hasAudio) {
         filterComplex = `[1:a]volume=${volume},afade=t=in:ss=0:d=${fadeDuration},afade=t=out:st=${fadeOutStart}:d=${fadeDuration}[a]`;
         cmd = `ffmpeg -y -i "${videoPath}" -ss ${startOffset} -i "${selectedTrack}" -filter_complex "${filterComplex}" -map 0:v -map "[a]" -vcodec libx264 -preset fast -crf 23 -pix_fmt yuv420p -c:a aac -shortest "${outputPath}"`;
       } else if (vocalOnlyPath) {
@@ -151,18 +109,15 @@ const getVideoDuration = (pathStr: string): Promise<number> => {
           `[1:a]volume=${volume},afade=t=in:ss=0:d=${fadeDuration},afade=t=out:st=${fadeOutStart}:d=${fadeDuration}[bg];` +
           `[bg][2:a]sidechaincompress=threshold=0.08:ratio=12:attack=20:release=350[bg_ducked];` +
           `[2:a][bg_ducked]amix=inputs=2:duration=first:dropout_transition=2[a]`;
-        
+
         cmd = `ffmpeg -y -i "${videoPath}" -ss ${startOffset} -i "${selectedTrack}" -i "${vocalOnlyPath}" -filter_complex "${filterComplex}" -map 0:v -map "[a]" -vcodec libx264 -preset fast -crf 23 -pix_fmt yuv420p -c:a aac -shortest "${outputPath}"`;
-      } else if (hasAudio) {
+      } else {
         // Apply sidechain compression to automatically duck background music when voiceover speech is detected
         filterComplex =
           `[1:a]volume=${volume},afade=t=in:ss=0:d=${fadeDuration},afade=t=out:st=${fadeOutStart}:d=${fadeDuration}[bg];` +
           `[bg][0:a]sidechaincompress=threshold=0.08:ratio=12:attack=20:release=350[bg_ducked];` +
           `[0:a][bg_ducked]amix=inputs=2:duration=first:dropout_transition=2[a]`;
-        
-        cmd = `ffmpeg -y -i "${videoPath}" -ss ${startOffset} -i "${selectedTrack}" -filter_complex "${filterComplex}" -map 0:v -map "[a]" -vcodec libx264 -preset fast -crf 23 -pix_fmt yuv420p -c:a aac -shortest "${outputPath}"`;
-      } else {
-        filterComplex = `[1:a]volume=${volume},afade=t=in:ss=0:d=${fadeDuration},afade=t=out:st=${fadeOutStart}:d=${fadeDuration}[a]`;
+
         cmd = `ffmpeg -y -i "${videoPath}" -ss ${startOffset} -i "${selectedTrack}" -filter_complex "${filterComplex}" -map 0:v -map "[a]" -vcodec libx264 -preset fast -crf 23 -pix_fmt yuv420p -c:a aac -shortest "${outputPath}"`;
       }
 
@@ -198,5 +153,64 @@ const getVideoDuration = (pathStr: string): Promise<number> => {
       );
       throw err;
     }
+  }
+
+  /**
+   * Pick a random track from the local library, preferring the mood folder,
+   * then "other", then loose files at the library root. `excludeTrack` (the
+   * previously used track) is skipped whenever another candidate exists so
+   * that "Replace Music" always produces an audible change.
+   */
+  public selectLocalTrack(
+    musicFolder: string,
+    mood?: string,
+    excludeTrack?: string,
+  ): string {
+    const normalizedMood = normalizeMood(mood);
+    const foldersToTry = [path.join(musicFolder, normalizedMood)];
+    if (normalizedMood !== "other") {
+      foldersToTry.push(path.join(musicFolder, "other"));
+    }
+    foldersToTry.push(musicFolder);
+
+    let audioTracks: string[] = [];
+    for (const folder of foldersToTry) {
+      if (!fs.existsSync(folder)) continue;
+      const files = fs
+        .readdirSync(folder)
+        .filter((file) =>
+          AUDIO_EXTENSIONS.includes(path.extname(file).toLowerCase()),
+        )
+        .map((file) => path.join(folder, file));
+
+      if (files.length > 0) {
+        audioTracks = files;
+        pipelineLogger.info(
+          `Found ${files.length} tracks in folder: ${folder}`,
+          "MusicService",
+        );
+        break;
+      }
+    }
+
+    if (audioTracks.length === 0) {
+      throw new Error(`No music tracks found in ${musicFolder}`);
+    }
+
+    if (excludeTrack && audioTracks.length > 1) {
+      const excludeName = path.basename(excludeTrack);
+      const filtered = audioTracks.filter(
+        (track) => path.basename(track) !== excludeName,
+      );
+      if (filtered.length > 0) audioTracks = filtered;
+    }
+
+    const selected =
+      audioTracks[Math.floor(Math.random() * audioTracks.length)];
+    pipelineLogger.info(
+      `Selected background track: ${path.basename(selected)}`,
+      "MusicService",
+    );
+    return selected;
   }
 }
