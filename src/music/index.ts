@@ -144,7 +144,7 @@ const getVideoDuration = (pathStr: string): Promise<number> => {
 
       if (forceReplace || !hasAudio) {
         filterComplex = `[1:a]volume=${volume},afade=t=in:ss=0:d=${fadeDuration},afade=t=out:st=${fadeOutStart}:d=${fadeDuration}[a]`;
-        cmd = `ffmpeg -y -i "${videoPath}" -ss ${startOffset} -i "${selectedTrack}" -filter_complex "${filterComplex}" -map 0:v -map "[a]" -c:v copy -c:a aac -shortest "${outputPath}"`;
+        cmd = `ffmpeg -y -i "${videoPath}" -ss ${startOffset} -i "${selectedTrack}" -filter_complex "${filterComplex}" -map 0:v -map "[a]" -vcodec libx264 -preset fast -crf 23 -pix_fmt yuv420p -c:a aac -shortest "${outputPath}"`;
       } else if (vocalOnlyPath) {
         // [0:v] video, [1:a] bg music, [2:a] vocals
         filterComplex =
@@ -152,7 +152,7 @@ const getVideoDuration = (pathStr: string): Promise<number> => {
           `[bg][2:a]sidechaincompress=threshold=0.08:ratio=12:attack=20:release=350[bg_ducked];` +
           `[2:a][bg_ducked]amix=inputs=2:duration=first:dropout_transition=2[a]`;
         
-        cmd = `ffmpeg -y -i "${videoPath}" -ss ${startOffset} -i "${selectedTrack}" -i "${vocalOnlyPath}" -filter_complex "${filterComplex}" -map 0:v -map "[a]" -c:v copy -c:a aac -shortest "${outputPath}"`;
+        cmd = `ffmpeg -y -i "${videoPath}" -ss ${startOffset} -i "${selectedTrack}" -i "${vocalOnlyPath}" -filter_complex "${filterComplex}" -map 0:v -map "[a]" -vcodec libx264 -preset fast -crf 23 -pix_fmt yuv420p -c:a aac -shortest "${outputPath}"`;
       } else if (hasAudio) {
         // Apply sidechain compression to automatically duck background music when voiceover speech is detected
         filterComplex =
@@ -160,10 +160,10 @@ const getVideoDuration = (pathStr: string): Promise<number> => {
           `[bg][0:a]sidechaincompress=threshold=0.08:ratio=12:attack=20:release=350[bg_ducked];` +
           `[0:a][bg_ducked]amix=inputs=2:duration=first:dropout_transition=2[a]`;
         
-        cmd = `ffmpeg -y -i "${videoPath}" -ss ${startOffset} -i "${selectedTrack}" -filter_complex "${filterComplex}" -map 0:v -map "[a]" -c:v copy -c:a aac -shortest "${outputPath}"`;
+        cmd = `ffmpeg -y -i "${videoPath}" -ss ${startOffset} -i "${selectedTrack}" -filter_complex "${filterComplex}" -map 0:v -map "[a]" -vcodec libx264 -preset fast -crf 23 -pix_fmt yuv420p -c:a aac -shortest "${outputPath}"`;
       } else {
         filterComplex = `[1:a]volume=${volume},afade=t=in:ss=0:d=${fadeDuration},afade=t=out:st=${fadeOutStart}:d=${fadeDuration}[a]`;
-        cmd = `ffmpeg -y -i "${videoPath}" -ss ${startOffset} -i "${selectedTrack}" -filter_complex "${filterComplex}" -map 0:v -map "[a]" -c:v copy -c:a aac -shortest "${outputPath}"`;
+        cmd = `ffmpeg -y -i "${videoPath}" -ss ${startOffset} -i "${selectedTrack}" -filter_complex "${filterComplex}" -map 0:v -map "[a]" -vcodec libx264 -preset fast -crf 23 -pix_fmt yuv420p -c:a aac -shortest "${outputPath}"`;
       }
 
       pipelineLogger.info(

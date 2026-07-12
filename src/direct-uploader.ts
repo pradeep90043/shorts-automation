@@ -4,6 +4,7 @@ import sharp from "sharp";
 import { exec } from "child_process";
 import { config } from "./config";
 import { VideoRenderer, calculateVideoCrop } from "./renderer";
+import { OcrService } from "./ocr";
 import { MusicService } from "./music";
 import { YouTubeService, UploadResult } from "./youtube";
 import { InstagramPublisher, InstagramUploadResult } from "./instagram/publisher";
@@ -111,7 +112,7 @@ export class DirectUploader {
     );
   }
 
-  // ── Gemini/FreeLLMAPI vision → YouTube metadata ────────────────────────────
+  // ── FreeLLMAPI vision → YouTube metadata ────────────────────────────
 
   private async getSmallBase64Image(
     imagePath: string,
@@ -334,6 +335,21 @@ Adapt both Task 1 (bounding boxes / content coordinates) and Task 2 (metadata ti
 Important:
 - If the user request implies cropping, showing the main content only, removing the outer Instagram/TikTok chrome (likes, comments, header, footer), or focusing on the post itself, you MUST identify the exact boundaries of the central post image/media box as the "main_post_content" zone. Do not include the header or footer chrome in this zone.
 - If the user asks to "change title to X", make sure the metadata title is X. If they ask to "make title more funny", rewrite the title to be funny.`;
+
+        if (context.previousMetadata) {
+          prompt += `\n\nCURRENT METADATA (modify this based on the user's instruction, otherwise preserve it as much as possible):
+Title: ${context.previousMetadata.title}
+Description: ${context.previousMetadata.description}
+Tags: ${context.previousMetadata.tags?.join(", ")}`;
+        }
+      } else if (context.captionMetadata) {
+        prompt += `\n\nUSER PROVIDED CAPTION (use this as the primary source for the title and description):
+Title: ${context.captionMetadata.title}
+Description: ${context.captionMetadata.description}`;
+      }
+
+      if (context.ocr?.text && context.ocr.text.trim().length > 10) {
+        prompt += `\n\nOCR TEXT EXTRACTED FROM IMAGE:\n"${context.ocr.text}"\nPlease use this text for context when generating the metadata title and description.\n`;
       }
 
       let raw = "";
@@ -548,7 +564,7 @@ Important:
           this.telegram
             .sendMessage(
               chatId,
-              `⚠️ *AI Vision Quota Error:* Your Gemini API key has exceeded its daily free tier quota.\n\n` +
+              `⚠️ *AI Vision Quota Error:* Your FreeLLMAPI key has exceeded its quota.\n\n` +
                 `*Details:* \`Free tier daily request limit exceeded.\`\n\n` +
                 `_Fallback metadata will be used and watermark/profile blurring will be skipped._`,
               messageId,
@@ -566,19 +582,28 @@ Important:
         }
       }
 
-      context.metadata = await this.generateTextMetadataFallback(false, context.ocr?.text);
+      context.metadata = await this.generateTextMetadataFallback(false, context);
       context.brandingDetection = { detected: false, zones: [] };
     }
   }
 
-  private async generateTextMetadataFallback(viral: boolean, ocrText?: string): Promise<VideoMetadata> {
+  private async generateTextMetadataFallback(viral: boolean, context?: PipelineContext): Promise<VideoMetadata> {
     try {
       if (!this.freellmapi) return this.fallbackMetadata();
       pipelineLogger.info("Attempting text-only AI metadata fallback...", "DirectUploader");
       
-      const contentContext = ocrText && ocrText.trim().length > 10
-        ? `Here is the text extracted from the image: "${ocrText}". Use this content to generate highly relevant metadata.`
-        : `Generate generic tech-related metadata.`;
+      let contentContext = context?.ocr?.text && context.ocr.text.trim().length > 10
+        ? `Here is the text extracted from the image: "${context.ocr.text}". Use this content to generate highly relevant metadata.`
+        : `Generate a generic, catchy title and description for a short video. Keep it extremely broad (e.g. "You won't believe this!", "Wait for it..."). DO NOT mention programming, coding, or specific tech topics. DO NOT hallucinate any subjects.`;
+
+      if (context?.userPrompt) {
+        contentContext += `\n\nThe user wants this adjustment: "${context.userPrompt}".\n`;
+        if (context.previousMetadata) {
+          contentContext += `Current Metadata: Title: ${context.previousMetadata.title}, Description: ${context.previousMetadata.description}\n`;
+        }
+      } else if (context?.captionMetadata) {
+        contentContext += `\n\nUser Provided Caption: Title: ${context.captionMetadata.title}, Description: ${context.captionMetadata.description}\nUse this as the primary source.\n`;
+      }
 
       const prompt = viral
         ? `You are a viral YouTube Shorts growth hacker for a tech channel "CodeOrCap". ${contentContext} Generate the most scroll-stopping, curiosity-gap, high-CTR metadata possible based on the text. TITLE Max 65 chars. DESCRIPTION 180-300 words. Return ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate"}}`
@@ -602,12 +627,12 @@ Important:
     }
   }
 
-  private async generateMetadata(imagePath: string): Promise<VideoMetadata> {
+  private async generateMetadata(imagePath: string, context?: PipelineContext): Promise<VideoMetadata> {
     pipelineLogger.info("Generating metadata via AI vision…", "DirectUploader");
 
     const { base64, mimeType } = await this.getSmallBase64Image(imagePath);
 
-    const prompt = `You are a viral YouTube Shorts strategist for a tech/programming channel called "CodeOrCap".
+    let prompt = `You are a viral YouTube Shorts strategist for a tech/programming channel called "CodeOrCap".
 
 Analyze this image carefully — read all visible text, identify the topic, tools, languages, or concepts shown. Check the authenticity and correctness of the information shown.
 
@@ -619,9 +644,22 @@ Rules:
 - tags: 10-12 specific tags covering the topic, tools, and audience (no spaces in tags).
 - mood: Determine the emotional tone or theme of the content. Choose exactly one of: "funny", "sad", or "other" (for general, educational, motivational, or tech tips).
 - factCheckScore: (1-10) How technically accurate the image content is.
-- verdict: A short string summarizing the authenticity (e.g. "Accurate", "False - Syntax Error", "Misleading", "Meme/Joke").
+- verdict: A short string summarizing the authenticity (e.g. "Accurate", "False - Syntax Error", "Misleading", "Meme/Joke").`;
 
-Return ONLY a raw JSON object — no markdown, no explanation:
+    if (context?.userPrompt) {
+      prompt += `\n\nThe user wants this adjustment: "${context.userPrompt}".\n`;
+      if (context.previousMetadata) {
+        prompt += `Current Metadata: Title: ${context.previousMetadata.title}, Description: ${context.previousMetadata.description}\n`;
+      }
+    } else if (context?.captionMetadata) {
+      prompt += `\n\nUser Provided Caption: Title: ${context.captionMetadata.title}, Description: ${context.captionMetadata.description}\nUse this as the primary source.\n`;
+    }
+
+    if (context?.ocr?.text && context.ocr.text.trim().length > 10) {
+      prompt += `\n\nOCR TEXT EXTRACTED FROM IMAGE:\n"${context.ocr.text}"\nPlease use this text for context when generating the metadata title and description.\n`;
+    }
+
+    prompt += `\nReturn ONLY a raw JSON object — no markdown, no explanation:
 {"title":"...","description":"...","tags":["...","..."],"mood":"funny" | "sad" | "other", "factCheckScore": 10, "verdict": "..."}`;
 
     for (let attempt = 0; attempt < 8; attempt++) {
@@ -664,11 +702,11 @@ Return ONLY a raw JSON object — no markdown, no explanation:
             `AI metadata failed: ${msg} — using text-only fallback`,
             "DirectUploader",
           );
-          return await this.generateTextMetadataFallback(false);
+          return await this.generateTextMetadataFallback(false, context);
         }
       }
     }
-    return await this.generateTextMetadataFallback(false);
+    return await this.generateTextMetadataFallback(false, context);
   }
 
   private fallbackMetadata(): VideoMetadata {
@@ -691,12 +729,13 @@ Return ONLY a raw JSON object — no markdown, no explanation:
 
   private async generateViralMetadata(
     imagePath: string,
+    context?: PipelineContext
   ): Promise<VideoMetadata> {
     pipelineLogger.info("Generating viral metadata via AI…", "DirectUploader");
 
     const { base64, mimeType } = await this.getSmallBase64Image(imagePath);
 
-    const prompt = `You are an aggressive viral YouTube Shorts growth hacker for a tech channel called "CodeOrCap".
+    let prompt = `You are an aggressive viral YouTube Shorts growth hacker for a tech channel called "CodeOrCap".
 
 Analyze this image and generate the most scroll-stopping, curiosity-gap, high-CTR metadata possible.
 
@@ -706,9 +745,22 @@ KEYWORDS: Provide 1 primary keyword, 5 secondary keywords, 15 tags, and 8-12 has
 THUMBNAIL: Max 5 words, highly clickable, curiosity driven.
 FILENAME: SEO-friendly filename (e.g., viral-tech-video-2026.mp4).
 MOOD: Determine emotional tone: "funny", "sad", or "other".
-FACT CHECK: Provide a factCheckScore (1-10 accuracy) and a short verdict ("Accurate", "False", etc).
+FACT CHECK: Provide a factCheckScore (1-10 accuracy) and a short verdict ("Accurate", "False", etc).`;
 
-Return ONLY raw JSON — no markdown:
+    if (context?.userPrompt) {
+      prompt += `\n\nThe user wants this adjustment: "${context.userPrompt}".\n`;
+      if (context.previousMetadata) {
+        prompt += `Current Metadata: Title: ${context.previousMetadata.title}, Description: ${context.previousMetadata.description}\n`;
+      }
+    } else if (context?.captionMetadata) {
+      prompt += `\n\nUser Provided Caption: Title: ${context.captionMetadata.title}, Description: ${context.captionMetadata.description}\nUse this as the primary source.\n`;
+    }
+
+    if (context?.ocr?.text && context.ocr.text.trim().length > 10) {
+      prompt += `\n\nOCR TEXT EXTRACTED FROM IMAGE:\n"${context.ocr.text}"\nPlease use this text for context when generating the metadata title and description.\n`;
+    }
+
+    prompt += `\nReturn ONLY raw JSON — no markdown:
 {"title":"...","description":"...","primaryKeyword":"...","secondaryKeywords":["..."],"tags":["..."],"hashtags":["..."],"thumbnailText":"...","filename":"...","mood":"funny" | "sad" | "other","factCheckScore":10,"verdict":"..."}`;
 
     for (let attempt = 0; attempt < 8; attempt++) {
@@ -753,11 +805,11 @@ Return ONLY raw JSON — no markdown:
             `AI viral metadata failed: ${msg} — using text-only fallback`,
             "DirectUploader"
           );
-          return await this.generateTextMetadataFallback(true);
+          return await this.generateTextMetadataFallback(true, context);
         }
       }
     }
-    return await this.generateTextMetadataFallback(true);
+    return await this.generateTextMetadataFallback(true, context);
   }
 
   // ── Upload to all channels ─────────────────────────────────────────────────
@@ -839,10 +891,18 @@ Return ONLY raw JSON — no markdown:
       // Instead of deleting the review video, keep it for manual download.
       // Also send the final video with title and description so the user can retrieve metadata.
       try {
+        const compressedVideoPath = path.join(path.dirname(finalVideoPath), "video_compressed.mp4");
+        const videoToSend = fs.existsSync(compressedVideoPath) ? compressedVideoPath : finalVideoPath;
+
+        let caption = `*Title:* ${metadata.title}\n*Description:* ${metadata.description}`;
+        if (caption.length > 1000) {
+          caption = caption.substring(0, 1000) + '...';
+        }
+
         await this.telegram.sendRawVideo(
           chatId,
-          finalVideoPath,
-          `*Title:* ${metadata.title}\n*Description:* ${metadata.description}`,
+          videoToSend,
+          caption,
         );
       } catch (sendErr) {
         pipelineLogger.error('Failed to send final video with metadata', sendErr, 'DirectUploader');
@@ -1076,8 +1136,8 @@ Return ONLY raw JSON — no markdown:
     );
 
     const generate = viral
-      ? this.generateViralMetadata(pending.originalImagePath)
-      : this.generateMetadata(pending.originalImagePath);
+      ? this.generateViralMetadata(pending.originalImagePath, pending.context)
+      : this.generateMetadata(pending.originalImagePath, pending.context);
 
     generate
       .then(async (metadata) => {
@@ -1322,6 +1382,18 @@ Return ONLY raw JSON — no markdown:
         } catch (err) {
           pipelineLogger.warn(
             `Failed to analyze image: ${err instanceof Error ? err.message : err}`,
+            "DirectUploader",
+          );
+        }
+      }
+      // Run OCR before Vision API so that text is available for fallback metadata generation
+      if (!context.ocr && fs.existsSync(originalImagePath)) {
+        try {
+          const ocrService = new OcrService();
+          context.ocr = await ocrService.extractText(originalImagePath);
+        } catch (err) {
+          pipelineLogger.warn(
+            `Early OCR extraction failed: ${err instanceof Error ? err.message : err}`,
             "DirectUploader",
           );
         }
@@ -2037,7 +2109,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
           }
 
           // ── 5b. Post-render Visual Validation Pass ─────────────────────────
-          // Extract the first frame of the rendered video and ask Gemini Vision
+          // Extract the first frame of the rendered video and ask AI Vision
           // whether the caption is covering important scene content. If yes,
           // drop the top candidate, try the next one, and re-render (max 2 retries).
           if (this.freellmapi && (context.safeAreaCandidates?.length ?? 0) > 1) {
@@ -2360,6 +2432,25 @@ Set all booleans carefully and include a brief explanation in "reason".`;
 
 
       // 5 — Send video to Telegram for review
+      let reviewVideoPath = finalVideoPath;
+      const stats = fs.statSync(finalVideoPath);
+      // Telegram has a 50MB limit. Compress if > 45MB to be safe.
+      if (stats.size > 45 * 1024 * 1024) {
+        pipelineLogger.info("Video exceeds 45MB. Compressing for Telegram...", "DirectUploader");
+        reviewVideoPath = path.join(tempDir, "video_compressed.mp4");
+        await new Promise<void>((resolve, reject) => {
+          const ffmpegCmd = `${config.binaries.ffmpeg} -y -i "${finalVideoPath}" -vcodec libx264 -crf 28 -preset fast -c:a copy "${reviewVideoPath}"`;
+          exec(ffmpegCmd, (error) => {
+            if (error) {
+              pipelineLogger.error("Failed to compress video for Telegram", error, "DirectUploader");
+              reject(error);
+            } else {
+              resolve();
+            }
+          });
+        });
+      }
+
       const caption =
         `📋 *Review your Short*\n\n` +
         `*Title:* ${escapeMarkdown(metadata.title)}\n\n` +
@@ -2368,7 +2459,7 @@ Set all booleans carefully and include a brief explanation in "reason".`;
 
       const reviewMessageId = await this.telegram.sendVideoForReview(
         chatId,
-        finalVideoPath,
+        reviewVideoPath,
         caption,
         id,
         messageId,
@@ -2486,6 +2577,7 @@ Set all booleans carefully and include a brief explanation in "reason".`;
 
     // 4. Update context with user prompt, and clear cached metadata/branding to force regeneration
     const context = pendingUpload.context;
+    context.previousMetadata = context.metadata;
     context.userPrompt = promptText;
     context.metadata = undefined;
     context.brandingDetection = undefined;

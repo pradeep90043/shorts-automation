@@ -10,6 +10,8 @@ import {
   isInstagramReelUrl,
   extractInstagramUrl,
   downloadReelFrame,
+  isTikTokUrl,
+  extractTikTokUrl,
 } from "../instagram";
 
 const streamPipeline = promisify(pipeline);
@@ -438,18 +440,9 @@ export class TelegramService implements ITelegramService {
     this.bot.command("status", async (ctx) => {
       const msg = await ctx.reply("⏳ Checking API Statuses...");
       
-      let geminiStatus = "🔴 Offline";
       let freellmStatus = "🔴 Offline";
       let ytStatus = "🔴 Offline";
       let igStatus = "🔴 Offline";
-
-      // Check Gemini
-      if (config.ai.geminiApiKey) {
-        try {
-          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${config.ai.geminiApiKey}`);
-          geminiStatus = res.ok ? "🟢 Online" : `🔴 Error ${res.status}`;
-        } catch(e) { geminiStatus = "🔴 Network Error"; }
-      } else { geminiStatus = "⚪️ Not Configured"; }
 
       // Check FreeLLMAPI
       if (config.ai.freellmapiKey) {
@@ -494,7 +487,6 @@ export class TelegramService implements ITelegramService {
         msg.message_id,
         undefined,
         `📊 *API Status Report*\n\n` +
-        `*Gemini AI:* ${geminiStatus}\n` +
         `*FreeLLMAPI:* ${freellmStatus}\n` +
         `*YouTube API:* ${ytStatus}\n` +
         `*Instagram API:* ${igStatus}\n`,
@@ -685,9 +677,11 @@ export class TelegramService implements ITelegramService {
         }
 
         const isReel = isInstagramReelUrl(text);
+        const isTikTok = isTikTokUrl(text);
+        const isSocialVideo = isReel || isTikTok;
 
-        // 1. Check if this is an interactive text prompt for a pending review (only if it's not a new Reel link)
-        if (!isReel && this.textPromptCallback) {
+        // 1. Check if this is an interactive text prompt for a pending review (only if it's not a new Reel/TikTok link)
+        if (!isSocialVideo && this.textPromptCallback) {
           const handled = await this.textPromptCallback(
             ctx.chat.id,
             text,
@@ -698,16 +692,17 @@ export class TelegramService implements ITelegramService {
           }
         }
 
-        // 2. Fallback to Instagram Reel Url detection
-        if (!isReel) {
-          // Not an Instagram link — ignore (or give a hint)
+        // 2. Fallback to Social Video Url detection
+        if (!isSocialVideo) {
+          // Not a supported link — ignore (or give a hint)
           ctx.reply(
-            "📸 Send a screenshot image or an Instagram reel link to start the pipeline.",
+            "📸 Send a screenshot image, an Instagram reel link, or a TikTok link to start the pipeline.",
           );
           return;
         }
 
-        const reelUrl = extractInstagramUrl(text)!;
+        const videoUrl = isReel ? extractInstagramUrl(text)! : extractTikTokUrl(text)!;
+        const platformName = isReel ? "Instagram reel" : "TikTok video";
         const messageId = ctx.message.message_id;
         const chatId = ctx.chat.id;
 
@@ -717,19 +712,19 @@ export class TelegramService implements ITelegramService {
 
         await this.sendMessage(
           chatId,
-          `🎬 *Instagram reel detected!*\n\`${reelUrl}\`\n\nDownloading & extracting frame...\n\`ID: ${id}\``,
+          `🎬 *${platformName} detected!*\n\`${videoUrl}\`\n\nDownloading & extracting frame...\n\`ID: ${id}\``,
           messageId,
         );
 
         pipelineLogger.info(
-          `Instagram reel received: ${reelUrl} → Gen ID: ${id}`,
+          `${platformName} received: ${videoUrl} → Gen ID: ${id}`,
           "Telegram",
         );
 
         // Detach from the Telegraf handler immediately — yt-dlp can take 2+ minutes
         // and Telegraf has a 90s timeout that crashes the process if we await here.
         this.processInstagramReel(
-          reelUrl,
+          videoUrl,
           tempGenDir,
           id,
           chatId,
@@ -774,7 +769,7 @@ export class TelegramService implements ITelegramService {
       pipelineLogger.error("Instagram download failed", err, "Instagram");
       await this.sendMessage(
         chatId,
-        `❌ *Failed to download reel*\n\`${msg.slice(0, 300)}\`\n\nMake sure you're logged into Instagram in Chrome and the reel is public.`,
+        `❌ *Failed to download video*\n\`${msg.slice(0, 300)}\`\n\nMake sure the reel/video is public. (For Instagram, you must be logged into Chrome).`,
         messageId,
       );
       return;

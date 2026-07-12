@@ -20,12 +20,23 @@ const COOKIES_FILE = "/tmp/instagram_cookies.txt";
 const INSTAGRAM_REGEX =
   /https?:\/\/(?:www\.)?instagram\.com\/(?:reel|p|tv|stories\/[^/]+)\/([A-Za-z0-9_-]+)\/?/;
 
+const TIKTOK_REGEX = /https?:\/\/(?:www\.)?tiktok\.com\/.*\/video\/(\d+)|https?:\/\/vm\.tiktok\.com\/([A-Za-z0-9]+)\/?/;
+
 export function isInstagramReelUrl(text: string): boolean {
   return INSTAGRAM_REGEX.test(text);
 }
 
+export function isTikTokUrl(text: string): boolean {
+  return TIKTOK_REGEX.test(text);
+}
+
 export function extractInstagramUrl(text: string): string | null {
   const m = text.match(INSTAGRAM_REGEX);
+  return m ? m[0] : null;
+}
+
+export function extractTikTokUrl(text: string): string | null {
+  const m = text.match(TIKTOK_REGEX);
   return m ? m[0] : null;
 }
 
@@ -95,6 +106,24 @@ export interface DownloadReelResult {
 }
 
 /**
+ * Download a TikTok video using the free TikWM API.
+ */
+async function downloadTikTokViaTikwm(url: string, destDir: string): Promise<string> {
+  const apiUrl = `https://www.tikwm.com/api/?url=${encodeURIComponent(url)}`;
+  const res = await fetch(apiUrl);
+  if (!res.ok) throw new Error(`TikWM API failed with status ${res.status}`);
+  const json = await res.json() as any;
+  if (json.code !== 0 || !json.data?.play) {
+    throw new Error(`TikWM API error: ${json.msg || "No video URL found"}`);
+  }
+  
+  const videoUrl = json.data.play;
+  const destPath = path.join(destDir, "reel_video.mp4");
+  await downloadFileFromUrl(videoUrl, destPath);
+  return destPath;
+}
+
+/**
  * Download any Instagram URL (reel, post, IGTV, story) and return a JPEG frame.
  * - Video content → download mp4, extract frame at 2s
  * - Image post     → download image directly
@@ -106,30 +135,37 @@ export async function downloadReelFrame(
 ): Promise<DownloadReelResult> {
   const framePath = path.join(destDir, "original.jpg");
 
-  pipelineLogger.info(`Downloading Instagram content: ${url}`, "Instagram");
+  pipelineLogger.info(`Downloading content: ${url}`, "Downloader");
 
   // Export fresh cookies from Chrome (handles macOS keychain encryption)
-  await exportCookies();
+  if (url.includes("instagram.com")) {
+    await exportCookies();
+  }
 
-  // --- Step 1: try yt-dlp (video download + frame extraction) ---
+  // --- Step 1: Download video (TikTok vs yt-dlp) ---
   try {
     const videoTemplate = path.join(destDir, "reel_video.%(ext)s");
 
-    await runCommand(
-      YTDLP,
-      [
-        "--no-playlist",
-        "--cookies",
-        COOKIES_FILE,
-        "--playlist-items",
-        "1",
-        "-o",
-        videoTemplate,
-        "--no-warnings",
-        url,
-      ],
-      "yt-dlp",
-    );
+    if (url.includes("tiktok.com")) {
+      pipelineLogger.info("Attempting download via TikWM API...", "TikTok");
+      await downloadTikTokViaTikwm(url, destDir);
+    } else {
+      await runCommand(
+        YTDLP,
+        [
+          "--no-playlist",
+          "--cookies",
+          COOKIES_FILE,
+          "--playlist-items",
+          "1",
+          "-o",
+          videoTemplate,
+          "--no-warnings",
+          url,
+        ],
+        "yt-dlp",
+      );
+    }
 
     const videoFile = fs
       .readdirSync(destDir)
@@ -182,9 +218,13 @@ export async function downloadReelFrame(
     }
   } catch (err) {
     pipelineLogger.warn(
-      `yt-dlp failed (${err instanceof Error ? err.message.slice(0, 120) : err}), falling back to Puppeteer extraction`,
-      "Instagram",
+      `yt-dlp failed (${err instanceof Error ? err.message.slice(0, 120) : err})`,
+      "Downloader",
     );
+    if (!url.includes("instagram.com")) {
+      throw err; // Do not fallback to Puppeteer for TikTok/other
+    }
+    pipelineLogger.info("Falling back to Puppeteer extraction", "Instagram");
   }
 
   // --- Step 2: Puppeteer fallback — attempt to extract video src or screenshot the post ---

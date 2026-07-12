@@ -29,7 +29,7 @@ export function getTrackForEmotion(emotion: Emotion) {
       { title: 'Sneaky Snitch', videoId: '-SjOkb3kVgI' },
     ],
     other: [
-      { title: 'Alan Walker - Fade (NCS)', videoId: 'bM7SZ5SBzyY' },
+      { title: 'Disfigure - Blank (NCS)', videoId: 'p7ZsBPK656s' },
       { title: 'Ahrix - Nova', videoId: 'FjNdYp2gXRY' },
     ],
   };
