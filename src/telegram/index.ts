@@ -3,7 +3,7 @@ import fs from "fs";
 import path from "path";
 import { pipeline } from "stream";
 import { promisify } from "util";
-import { config } from "../config";
+import { config, ChannelProfile } from "../config";
 import { ITelegramService, PipelineContext, TelegramMetadata, AssetKind } from "../types";
 import { pipelineLogger } from "../utils/logger";
 import {
@@ -27,6 +27,7 @@ export function escapeMarkdown(text: string): string {
 
 export class TelegramService implements ITelegramService {
   private bot: Telegraf;
+  public readonly profile: ChannelProfile;
   private pipelineTrigger?: (context: PipelineContext) => Promise<void>;
   private approvalTrigger?: (genId: string) => Promise<void>;
   private reviewCallback?: (
@@ -44,13 +45,14 @@ export class TelegramService implements ITelegramService {
     id: string,
   ) => void;
 
-  constructor() {
-    if (!config.telegramToken) {
+  constructor(profile: ChannelProfile = config.profiles[0]) {
+    if (!profile || !profile.telegramToken) {
       throw new Error(
-        "TELEGRAM_BOT_TOKEN environment variable is not defined.",
+        "No Telegram bot token configured. Set TELEGRAM_BOT_TOKEN (or <PREFIX>_TELEGRAM_BOT_TOKEN_LOCAL/_PROD) in .env.",
       );
     }
-    this.bot = new Telegraf(config.telegramToken);
+    this.profile = profile;
+    this.bot = new Telegraf(profile.telegramToken);
     this.setupHandlers();
   }
 
@@ -214,7 +216,11 @@ export class TelegramService implements ITelegramService {
   }
 
   /**
-   * Update the video of the review message (e.g. after replacing music)
+   * Update the video of the review message (e.g. after replacing music).
+   * Telegram sometimes rejects editMessageMedia (e.g. message too old or
+   * media unchanged) — in that case send a fresh review message instead of
+   * failing silently. Returns the message_id that now carries the review
+   * keyboard (the original one, or the fresh message on fallback).
    */
   public async editReviewVideo(
     chatId: number,
@@ -222,7 +228,7 @@ export class TelegramService implements ITelegramService {
     videoPath: string,
     caption: string,
     id: string,
-  ): Promise<void> {
+  ): Promise<number> {
     try {
       await this.bot.telegram.editMessageMedia(
         chatId,
@@ -238,11 +244,17 @@ export class TelegramService implements ITelegramService {
           reply_markup: this.reviewKeyboard(id),
         } as any
       );
-    } catch (err) {
-      pipelineLogger.warn(
-        `Failed to edit message media: ${err instanceof Error ? err.message : err}`,
+      pipelineLogger.info(
+        `Review message ${messageId} media updated successfully`,
         "Telegram",
       );
+      return messageId;
+    } catch (err) {
+      pipelineLogger.warn(
+        `Failed to edit message media, sending a fresh review message instead: ${err instanceof Error ? err.message : err}`,
+        "Telegram",
+      );
+      return this.sendVideoForReview(chatId, videoPath, caption, id, messageId);
     }
   }
 
@@ -306,7 +318,7 @@ export class TelegramService implements ITelegramService {
   public async start(): Promise<void> {
     this.bot.launch();
     pipelineLogger.info(
-      "Telegram Bot successfully started and listening for messages.",
+      `Telegram Bot [${this.profile.brandName}] successfully started and listening for messages.`,
       "Telegram",
     );
 
@@ -374,7 +386,7 @@ export class TelegramService implements ITelegramService {
     // Start command
     this.bot.start((ctx) => {
       ctx.reply(
-        "🤖 *CodeOrCap Shorts Automation Bot*\n\n" +
+        `🤖 *${this.profile.brandName} Shorts Automation Bot*\n\n` +
           "Send me any screenshot or image (PNG, JPG, JPEG), and I will:\n" +
           "1. Detect and attempt branding removal\n" +
           "2. Run OCR to parse contents\n" +
@@ -454,12 +466,13 @@ export class TelegramService implements ITelegramService {
         } catch(e) { freellmStatus = "🔴 Network Error"; }
       } else { freellmStatus = "⚪️ Not Configured"; }
 
-      // Check YouTube
-      if (config.youtube.clientId && config.youtube.channels.length > 0) {
+      // Check YouTube (for this bot's channel profile)
+      const ytConf = this.profile.youtube;
+      if (ytConf.clientId && ytConf.channels.length > 0) {
         try {
           const { google } = require("googleapis");
-          const oauth2 = new google.auth.OAuth2(config.youtube.clientId, config.youtube.clientSecret, config.youtube.redirectUri);
-          oauth2.setCredentials({ refresh_token: config.youtube.channels[0].refreshToken });
+          const oauth2 = new google.auth.OAuth2(ytConf.clientId, ytConf.clientSecret, ytConf.redirectUri);
+          oauth2.setCredentials({ refresh_token: ytConf.channels[0].refreshToken });
           const yt = google.youtube({ version: "v3", auth: oauth2 });
           const res = await yt.channels.list({ part: ["snippet"], mine: true });
           if (res.data.items && res.data.items.length > 0) {
@@ -470,9 +483,9 @@ export class TelegramService implements ITelegramService {
         } catch(e) { ytStatus = "🔴 OAuth Error"; }
       } else { ytStatus = "⚪️ Not Configured"; }
 
-      // Check Instagram
-      if (config.instagram.accounts.length > 0) {
-        const acc = config.instagram.accounts[0];
+      // Check Instagram (for this bot's channel profile)
+      if (this.profile.instagram.accounts.length > 0) {
+        const acc = this.profile.instagram.accounts[0];
         if (acc.accessToken && acc.igUserId) {
           try {
             const res = await fetch(`https://graph.facebook.com/v21.0/${acc.igUserId}?fields=username&access_token=${acc.accessToken}`);
@@ -759,11 +772,14 @@ export class TelegramService implements ITelegramService {
     let framePath: string;
     let instagramSourceType: "image" | "image_with_music" | "video";
     let videoPath: string | undefined;
+    let sourceCaptionText: string | undefined;
     try {
       const result = await downloadReelFrame(reelUrl, tempGenDir);
       framePath = result.framePath;
       instagramSourceType = result.instagramSourceType;
       videoPath = result.videoPath;
+      sourceCaptionText =
+        result.sourceCaption?.description || result.sourceCaption?.title;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       pipelineLogger.error("Instagram download failed", err, "Instagram");
@@ -796,6 +812,7 @@ export class TelegramService implements ITelegramService {
       instagramSource: true,
       instagramSourceType,
       assetKind: AssetKind.Reel,
+      captionMetadata: this.parseCaptionMetadata(sourceCaptionText),
     };
 
     let contentTypeDesc = "";
@@ -807,11 +824,15 @@ export class TelegramService implements ITelegramService {
       contentTypeDesc = "🎬 *Dynamic Video* (real video)";
     }
 
+    const captionPreview = sourceCaptionText
+      ? `captured ✅\n\`${sourceCaptionText.slice(0, 200).replace(/`/g, "'")}${sourceCaptionText.length > 200 ? "…" : ""}\``
+      : "not found";
     await this.sendMessage(
       chatId,
       `✅ *Download complete!*\n` +
         `• *Type:* ${contentTypeDesc}\n` +
-        `• *Frame Path:* \`${path.basename(framePath)}\`\n\n` +
+        `• *Frame Path:* \`${path.basename(framePath)}\`\n` +
+        `• *Original Caption:* ${captionPreview}\n\n` +
         `Starting automation pipeline...`,
       messageId,
     );

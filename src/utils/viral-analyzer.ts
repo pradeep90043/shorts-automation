@@ -150,10 +150,13 @@ export class ViralAnalyzer {
   /**
    * Extract high-performing keywords, title shapes, and hashtags to feed into LLM prompts.
    */
-  public getViralPatterns(): string {
+  public getViralPatterns(noHistoryHint?: string): string {
     const records = this.readDb();
     if (records.length === 0) {
-      return "No historical uploads data yet. Prefer curiosity-driven programming/tech hooks with high contrast words (e.g. 'replace developers', '10x faster', 'cheat code').";
+      return (
+        noHistoryHint ||
+        "No historical uploads data yet. Prefer curiosity-driven programming/tech hooks with high contrast words (e.g. 'replace developers', '10x faster', 'cheat code')."
+      );
     }
 
     // Filter to videos with more than 0 views or sort by views / retention

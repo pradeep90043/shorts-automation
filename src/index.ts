@@ -1,4 +1,4 @@
-import { validateConfig } from "./config";
+import { config, validateConfig } from "./config";
 import { TelegramService } from "./telegram";
 import { DirectUploader } from "./direct-uploader";
 import { ensureAssetsExist } from "./utils/assets";
@@ -6,7 +6,7 @@ import { pipelineLogger } from "./utils/logger";
 
 async function bootstrap() {
   pipelineLogger.info(
-    "Starting CodeOrCap Shorts Automation System...",
+    "Starting Shorts Automation System...",
     "Bootstrap",
   );
 
@@ -25,50 +25,67 @@ async function bootstrap() {
     process.exit(1);
   }
 
-  // 3. Initialize Services
-  let telegramService: TelegramService;
-  try {
-    telegramService = new TelegramService();
-  } catch (err) {
+  if (config.profiles.length === 0) {
     pipelineLogger.error(
-      "Failed to start Telegram Bot service. Ensure TELEGRAM_BOT_TOKEN is set.",
-      err,
+      "No channel profiles configured. Set TELEGRAM_BOT_TOKEN (or <PREFIX>_TELEGRAM_BOT_TOKEN_LOCAL/_PROD) in .env.",
+      undefined,
       "Bootstrap",
     );
     process.exit(1);
   }
 
-  const uploader = new DirectUploader(telegramService);
-
-  // Cancel any active pending jobs interrupted by a crash/restart
-  uploader.cancelAllPendingJobs().catch((err) => {
-    pipelineLogger.error(
-      "Failed to cancel active jobs during bootstrap",
-      err,
-      "Bootstrap",
-    );
-  });
-
-  // 4. Register pipeline trigger — image in → music + upload out
-  telegramService.registerPipelineTrigger(async (context) => {
-    await uploader.run(context);
-  });
-
-  // 5. Start listening for incoming events
-  try {
-    await telegramService.start();
+  // 3. Initialize one Telegram bot + uploader pipeline per channel profile
+  for (const profile of config.profiles) {
     pipelineLogger.info(
-      "System is fully initialized and operational. Ready to process screenshots!",
+      `Initializing channel profile [${profile.brandName}] — ${profile.youtube.channels.length} YouTube channel(s), ${profile.instagram.accounts.length} Instagram account(s)`,
       "Bootstrap",
     );
-  } catch (err) {
-    pipelineLogger.error(
-      "Failed to start Telegram polling listener",
-      err,
-      "Bootstrap",
-    );
-    process.exit(1);
+
+    let telegramService: TelegramService;
+    try {
+      telegramService = new TelegramService(profile);
+    } catch (err) {
+      pipelineLogger.error(
+        `[${profile.brandName}] Failed to start Telegram Bot service. Check its bot token in .env.`,
+        err,
+        "Bootstrap",
+      );
+      process.exit(1);
+    }
+
+    const uploader = new DirectUploader(telegramService, profile);
+
+    // Cancel any active pending jobs interrupted by a crash/restart
+    uploader.cancelAllPendingJobs().catch((err) => {
+      pipelineLogger.error(
+        `[${profile.brandName}] Failed to cancel active jobs during bootstrap`,
+        err,
+        "Bootstrap",
+      );
+    });
+
+    // Register pipeline trigger — image in → music + upload out
+    telegramService.registerPipelineTrigger(async (context) => {
+      await uploader.run(context);
+    });
+
+    // Start listening for incoming events
+    try {
+      await telegramService.start();
+    } catch (err) {
+      pipelineLogger.error(
+        `[${profile.brandName}] Failed to start Telegram polling listener`,
+        err,
+        "Bootstrap",
+      );
+      process.exit(1);
+    }
   }
+
+  pipelineLogger.info(
+    `System is fully initialized and operational. ${config.profiles.length} bot(s) ready to process screenshots!`,
+    "Bootstrap",
+  );
 }
 
 // Run bootstrap

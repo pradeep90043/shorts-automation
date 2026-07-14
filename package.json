@@ -11,6 +11,7 @@
     "lint": "eslint 'src/**/*.ts'",
     "format": "prettier --write 'src/**/*.ts'",
     "get-token": "ts-node get-refresh-token.ts",
+    "scan:music": "ts-node scripts/scan-music-library.ts",
     "test:vision": "ts-node tests/vision.test.ts",
     "test:ocr": "ts-node tests/ocr.test.ts",
     "test:caption": "ts-node tests/caption.test.ts",

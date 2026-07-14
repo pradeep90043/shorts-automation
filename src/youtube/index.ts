@@ -1,7 +1,7 @@
 import { google } from "googleapis";
 import fs from "fs";
 import { VideoMetadata } from "../types";
-import { config, YoutubeChannel } from "../config";
+import { config, YoutubeChannel, YoutubeConfig } from "../config";
 import { pipelineLogger } from "../utils/logger";
 
 export interface UploadResult {
@@ -11,13 +11,20 @@ export interface UploadResult {
 }
 
 export class YouTubeService {
+  // Per-channel-profile YouTube credentials (defaults to the primary profile)
+  private ytConfig: YoutubeConfig;
+
+  constructor(ytConfig: YoutubeConfig = config.youtube) {
+    this.ytConfig = ytConfig;
+  }
+
   // Upload to a single channel, returns result or null on failure
   private async uploadToChannel(
     channel: YoutubeChannel,
     videoPath: string,
     metadata: VideoMetadata,
   ): Promise<UploadResult | null> {
-    const { clientId, clientSecret, redirectUri } = config.youtube;
+    const { clientId, clientSecret, redirectUri } = this.ytConfig;
 
     if (!clientId || !clientSecret || !channel.refreshToken) {
       // Missing credentials – cannot upload. Throw error to force proper configuration.
@@ -92,7 +99,7 @@ export class YouTubeService {
     videoPath: string,
     metadata: VideoMetadata,
   ): Promise<UploadResult[]> {
-    const { channels } = config.youtube;
+    const { channels } = this.ytConfig;
 
     if (channels.length === 0) {
       pipelineLogger.warn(
@@ -136,8 +143,8 @@ export class YouTubeService {
     channelName: string,
     videoId: string,
   ): Promise<boolean> {
-    const { clientId, clientSecret, redirectUri } = config.youtube;
-    const channel = config.youtube.channels.find(
+    const { clientId, clientSecret, redirectUri } = this.ytConfig;
+    const channel = this.ytConfig.channels.find(
       (ch) => ch.name === channelName,
     );
 
@@ -195,8 +202,8 @@ export class YouTubeService {
     channelName: string,
     videoId: string,
   ): Promise<{ views: number; likes: number; comments: number } | null> {
-    const { clientId, clientSecret, redirectUri } = config.youtube;
-    const channel = config.youtube.channels.find(
+    const { clientId, clientSecret, redirectUri } = this.ytConfig;
+    const channel = this.ytConfig.channels.find(
       (ch) => ch.name === channelName,
     );
 

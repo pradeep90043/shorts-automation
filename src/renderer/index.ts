@@ -1,6 +1,7 @@
 import { exec } from "child_process";
 import path from "path";
 import fs from "fs";
+import sharp from "sharp";
 import { IVideoRenderer, RenderOptions, PipelineContext } from "../types";
 import { pipelineLogger } from "../utils/logger";
 import { config } from "../config";
@@ -134,6 +135,13 @@ export function calculateVideoCrop(context: PipelineContext): {
 }
 
 export class VideoRenderer implements IVideoRenderer {
+  // Social handle drawn on the watermark-cover badge (per channel profile)
+  private brandHandle: string;
+
+  constructor(brandHandle: string = "@codeorcap") {
+    this.brandHandle = brandHandle;
+  }
+
   public async renderImageToVideo(
     imagePath: string,
     outputPath: string,
@@ -485,6 +493,7 @@ export class VideoRenderer implements IVideoRenderer {
     }
 
     let currentLabel = "scaled";
+    const badgeInputPaths: string[] = [];
     for (let i = 0; i < blurRegions.length; i++) {
       const region = blurRegions[i];
 
@@ -500,28 +509,43 @@ export class VideoRenderer implements IVideoRenderer {
       const H_px =
         Math.round(region.height * (hScaled / hCropped)) + paddingY * 2;
 
-      let safeW = Math.max(10, Math.min(1080, W_px));
-      let safeH = Math.max(10, Math.min(1920, H_px));
+      let safeW = Math.max(40, Math.min(1080, W_px));
+      let safeH = Math.max(20, Math.min(1920, H_px));
 
-      // Enforce even dimensions to prevent YUV420p size mismatches in alphamerge
+      // Enforce even dimensions to prevent YUV420p size mismatches
       if (safeW % 2 !== 0) safeW = safeW + 1 > 1080 ? safeW - 1 : safeW + 1;
       if (safeH % 2 !== 0) safeH = safeH + 1 > 1920 ? safeH - 1 : safeH + 1;
 
       let safeX = Math.max(0, Math.min(1080 - safeW, X_px));
       let safeY = Math.max(0, Math.min(1920 - safeH, Y_px));
 
-      // Enforce even offsets to prevent alignment issues in crop/overlay
+      // Enforce even offsets to prevent alignment issues in overlay
       if (safeX % 2 !== 0) safeX = Math.max(0, safeX - 1);
       if (safeY % 2 !== 0) safeY = Math.max(0, safeY - 1);
 
-      // By applying a stronger Gaussian blur ( sigma=50 ) through a smoothly feathered alpha mask, the watermark is completely hidden
-      const marginX = Math.max(2, Math.floor(safeW * 0.1));
-      const marginY = Math.max(2, Math.floor(safeH * 0.1));
-      const maskW = safeW - 2 * marginX;
-      const maskH = safeH - 2 * marginY;
+      // Instead of blurring, cover the watermark with a brand badge:
+      // dark rounded pill (#0B0B0B) with yellow (#FFB800) border and the channel handle
+      const label = this.brandHandle;
+      const fontSize = Math.floor(
+        Math.min(safeH * 0.6, (safeW * 0.85) / (label.length * 0.62)),
+      );
+      const rx = Math.min(safeH / 2, 14);
+      const textY = Math.round(safeH / 2 + fontSize * 0.35);
+      const badgeSvg = `<svg width="${safeW}" height="${safeH}" viewBox="0 0 ${safeW} ${safeH}" xmlns="http://www.w3.org/2000/svg">
+        <rect x="1" y="1" width="${safeW - 2}" height="${safeH - 2}" rx="${rx}" fill="#0B0B0B" fill-opacity="0.95" stroke="#FFB800" stroke-width="1.5" stroke-opacity="0.85"/>
+        <text x="${safeW / 2}" y="${textY}" font-family="-apple-system, BlinkMacSystemFont, Arial, sans-serif" font-size="${fontSize}" font-weight="800" fill="#FFB800" text-anchor="middle" letter-spacing="0.5">${label}</text>
+      </svg>`;
 
-      const nextLabel = `blur_${i}`;
-      filterChain += `; [${currentLabel}]split[v1_${i}][v2_${i}]; [v2_${i}]crop=${safeW}:${safeH}:${safeX}:${safeY},split[blurred_${i}][mask_src_${i}]; [blurred_${i}]gblur=sigma=50[blurred_out_${i}]; [mask_src_${i}]format=rgba,drawbox=x=0:y=0:w=iw:h=ih:color=black@0:t=fill,drawbox=x=${marginX}:y=${marginY}:w=${maskW}:h=${maskH}:color=white:t=fill,gblur=sigma=10[mask_${i}]; [blurred_out_${i}][mask_${i}]alphamerge[masked_${i}]; [v1_${i}][masked_${i}]overlay=${safeX}:${safeY}[${nextLabel}]`;
+      const badgePath = path.join(
+        path.dirname(outputPath),
+        `brand_badge_${i}.png`,
+      );
+      await sharp(Buffer.from(badgeSvg)).png().toFile(badgePath);
+      badgeInputPaths.push(badgePath);
+
+      const nextLabel = `brand_${i}`;
+      // Badge inputs start at ffmpeg input index 1 (0 is the video)
+      filterChain += `; [${currentLabel}][${i + 1}:v]overlay=${safeX}:${safeY}[${nextLabel}]`;
       currentLabel = nextLabel;
     }
 
@@ -531,11 +555,15 @@ export class VideoRenderer implements IVideoRenderer {
 
     // 8. Execute FFmpeg
     const fps = options.fps;
+    const badgeInputArgs = badgeInputPaths
+      .map((p) => `-i "${p}"`)
+      .join(" ");
+    const watermarkInputIndex = 1 + badgeInputPaths.length;
     let finalCmd = "";
     if (hasWatermark) {
-      finalCmd = `ffmpeg -y -i "${videoPath}" -i "${watermarkPath}" -filter_complex "${filterChain}; [${currentLabel}][1:v]overlay=W-w-40:H-h-40[out]" -map "[out]" -map 0:a? -c:v libx264 -preset ultrafast -pix_fmt yuv420p -r ${fps} -c:a copy "${outputPath}"`;
+      finalCmd = `ffmpeg -y -i "${videoPath}" ${badgeInputArgs} -i "${watermarkPath}" -filter_complex "${filterChain}; [${currentLabel}][${watermarkInputIndex}:v]overlay=W-w-40:H-h-40[out]" -map "[out]" -map 0:a? -c:v libx264 -preset ultrafast -pix_fmt yuv420p -r ${fps} -c:a copy "${outputPath}"`;
     } else {
-      finalCmd = `ffmpeg -y -i "${videoPath}" -filter_complex "${filterChain}" -map "[${currentLabel}]" -map 0:a? -c:v libx264 -preset ultrafast -pix_fmt yuv420p -r ${fps} -c:a copy "${outputPath}"`;
+      finalCmd = `ffmpeg -y -i "${videoPath}" ${badgeInputArgs} -filter_complex "${filterChain}" -map "[${currentLabel}]" -map 0:a? -c:v libx264 -preset ultrafast -pix_fmt yuv420p -r ${fps} -c:a copy "${outputPath}"`;
     }
 
     pipelineLogger.info(

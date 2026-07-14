@@ -99,16 +99,26 @@ except Exception as e:
   }
 }
 
+export interface SourceCaption {
+  title?: string;
+  description?: string;
+}
+
 export interface DownloadReelResult {
   framePath: string;
   instagramSourceType: "image" | "image_with_music" | "video";
   videoPath?: string;
+  sourceCaption?: SourceCaption;
 }
 
 /**
  * Download a TikTok video using the free TikWM API.
+ * Returns the original post caption (TikWM's `title` field) when available.
  */
-async function downloadTikTokViaTikwm(url: string, destDir: string): Promise<string> {
+async function downloadTikTokViaTikwm(
+  url: string,
+  destDir: string,
+): Promise<SourceCaption | undefined> {
   const apiUrl = `https://www.tikwm.com/api/?url=${encodeURIComponent(url)}`;
   const res = await fetch(apiUrl);
   if (!res.ok) throw new Error(`TikWM API failed with status ${res.status}`);
@@ -116,11 +126,45 @@ async function downloadTikTokViaTikwm(url: string, destDir: string): Promise<str
   if (json.code !== 0 || !json.data?.play) {
     throw new Error(`TikWM API error: ${json.msg || "No video URL found"}`);
   }
-  
+
   const videoUrl = json.data.play;
   const destPath = path.join(destDir, "reel_video.mp4");
   await downloadFileFromUrl(videoUrl, destPath);
-  return destPath;
+  const caption = typeof json.data.title === "string" ? json.data.title.trim() : "";
+  return caption ? { description: caption } : undefined;
+}
+
+/**
+ * Read the yt-dlp .info.json written next to the downloaded video and pull out
+ * the original post title/description (for Instagram, `description` is the caption).
+ * Best-effort: never throws; the info.json is deleted after reading.
+ */
+function extractCaptionFromInfoJson(destDir: string): SourceCaption | undefined {
+  try {
+    const infoFile = fs
+      .readdirSync(destDir)
+      .find((f) => f.endsWith(".info.json"));
+    if (!infoFile) return undefined;
+    const infoPath = path.join(destDir, infoFile);
+    const info = JSON.parse(fs.readFileSync(infoPath, "utf-8"));
+    try {
+      fs.unlinkSync(infoPath);
+    } catch {}
+    const title = typeof info.title === "string" ? info.title.trim() : "";
+    const description =
+      typeof info.description === "string" ? info.description.trim() : "";
+    if (!title && !description) return undefined;
+    return {
+      title: title || undefined,
+      description: description || undefined,
+    };
+  } catch (err) {
+    pipelineLogger.warn(
+      `Failed to read caption from info.json: ${err instanceof Error ? err.message : err}`,
+      "Instagram",
+    );
+    return undefined;
+  }
 }
 
 /**
@@ -145,10 +189,11 @@ export async function downloadReelFrame(
   // --- Step 1: Download video (TikTok vs yt-dlp) ---
   try {
     const videoTemplate = path.join(destDir, "reel_video.%(ext)s");
+    let sourceCaption: SourceCaption | undefined;
 
     if (url.includes("tiktok.com")) {
       pipelineLogger.info("Attempting download via TikWM API...", "TikTok");
-      await downloadTikTokViaTikwm(url, destDir);
+      sourceCaption = await downloadTikTokViaTikwm(url, destDir);
     } else {
       await runCommand(
         YTDLP,
@@ -160,11 +205,22 @@ export async function downloadReelFrame(
           "1",
           "-o",
           videoTemplate,
+          "--write-info-json",
           "--no-warnings",
           url,
         ],
         "yt-dlp",
       );
+      sourceCaption = extractCaptionFromInfoJson(destDir);
+    }
+
+    if (sourceCaption) {
+      pipelineLogger.info(
+        `Original post caption captured (${(sourceCaption.description || sourceCaption.title || "").length} chars)`,
+        "Downloader",
+      );
+    } else {
+      pipelineLogger.info("No original post caption found", "Downloader");
     }
 
     const videoFile = fs
@@ -207,12 +263,12 @@ export async function downloadReelFrame(
           framePath,
         );
         if (instagramSourceType === "video") {
-          return { framePath, instagramSourceType, videoPath };
+          return { framePath, instagramSourceType, videoPath, sourceCaption };
         } else {
           try {
             fs.unlinkSync(videoPath);
           } catch {}
-          return { framePath, instagramSourceType };
+          return { framePath, instagramSourceType, sourceCaption };
         }
       }
     }
@@ -460,6 +516,31 @@ async function downloadViaPuppeteer(
       await new Promise((r) => setTimeout(r, 1500));
     }
 
+    // Best-effort: scrape the original post caption from the loaded page
+    let sourceCaption: SourceCaption | undefined;
+    try {
+      const captionText: string | null = await page.evaluate(() => {
+        const doc = (globalThis as any).document;
+        if (!doc) return null;
+        // Embed page exposes the caption in a .Caption element
+        const captionEl = doc.querySelector(".Caption");
+        if (captionEl && captionEl.textContent) return captionEl.textContent;
+        // Direct page: fall back to the og:title / description meta tags
+        const ogTitle = doc.querySelector('meta[property="og:title"]');
+        if (ogTitle?.getAttribute("content")) return ogTitle.getAttribute("content");
+        const metaDesc = doc.querySelector('meta[name="description"]');
+        return metaDesc ? metaDesc.getAttribute("content") : null;
+      });
+      const cleaned = captionText?.trim();
+      if (cleaned) {
+        sourceCaption = { description: cleaned };
+        pipelineLogger.info(
+          `Original post caption scraped via Puppeteer (${cleaned.length} chars)`,
+          "Instagram",
+        );
+      }
+    } catch {}
+
     // Wait up to 3 seconds to let the video buffer stream so we can intercept direct CDN URLs
     let waitCount = 0;
     while (interceptedVideoUrls.length === 0 && waitCount < 6) {
@@ -560,12 +641,12 @@ async function downloadViaPuppeteer(
             framePath,
           );
           if (instagramSourceType === "video") {
-            return { framePath, instagramSourceType, videoPath };
+            return { framePath, instagramSourceType, videoPath, sourceCaption };
           } else {
             try {
               fs.unlinkSync(videoPath);
             } catch {}
-            return { framePath, instagramSourceType };
+            return { framePath, instagramSourceType, sourceCaption };
           }
         }
       } catch (dlErr) {
@@ -617,7 +698,7 @@ async function downloadViaPuppeteer(
       framePath,
     );
 
-    return { framePath, instagramSourceType: "image" };
+    return { framePath, instagramSourceType: "image", sourceCaption };
   } finally {
     await browser.close();
   }
