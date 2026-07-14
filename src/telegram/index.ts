@@ -12,8 +12,6 @@ import {
   downloadReelFrame,
   isTikTokUrl,
   extractTikTokUrl,
-  isSnapchatUrl,
-  extractSnapchatUrl,
 } from "../instagram";
 
 const streamPipeline = promisify(pipeline);
@@ -693,8 +691,7 @@ export class TelegramService implements ITelegramService {
 
         const isReel = isInstagramReelUrl(text);
         const isTikTok = isTikTokUrl(text);
-        const isSnap = isSnapchatUrl(text);
-        const isSocialVideo = isReel || isTikTok || isSnap;
+        const isSocialVideo = isReel || isTikTok;
 
         // 1. Check if this is an interactive text prompt for a pending review (only if it's not a new Reel/TikTok link)
         if (!isSocialVideo && this.textPromptCallback) {
@@ -712,26 +709,13 @@ export class TelegramService implements ITelegramService {
         if (!isSocialVideo) {
           // Not a supported link — ignore (or give a hint)
           ctx.reply(
-            "📸 Send a screenshot image, an Instagram reel link, a TikTok link, or a Snapchat Spotlight link to start the pipeline.",
+            "📸 Send a screenshot image, an Instagram reel link, or a TikTok link to start the pipeline.",
           );
           return;
         }
 
-        const videoUrl = isReel
-          ? extractInstagramUrl(text)!
-          : isTikTok
-            ? extractTikTokUrl(text)!
-            : extractSnapchatUrl(text)!;
-        const platform: "instagram" | "tiktok" | "snapchat" = isReel
-          ? "instagram"
-          : isTikTok
-            ? "tiktok"
-            : "snapchat";
-        const platformName = isReel
-          ? "Instagram reel"
-          : isTikTok
-            ? "TikTok video"
-            : "Snapchat video";
+        const videoUrl = isReel ? extractInstagramUrl(text)! : extractTikTokUrl(text)!;
+        const platformName = isReel ? "Instagram reel" : "TikTok video";
         const messageId = ctx.message.message_id;
         const chatId = ctx.chat.id;
 
@@ -759,7 +743,6 @@ export class TelegramService implements ITelegramService {
           chatId,
           messageId,
           ctx.from,
-          platform,
         ).catch((err) => {
           pipelineLogger.error(
             `Instagram reel processing failed for ${id}`,
@@ -785,7 +768,6 @@ export class TelegramService implements ITelegramService {
     chatId: number,
     messageId: number,
     from: { id: number; username?: string; first_name?: string },
-    platform: "instagram" | "tiktok" | "snapchat" = "instagram",
   ): Promise<void> {
     let framePath: string;
     let instagramSourceType: "image" | "image_with_music" | "video";
@@ -800,13 +782,10 @@ export class TelegramService implements ITelegramService {
         result.sourceCaption?.description || result.sourceCaption?.title;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      pipelineLogger.error("Social video download failed", err, "Instagram");
-      const hint = reelUrl.includes("instagram.com")
-        ? "Make sure the reel/video is public. (For Instagram, you must be logged into Chrome)."
-        : "Make sure the video is public.";
+      pipelineLogger.error("Instagram download failed", err, "Instagram");
       await this.sendMessage(
         chatId,
-        `❌ *Failed to download video*\n\`${msg.slice(0, 300)}\`\n\n${hint}`,
+        `❌ *Failed to download video*\n\`${msg.slice(0, 300)}\`\n\nMake sure the reel/video is public. (For Instagram, you must be logged into Chrome).`,
         messageId,
       );
       return;
@@ -832,7 +811,6 @@ export class TelegramService implements ITelegramService {
       status: "received",
       instagramSource: true,
       instagramSourceType,
-      sourcePlatform: platform,
       assetKind: AssetKind.Reel,
       captionMetadata: this.parseCaptionMetadata(sourceCaptionText),
     };
