@@ -102,7 +102,7 @@ const getVideoDuration = (pathStr: string): Promise<number> => {
 
       if (!hasAudio) {
         filterComplex = `[1:a]volume=${volume},afade=t=in:ss=0:d=${fadeDuration},afade=t=out:st=${fadeOutStart}:d=${fadeDuration}[a]`;
-        cmd = `ffmpeg -y -i "${videoPath}" -ss ${startOffset} -i "${selectedTrack}" -filter_complex "${filterComplex}" -map 0:v -map "[a]" -vcodec libx264 -preset fast -crf 23 -pix_fmt yuv420p -c:a aac -shortest "${outputPath}"`;
+        cmd = `ffmpeg -y -i "${videoPath}" -ss ${startOffset} -i "${selectedTrack}" -filter_complex "${filterComplex}" -map 0:v -map "[a]" -c:v copy -c:a aac -shortest "${outputPath}"`;
       } else if (vocalOnlyPath) {
         // [0:v] video, [1:a] bg music, [2:a] vocals
         filterComplex =
@@ -110,7 +110,7 @@ const getVideoDuration = (pathStr: string): Promise<number> => {
           `[bg][2:a]sidechaincompress=threshold=0.08:ratio=12:attack=20:release=350[bg_ducked];` +
           `[2:a][bg_ducked]amix=inputs=2:duration=first:dropout_transition=2[a]`;
 
-        cmd = `ffmpeg -y -i "${videoPath}" -ss ${startOffset} -i "${selectedTrack}" -i "${vocalOnlyPath}" -filter_complex "${filterComplex}" -map 0:v -map "[a]" -vcodec libx264 -preset fast -crf 23 -pix_fmt yuv420p -c:a aac -shortest "${outputPath}"`;
+        cmd = `ffmpeg -y -i "${videoPath}" -ss ${startOffset} -i "${selectedTrack}" -i "${vocalOnlyPath}" -filter_complex "${filterComplex}" -map 0:v -map "[a]" -c:v copy -c:a aac -shortest "${outputPath}"`;
       } else {
         // forceReplace requested but vocals could not be isolated (demucs not
         // installed) — drop the original audio entirely so the original song is
@@ -120,7 +120,7 @@ const getVideoDuration = (pathStr: string): Promise<number> => {
           "MusicService",
         );
         filterComplex = `[1:a]volume=1.0,afade=t=in:ss=0:d=${fadeDuration},afade=t=out:st=${fadeOutStart}:d=${fadeDuration}[a]`;
-        cmd = `ffmpeg -y -i "${videoPath}" -ss ${startOffset} -i "${selectedTrack}" -filter_complex "${filterComplex}" -map 0:v -map "[a]" -vcodec libx264 -preset fast -crf 23 -pix_fmt yuv420p -c:a aac -shortest "${outputPath}"`;
+        cmd = `ffmpeg -y -i "${videoPath}" -ss ${startOffset} -i "${selectedTrack}" -filter_complex "${filterComplex}" -map 0:v -map "[a]" -c:v copy -c:a aac -shortest "${outputPath}"`;
       }
 
       pipelineLogger.info(
@@ -129,7 +129,8 @@ const getVideoDuration = (pathStr: string): Promise<number> => {
       );
 
       return new Promise<string>((resolve, reject) => {
-        exec(cmd, (error, _stdout, stderr) => {
+        // Hard timeout so a stuck ffmpeg can never pin the CPU for hours
+        exec(cmd, { timeout: 10 * 60 * 1000, killSignal: "SIGKILL" }, (error, _stdout, stderr) => {
           if (error) {
             pipelineLogger.error(
               `FFmpeg audio overlay failed: ${stderr}`,

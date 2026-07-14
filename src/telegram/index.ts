@@ -400,15 +400,50 @@ export class TelegramService implements ITelegramService {
       );
     });
 
-    // Handle logs command to securely retrieve prod logs via Telegram
+    // Handle logs command — sends only TODAY's log lines (use /fulllogs for everything)
     this.bot.command("logs", async (ctx) => {
+      try {
+        const logPath = path.resolve(process.cwd(), "logs/combined.log");
+        if (!fs.existsSync(logPath)) {
+          await ctx.reply("❌ Log file not found on the server.");
+          return;
+        }
+
+        const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+        const todayLines = fs
+          .readFileSync(logPath, "utf8")
+          .split("\n")
+          .filter((line) => line.includes(`"timestamp":"${today}`));
+
+        if (todayLines.length === 0) {
+          await ctx.reply(`ℹ️ No log entries for today (${today}) yet. Use /fulllogs for the complete log.`);
+          return;
+        }
+
+        const todayLogPath = path.join(config.paths.tempDir, `logs-${today}.log`);
+        fs.mkdirSync(config.paths.tempDir, { recursive: true });
+        fs.writeFileSync(todayLogPath, todayLines.join("\n"));
+
+        await ctx.replyWithDocument({
+          source: fs.createReadStream(todayLogPath),
+          filename: `prod-logs-${today}.log`
+        }, { caption: `Production logs for ${today} (${todayLines.length} entries). Use /fulllogs for the complete log.` });
+
+        try { fs.unlinkSync(todayLogPath); } catch {}
+      } catch (err) {
+        await ctx.reply(`❌ Failed to retrieve logs: ${err instanceof Error ? err.message : err}`);
+      }
+    });
+
+    // Handle fulllogs command — sends the entire combined log file
+    this.bot.command("fulllogs", async (ctx) => {
       try {
         const logPath = path.resolve(process.cwd(), "logs/combined.log");
         if (fs.existsSync(logPath)) {
           await ctx.replyWithDocument({
             source: fs.createReadStream(logPath),
             filename: "prod-combined.log"
-          }, { caption: "Here are the latest production logs." });
+          }, { caption: "Here are the complete production logs." });
         } else {
           await ctx.reply("❌ Log file not found on the server.");
         }

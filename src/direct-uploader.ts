@@ -25,6 +25,14 @@ import { ImageAnalyzer } from "./image-analysis";
 // profile's ContentTheme (src/config/themes.ts) so every generation path (unified
 // vision, vision fallback, viral, text-only) matches the channel's niche.
 
+// Quota errors with "limit: 0" or an exhausted DAILY quota can never succeed on
+// retry within the same run — fail fast to the next fallback instead of sleeping.
+const isPermanentQuotaError = (msg: string): boolean =>
+  /limit:\s*0|PerDayPerProject|free_tier_requests/i.test(msg);
+
+const AI_MAX_ATTEMPTS = 3;
+const AI_RETRY_DELAY_MS = 15000;
+
 interface PendingUpload {
   id: string;
   chatId: number;
@@ -375,7 +383,7 @@ Tags: ${context.previousMetadata.tags?.join(", ")}`;
       let raw = "";
       if (this.freellmapi) {
         let attempts = 0;
-        const maxAttempts = 8;
+        const maxAttempts = AI_MAX_ATTEMPTS;
         while (attempts < maxAttempts) {
           try {
             pipelineLogger.info(
@@ -386,6 +394,13 @@ Tags: ${context.previousMetadata.tags?.join(", ")}`;
             if (raw) break;
           } catch (e: any) {
             const msg = e.message || String(e);
+            if (isPermanentQuotaError(msg)) {
+              pipelineLogger.warn(
+                "FreeLLMAPI quota is exhausted (permanent for this run) — skipping retries and falling back.",
+                "DirectUploader",
+              );
+              throw e;
+            }
             if (msg.includes("429") || msg.includes("rate")) {
               attempts++;
               if (attempts >= maxAttempts) throw e;
@@ -393,7 +408,7 @@ Tags: ${context.previousMetadata.tags?.join(", ")}`;
                 `FreeLLMAPI rate limited (429). Waiting 15s before retry (${attempts}/${maxAttempts})...`,
                 "DirectUploader"
               );
-              await new Promise((r) => setTimeout(r, 15000));
+              await new Promise((r) => setTimeout(r, AI_RETRY_DELAY_MS));
             } else {
               throw e;
             }
@@ -733,12 +748,12 @@ Rules:
     prompt += `\nReturn ONLY a raw JSON object — no markdown, no explanation:
 {"title":"...","description":"...","tags":["...","..."],"mood":"funny" | "sad" | "other", "factCheckScore": 10, "verdict": "..."}`;
 
-    for (let attempt = 0; attempt < 8; attempt++) {
+    for (let attempt = 0; attempt < AI_MAX_ATTEMPTS; attempt++) {
       try {
         let raw = "";
         if (this.freellmapi) {
           pipelineLogger.info(
-            `Attempting metadata generation via FreeLLMAPI (Attempt ${attempt + 1}/8)...`,
+            `Attempting metadata generation via FreeLLMAPI (Attempt ${attempt + 1}/${AI_MAX_ATTEMPTS})...`,
             "DirectUploader",
           );
           raw = await this.freellmapi.generateVision(prompt, base64, mimeType);
@@ -762,7 +777,7 @@ Rules:
         return obj;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        if (attempt < 7 && /503|unavailable|rate|429/i.test(msg)) {
+        if (attempt < AI_MAX_ATTEMPTS - 1 && !isPermanentQuotaError(msg) && /503|unavailable|rate|429/i.test(msg)) {
           const wait = 15000;
           pipelineLogger.warn(
             `AI attempt ${attempt + 1} failed (Rate Limit). Retrying in 15s…`,
@@ -828,12 +843,12 @@ ${this.theme.analysisRules}`;
     prompt += `\nReturn ONLY raw JSON — no markdown:
 {"title":"...","description":"...","primaryKeyword":"...","secondaryKeywords":["..."],"tags":["..."],"hashtags":["..."],"thumbnailText":"...","filename":"...","mood":"funny" | "sad" | "other","factCheckScore":10,"verdict":"..."}`;
 
-    for (let attempt = 0; attempt < 8; attempt++) {
+    for (let attempt = 0; attempt < AI_MAX_ATTEMPTS; attempt++) {
       try {
         let raw = "";
         if (this.freellmapi) {
           pipelineLogger.info(
-            `Attempting metadata generation via FreeLLMAPI (Attempt ${attempt + 1}/8)...`,
+            `Attempting metadata generation via FreeLLMAPI (Attempt ${attempt + 1}/${AI_MAX_ATTEMPTS})...`,
             "DirectUploader",
           );
           raw = await this.freellmapi.generateVision(prompt, base64, mimeType);
@@ -860,7 +875,7 @@ ${this.theme.analysisRules}`;
         return obj;
       } catch (err: any) {
         const msg = err instanceof Error ? err.message : String(err);
-        if (attempt < 7 && /503|unavailable|rate|429/i.test(msg)) {
+        if (attempt < AI_MAX_ATTEMPTS - 1 && !isPermanentQuotaError(msg) && /503|unavailable|rate|429/i.test(msg)) {
           pipelineLogger.warn(
             `AI attempt ${attempt + 1} failed (Rate Limit). Retrying in 15s…`,
             "DirectUploader"
@@ -1298,6 +1313,16 @@ ${this.theme.analysisRules}`;
         undefined, // excludeTrack is handled by selectLocalTrack above
         newTrack // specificTrack
       );
+
+      // The job may have been published/cancelled (and its temp dir cleaned)
+      // while ffmpeg was running — bail out instead of writing to deleted paths
+      if (this.pending.get(id) !== pending) {
+        pipelineLogger.warn(
+          `Job ${id} was published or cancelled during music replace — discarding result`,
+          "DirectUploader",
+        );
+        return;
+      }
 
       fs.copyFileSync(tempMusicVideoPath, pending.finalVideoPath);
       fs.copyFileSync(tempMusicVideoPath, pending.outputFilePath);
