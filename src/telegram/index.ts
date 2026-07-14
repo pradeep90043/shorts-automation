@@ -12,6 +12,8 @@ import {
   downloadReelFrame,
   isTikTokUrl,
   extractTikTokUrl,
+  isSnapchatUrl,
+  extractSnapchatUrl,
 } from "../instagram";
 
 const streamPipeline = promisify(pipeline);
@@ -691,7 +693,8 @@ export class TelegramService implements ITelegramService {
 
         const isReel = isInstagramReelUrl(text);
         const isTikTok = isTikTokUrl(text);
-        const isSocialVideo = isReel || isTikTok;
+        const isSnap = isSnapchatUrl(text);
+        const isSocialVideo = isReel || isTikTok || isSnap;
 
         // 1. Check if this is an interactive text prompt for a pending review (only if it's not a new Reel/TikTok link)
         if (!isSocialVideo && this.textPromptCallback) {
@@ -709,13 +712,21 @@ export class TelegramService implements ITelegramService {
         if (!isSocialVideo) {
           // Not a supported link — ignore (or give a hint)
           ctx.reply(
-            "📸 Send a screenshot image, an Instagram reel link, or a TikTok link to start the pipeline.",
+            "📸 Send a screenshot image, an Instagram reel link, a TikTok link, or a Snapchat Spotlight link to start the pipeline.",
           );
           return;
         }
 
-        const videoUrl = isReel ? extractInstagramUrl(text)! : extractTikTokUrl(text)!;
-        const platformName = isReel ? "Instagram reel" : "TikTok video";
+        const videoUrl = isReel
+          ? extractInstagramUrl(text)!
+          : isTikTok
+            ? extractTikTokUrl(text)!
+            : extractSnapchatUrl(text)!;
+        const platformName = isReel
+          ? "Instagram reel"
+          : isTikTok
+            ? "TikTok video"
+            : "Snapchat video";
         const messageId = ctx.message.message_id;
         const chatId = ctx.chat.id;
 
@@ -782,10 +793,13 @@ export class TelegramService implements ITelegramService {
         result.sourceCaption?.description || result.sourceCaption?.title;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      pipelineLogger.error("Instagram download failed", err, "Instagram");
+      pipelineLogger.error("Social video download failed", err, "Instagram");
+      const hint = reelUrl.includes("instagram.com")
+        ? "Make sure the reel/video is public. (For Instagram, you must be logged into Chrome)."
+        : "Make sure the video is public.";
       await this.sendMessage(
         chatId,
-        `❌ *Failed to download video*\n\`${msg.slice(0, 300)}\`\n\nMake sure the reel/video is public. (For Instagram, you must be logged into Chrome).`,
+        `❌ *Failed to download video*\n\`${msg.slice(0, 300)}\`\n\n${hint}`,
         messageId,
       );
       return;

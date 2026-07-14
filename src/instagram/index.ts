@@ -22,12 +22,21 @@ const INSTAGRAM_REGEX =
 
 const TIKTOK_REGEX = /https?:\/\/(?:www\.)?tiktok\.com\/.*\/video\/(\d+)|https?:\/\/vm\.tiktok\.com\/([A-Za-z0-9]+)\/?/;
 
+// Public Snapchat Spotlight/share links (yt-dlp SnapchatSpotlight extractor).
+// Private snaps/stories are not downloadable.
+const SNAPCHAT_REGEX =
+  /https?:\/\/(?:www\.)?snapchat\.com\/(?:spotlight|t)\/[A-Za-z0-9_.-]+|https?:\/\/t\.snapchat\.com\/[A-Za-z0-9]+/;
+
 export function isInstagramReelUrl(text: string): boolean {
   return INSTAGRAM_REGEX.test(text);
 }
 
 export function isTikTokUrl(text: string): boolean {
   return TIKTOK_REGEX.test(text);
+}
+
+export function isSnapchatUrl(text: string): boolean {
+  return SNAPCHAT_REGEX.test(text);
 }
 
 export function extractInstagramUrl(text: string): string | null {
@@ -37,6 +46,11 @@ export function extractInstagramUrl(text: string): string | null {
 
 export function extractTikTokUrl(text: string): string | null {
   const m = text.match(TIKTOK_REGEX);
+  return m ? m[0] : null;
+}
+
+export function extractSnapchatUrl(text: string): string | null {
+  const m = text.match(SNAPCHAT_REGEX);
   return m ? m[0] : null;
 }
 
@@ -195,12 +209,15 @@ export async function downloadReelFrame(
       pipelineLogger.info("Attempting download via TikWM API...", "TikTok");
       sourceCaption = await downloadTikTokViaTikwm(url, destDir);
     } else {
+      // Cookies are only needed for Instagram; Snapchat Spotlight links are public
+      const cookieArgs = url.includes("instagram.com")
+        ? ["--cookies", COOKIES_FILE]
+        : [];
       await runCommand(
         YTDLP,
         [
           "--no-playlist",
-          "--cookies",
-          COOKIES_FILE,
+          ...cookieArgs,
           "--playlist-items",
           "1",
           "-o",
