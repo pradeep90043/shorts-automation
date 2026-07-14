@@ -7,6 +7,7 @@ import {
   BrandingDetectionResult,
   BrandingZone,
   ImageAnalysisResult,
+  OcrWord,
 } from "../types";
 import { pipelineLogger } from "../utils/logger";
 import { OcrService } from "../ocr"; // We will use OCR text to assist detection
@@ -74,23 +75,33 @@ export class SocialHandleDetector implements IBrandingSubDetector {
     imagePath: string,
     analysis: ImageAnalysisResult,
     precomputedOcrText?: string,
+    precomputedWords?: OcrWord[],
   ): Promise<BrandingZone[]> {
     const zones: BrandingZone[] = [];
 
     try {
       let text = precomputedOcrText || "";
-      let detailedWords: any[] = [];
+      let detailedWords: OcrWord[] = precomputedWords || [];
 
-      // Always fetch full OCR result if precomputed text is not provided or if we want coordinates
-      const ocrResult = await this.ocrService.extractText(imagePath);
-      text = ocrResult.text;
-      detailedWords = ocrResult.detailedWords || [];
+      // Multi-pass OCR takes 1-3 minutes on the prod VM — only run it when the
+      // caller didn't already provide word-level results to reuse.
+      if (!precomputedWords) {
+        const ocrResult = await this.ocrService.extractText(imagePath);
+        text = ocrResult.text;
+        detailedWords = ocrResult.detailedWords || [];
+      }
 
       const handleRegex = /\S*@\S*|https?:\/\/(www\.)?[a-zA-Z0-9-]+\.[a-z]+/gi;
 
       if (detailedWords && detailedWords.length > 0) {
         detailedWords.forEach((word, index) => {
           const isHandle = word.text.match(handleRegex);
+
+          // Low-confidence single-char matches (e.g. a lone "@" at 0%
+          // confidence) create bogus cover zones in the middle of the video
+          if (isHandle && ((word.confidence || 0) < 40 || word.text.trim().length < 4)) {
+            return;
+          }
 
           if (isHandle) {
             pipelineLogger.info(

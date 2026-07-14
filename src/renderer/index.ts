@@ -337,15 +337,18 @@ export class VideoRenderer implements IVideoRenderer {
         analysis,
         context.ocr.text,
       );
-    } else {
+    } else if (context.ocr.detailedWords && context.ocr.detailedWords.length > 0) {
       // If brandingDetection was already set (e.g. by DirectUploader's AI vision),
-      // we still want to run the SocialHandleDetector (OCR) to catch any handles
-      // that the AI vision might have missed!
+      // we still want to run the SocialHandleDetector to catch any handles that
+      // the AI vision might have missed. Reuse the pipeline's OCR words — a fresh
+      // multi-pass OCR here used to cost 1-3 minutes per job on the prod VM.
+      // (When only AI-verbatim text is available, skip: AI zones already cover it.)
       const handleDetector = new SocialHandleDetector();
       const ocrZones = await handleDetector.detect(
         framePath,
         analysis,
         context.ocr.text,
+        context.ocr.detailedWords,
       );
 
       // Merge unique OCR zones (avoid duplicate IDs)
