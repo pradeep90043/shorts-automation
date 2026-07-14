@@ -80,7 +80,10 @@ export class DirectUploader {
     if (config.ai.provider === "freellmapi") {
       this.freellmapi = new FreeLlmApiClient();
     }
-    this.renderer = new VideoRenderer(this.profile.handle);
+    this.renderer = new VideoRenderer(
+      this.profile.handle,
+      this.profile.brandName,
+    );
     this.music = new MusicService();
     this.youtube = new YouTubeService(this.profile.youtube);
     this.instagram = new InstagramPublisher(this.profile.instagram.accounts);
