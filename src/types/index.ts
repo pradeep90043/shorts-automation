@@ -157,6 +157,7 @@ export interface PipelineContext {
   error?: string;
   instagramSource?: boolean; // skip branding removal for Instagram-sourced frames
   instagramSourceType?: "image" | "image_with_music" | "video";
+  sourcePlatform?: "instagram" | "tiktok" | "snapchat"; // where the source video came from
   captionMetadata?: { title: string; description: string }; // user-provided title+description from Telegram caption
   userPrompt?: string; // custom re-generation prompt instruction from the user
   previousMetadata?: VideoMetadata; // metadata before re-generation

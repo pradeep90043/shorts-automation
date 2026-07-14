@@ -722,6 +722,11 @@ export class TelegramService implements ITelegramService {
           : isTikTok
             ? extractTikTokUrl(text)!
             : extractSnapchatUrl(text)!;
+        const platform: "instagram" | "tiktok" | "snapchat" = isReel
+          ? "instagram"
+          : isTikTok
+            ? "tiktok"
+            : "snapchat";
         const platformName = isReel
           ? "Instagram reel"
           : isTikTok
@@ -754,6 +759,7 @@ export class TelegramService implements ITelegramService {
           chatId,
           messageId,
           ctx.from,
+          platform,
         ).catch((err) => {
           pipelineLogger.error(
             `Instagram reel processing failed for ${id}`,
@@ -779,6 +785,7 @@ export class TelegramService implements ITelegramService {
     chatId: number,
     messageId: number,
     from: { id: number; username?: string; first_name?: string },
+    platform: "instagram" | "tiktok" | "snapchat" = "instagram",
   ): Promise<void> {
     let framePath: string;
     let instagramSourceType: "image" | "image_with_music" | "video";
@@ -825,6 +832,7 @@ export class TelegramService implements ITelegramService {
       status: "received",
       instagramSource: true,
       instagramSourceType,
+      sourcePlatform: platform,
       assetKind: AssetKind.Reel,
       captionMetadata: this.parseCaptionMetadata(sourceCaptionText),
     };
