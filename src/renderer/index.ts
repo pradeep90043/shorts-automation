@@ -2,12 +2,7 @@ import { exec } from "child_process";
 import path from "path";
 import fs from "fs";
 import sharp from "sharp";
-import {
-  IVideoRenderer,
-  RenderOptions,
-  PipelineContext,
-  BrandingZone,
-} from "../types";
+import { IVideoRenderer, RenderOptions, PipelineContext } from "../types";
 import { pipelineLogger } from "../utils/logger";
 import { config } from "../config";
 import { ImageAnalyzer } from "../image-analysis";
@@ -150,33 +145,6 @@ export class VideoRenderer implements IVideoRenderer {
   ) {
     this.brandHandle = brandHandle;
     this.brandName = brandName;
-  }
-
-  private getVideoDuration(videoPath: string): Promise<number> {
-    return new Promise((resolve, reject) => {
-      exec(
-        `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${videoPath}"`,
-        (err, stdout) => {
-          if (err) return reject(err);
-          const d = parseFloat(stdout.trim());
-          if (isNaN(d)) return reject(new Error("Could not parse duration"));
-          resolve(d);
-        },
-      );
-    });
-  }
-
-  private extractFrameAt(
-    videoPath: string,
-    seconds: number,
-    outPath: string,
-  ): Promise<void> {
-    return new Promise((resolve, reject) => {
-      exec(
-        `ffmpeg -y -ss ${seconds.toFixed(2)} -i "${videoPath}" -vframes 1 -q:v 2 "${outPath}"`,
-        (err) => (err ? reject(err) : resolve()),
-      );
-    });
   }
 
   // Per-profile diagonal corner watermark asset, generated on first use.
@@ -508,66 +476,10 @@ export class VideoRenderer implements IVideoRenderer {
       y: number;
       width: number;
       height: number;
-      from?: number;
-      to?: number;
     }> = [];
 
-    // Zones with optional time windows. Snapchat's baked-in watermark ANIMATES
-    // (top-left at the start → bottom-right at the end), so a single-frame
-    // detection misses it later in the video. For Snapchat sources we sample
-    // extra frames (middle + end), detect zones on each, and time-gate every
-    // cover badge to the segment its sample frame belongs to.
-    let timedZones: Array<{ zone: BrandingZone; from?: number; to?: number }> =
-      zones.map((z) => ({ zone: z }));
-
-    if (context.sourcePlatform === "snapchat") {
-      try {
-        const duration = await this.getVideoDuration(videoPath);
-        if (duration > 3) {
-          const seg = duration / 3;
-          // Start-frame detections only cover the first third
-          timedZones = zones.map((z) => ({ zone: z, from: 0, to: seg }));
-
-          const detector = new BrandingDetector();
-          const samples = [
-            { t: duration / 2, from: seg, to: 2 * seg, label: "mid" },
-            {
-              t: Math.max(duration - 1.2, 0),
-              from: 2 * seg,
-              to: duration + 1,
-              label: "end",
-            },
-          ];
-          for (const s of samples) {
-            const sampleFrame = path.join(
-              path.dirname(outputPath),
-              `wm_sample_${s.label}.jpg`,
-            );
-            await this.extractFrameAt(videoPath, s.t, sampleFrame);
-            const det = await detector.detect(sampleFrame, analysis);
-            for (const z of det.zones) {
-              timedZones.push({
-                zone: { ...z, id: `${z.id}-${s.label}` },
-                from: s.from,
-                to: s.to,
-              });
-            }
-            pipelineLogger.info(
-              `Snapchat watermark sample @${s.t.toFixed(1)}s (${s.label}): ${det.zones.length} zones`,
-              "VideoRenderer",
-            );
-          }
-        }
-      } catch (err) {
-        pipelineLogger.warn(
-          `Snapchat multi-frame watermark sampling failed: ${err instanceof Error ? err.message : err}`,
-          "VideoRenderer",
-        );
-      }
-    }
-
     // Process other branding zones to cover
-    const middleWatermarks = timedZones.filter(({ zone: z }) => {
+    const middleWatermarks = zones.filter((z) => {
       if (!z.id.startsWith("ai-branding-") && !z.id.startsWith("ocr-"))
         return false;
       if (
@@ -589,7 +501,7 @@ export class VideoRenderer implements IVideoRenderer {
       return insideX && insideY;
     });
 
-    for (const { zone: z, from, to } of middleWatermarks) {
+    for (const z of middleWatermarks) {
       const origX = z.boundingBox.x * analysis.width;
       const origY = z.boundingBox.y * analysis.height;
       const origW = z.boundingBox.width * analysis.width;
@@ -603,7 +515,7 @@ export class VideoRenderer implements IVideoRenderer {
       const safeW = Math.max(10, Math.min(wCropped - safeX, origW));
       const safeH = Math.max(10, Math.min(hCropped - safeY, origH));
 
-      blurRegions.push({ x: safeX, y: safeY, width: safeW, height: safeH, from, to });
+      blurRegions.push({ x: safeX, y: safeY, width: safeW, height: safeH });
     }
 
     pipelineLogger.info(
@@ -671,14 +583,8 @@ export class VideoRenderer implements IVideoRenderer {
       badgeInputPaths.push(badgePath);
 
       const nextLabel = `brand_${i}`;
-      // Badge inputs start at ffmpeg input index 1 (0 is the video).
-      // Time-gated regions (e.g. Snapchat's animated watermark) only show
-      // their badge during the segment where the watermark was detected.
-      const enable =
-        region.from !== undefined && region.to !== undefined
-          ? `:enable='between(t,${region.from.toFixed(2)},${region.to.toFixed(2)})'`
-          : "";
-      filterChain += `; [${currentLabel}][${i + 1}:v]overlay=${safeX}:${safeY}${enable}[${nextLabel}]`;
+      // Badge inputs start at ffmpeg input index 1 (0 is the video)
+      filterChain += `; [${currentLabel}][${i + 1}:v]overlay=${safeX}:${safeY}[${nextLabel}]`;
       currentLabel = nextLabel;
     }
 
