@@ -10,6 +10,13 @@ export interface InstagramUploadResult {
 }
 
 export class InstagramPublisher {
+  // Per-channel-profile Instagram accounts (defaults to the primary profile)
+  private accounts: InstagramAccount[];
+
+  constructor(accounts: InstagramAccount[] = config.instagram.accounts) {
+    this.accounts = accounts;
+  }
+
   private async uploadToAccount(
     account: InstagramAccount,
     videoPath: string,
@@ -145,7 +152,7 @@ export class InstagramPublisher {
     videoPath: string,
     metadata: VideoMetadata,
   ): Promise<InstagramUploadResult[]> {
-    const { accounts } = config.instagram;
+    const accounts = this.accounts;
 
     if (accounts.length === 0) {
       pipelineLogger.warn(

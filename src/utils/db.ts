@@ -36,12 +36,16 @@ export class JobDatabase {
   private dbFilePath: string;
   private jobs = new Map<string, JobEntry>();
 
-  constructor() {
+  // dbKey namespaces the db file per channel profile (undefined = legacy jobs_db.json)
+  constructor(dbKey?: string) {
     const logDir = config.paths.logDir || path.resolve(__dirname, "../../logs");
     if (!fs.existsSync(logDir)) {
       fs.mkdirSync(logDir, { recursive: true });
     }
-    this.dbFilePath = path.join(logDir, "jobs_db.json");
+    this.dbFilePath = path.join(
+      logDir,
+      dbKey ? `jobs_db_${dbKey}.json` : "jobs_db.json",
+    );
     this.loadFromFile();
   }
 

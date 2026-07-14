@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import sharp from "sharp";
 import { exec } from "child_process";
-import { config } from "./config";
+import { config, ChannelProfile } from "./config";
 import { VideoRenderer, calculateVideoCrop } from "./renderer";
 import { OcrService } from "./ocr";
 import { MusicService } from "./music";
@@ -21,10 +21,9 @@ import { ViralAnalyzer } from "./utils/viral-analyzer";
 import { JobQueue } from "./utils/queue";
 import { ImageAnalyzer } from "./image-analysis";
 
-// Canonical metadata format — shared by ALL metadata prompts so every generation
-// path (unified vision, vision fallback, viral, text-only) produces the same format.
-const TITLE_RULES = `TITLE RULES: Max 65 chars. Primary keyword within first 30 chars. Curiosity without clickbait. Use current year if relevant. One emoji. No ALL CAPS (except AI, API, etc).`;
-const DESCRIPTION_RULES = `DESCRIPTION RULES: 180-300 words. Include, in this exact order: 1) What the video is about (primary keyword in first sentence). 2) What you'll learn (bullet points). 3) Who it's for. 4) The Fact Check Verdict and Reasoning. 5) Subscribe CTA to @CodeOrCap. 6) Community CTA question. 7) End with popular hashtags on the last line — ALWAYS include #science among them.`;
+// Metadata format rules (title/description/keywords/analysis) live on the channel
+// profile's ContentTheme (src/config/themes.ts) so every generation path (unified
+// vision, vision fallback, viral, text-only) matches the channel's niche.
 
 interface PendingUpload {
   id: string;
@@ -49,11 +48,17 @@ export class DirectUploader {
   private youtube: YouTubeService;
   private instagram: InstagramPublisher;
   private telegram: TelegramService;
-  private db = new JobDatabase();
+  private db: JobDatabase;
+  private profile: ChannelProfile;
+
+  private get theme() {
+    return this.profile.theme;
+  }
   private viralAnalyzer = new ViralAnalyzer();
   private analyzer = new ImageAnalyzer();
   private queue = new JobQueue(1);
   private pending = new Map<string, PendingUpload>();
+  private musicReplaceInFlight = new Set<string>();
   private pendingFrameReviews = new Map<
     string,
     {
@@ -70,14 +75,19 @@ export class DirectUploader {
   >();
   private jobResolvers = new Map<string, () => void>();
 
-  constructor(telegram: TelegramService) {
+  constructor(telegram: TelegramService, profile?: ChannelProfile) {
+    this.profile = profile || telegram.profile;
     if (config.ai.provider === "freellmapi") {
       this.freellmapi = new FreeLlmApiClient();
     }
-    this.renderer = new VideoRenderer();
+    this.renderer = new VideoRenderer(this.profile.handle);
     this.music = new MusicService();
-    this.youtube = new YouTubeService();
-    this.instagram = new InstagramPublisher();
+    this.youtube = new YouTubeService(this.profile.youtube);
+    this.instagram = new InstagramPublisher(this.profile.instagram.accounts);
+    // Each channel profile keeps its own job db file (legacy name for the default profile)
+    this.db = new JobDatabase(
+      this.profile.isDefault ? undefined : this.profile.key,
+    );
     this.telegram = telegram;
 
     // Wire up inline-button callbacks from Telegram
@@ -170,7 +180,7 @@ export class DirectUploader {
     try {
       const { base64, mimeType } = await this.getSmallBase64Image(imagePath);
 
-      let prompt = `You are a computer vision assistant and growth strategist for a tech/programming YouTube Shorts channel called "CodeOrCap".
+      let prompt = `You are a computer vision assistant and growth strategist for ${this.theme.channelDescriptor} called "${this.profile.brandName}".
 
 Analyze this video frame/image and perform two tasks:
 
@@ -186,14 +196,14 @@ Search for:
 
 If no such elements are present, return an empty array for brandingZones.
 
-TASK 2: YouTube Shorts Metadata & Fact Checking
-You are an expert YouTube SEO strategist and Fact Checker for the technology channel "CodeOrCap" (Tech Fact Check).
-FACT CHECK RULES: Analyze the code, claims, or technical text in the image. Determine if it is true, false, misleading, or a joke. Provide a factCheckScore (1-10, where 10 is 100% accurate) and a short verdict (e.g., "Mostly True", "False - Syntax Error", "Satire/Meme", "Accurate").
-${TITLE_RULES}
-${DESCRIPTION_RULES}
-KEYWORDS: Provide 1 primary keyword, 5 secondary keywords, 15 tags, and 8-12 hashtags (always include #science).
+TASK 2: YouTube Shorts Metadata & Content Analysis
+You are an expert YouTube SEO strategist for ${this.theme.channelDescriptor} called "${this.profile.brandName}".
+${this.theme.analysisRules}
+${this.theme.titleRules}
+${this.theme.descriptionRules(this.profile.brandName)}
+KEYWORDS: ${this.theme.keywordsRule}
 THUMBNAIL: Max 5 words, highly clickable, curiosity driven.
-FILENAME: SEO-friendly filename (e.g., tech-video-2026.mp4).
+FILENAME: SEO-friendly filename (e.g., short-video-2026.mp4).
 MOOD: Determine emotional tone: "funny", "sad", or "other".
 
 TASK 3: Verbatim Text Extraction
@@ -466,7 +476,7 @@ Tags: ${context.previousMetadata.tags?.join(", ")}`;
 
       context.metadata = this.ensureRequiredHashtags(data.metadata);
 
-      if (context.metadata.verdict && context.metadata.factCheckScore) {
+      if (this.theme.appendVerdict && context.metadata.verdict && context.metadata.factCheckScore) {
         context.metadata.description += `\n\n🤖 Tech Fact Check Verdict: [${context.metadata.verdict}] (${context.metadata.factCheckScore}/10)`;
       }
 
@@ -595,32 +605,34 @@ Tags: ${context.previousMetadata.tags?.join(", ")}`;
   }
 
   /**
-   * Guarantee the required hashtags/tags are present regardless of what the LLM
-   * returned. #science must appear in every description.
+   * Guarantee the theme's required hashtag/tag is present regardless of what the
+   * LLM returned (e.g. #science for tech, #storytime for stories).
    */
   private ensureRequiredHashtags(meta: VideoMetadata): VideoMetadata {
-    if (meta.description && !/#science\b/i.test(meta.description)) {
+    const tag = this.theme.requiredHashtag; // e.g. "science" (tech) or "storytime" (stories)
+    const tagRegex = new RegExp(`#${tag}\\b`, "i");
+    if (meta.description && !tagRegex.test(meta.description)) {
       const lines = meta.description.trimEnd().split("\n");
       const lastLine = lines[lines.length - 1];
       if (lastLine.includes("#")) {
         // Description already ends with a hashtag line — append to it
-        lines[lines.length - 1] = `${lastLine} #science`;
+        lines[lines.length - 1] = `${lastLine} #${tag}`;
         meta.description = lines.join("\n");
       } else {
-        meta.description = `${meta.description.trimEnd()}\n\n#science`;
+        meta.description = `${meta.description.trimEnd()}\n\n#${tag}`;
       }
     }
     if (
       Array.isArray(meta.hashtags) &&
-      !meta.hashtags.some((h) => h.replace(/^#/, "").toLowerCase() === "science")
+      !meta.hashtags.some((h) => h.replace(/^#/, "").toLowerCase() === tag)
     ) {
-      meta.hashtags.push("#science");
+      meta.hashtags.push(`#${tag}`);
     }
     if (
       Array.isArray(meta.tags) &&
-      !meta.tags.some((t) => t.toLowerCase() === "science")
+      !meta.tags.some((t) => t.toLowerCase() === tag)
     ) {
-      meta.tags.push("science");
+      meta.tags.push(tag);
     }
     return meta;
   }
@@ -663,8 +675,8 @@ Description: ${description}\n`;
       }
 
       const prompt = viral
-        ? `You are a viral YouTube Shorts growth hacker for a tech channel "CodeOrCap". ${contentContext} Generate the most scroll-stopping, curiosity-gap, high-CTR metadata possible based on the text.\n${TITLE_RULES}\n${DESCRIPTION_RULES}\nReturn ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate"}}`
-        : `You are a YouTube Shorts strategist for a tech channel called "CodeOrCap". ${contentContext} Generate SEO-optimised metadata based on the text.\n${TITLE_RULES}\n${DESCRIPTION_RULES}\nReturn ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate"}}`;
+        ? `You are a viral YouTube Shorts growth hacker for ${this.theme.channelDescriptor} called "${this.profile.brandName}". ${contentContext} Generate the most scroll-stopping, curiosity-gap, high-CTR metadata possible based on the text.\n${this.theme.titleRules}\n${this.theme.descriptionRules(this.profile.brandName)}\nReturn ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate"}}`
+        : `You are a YouTube Shorts strategist for ${this.theme.channelDescriptor} called "${this.profile.brandName}". ${contentContext} Generate SEO-optimised metadata based on the text.\n${this.theme.titleRules}\n${this.theme.descriptionRules(this.profile.brandName)}\nReturn ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate"}}`;
       
       const raw = await this.freellmapi.generateText(prompt);
       const data = parseAiJson<{metadata?: VideoMetadata} & Partial<VideoMetadata>>(raw);
@@ -689,19 +701,18 @@ Description: ${description}\n`;
 
     const { base64, mimeType } = await this.getSmallBase64Image(imagePath);
 
-    let prompt = `You are a viral YouTube Shorts strategist for a tech/programming channel called "CodeOrCap".
+    let prompt = `You are a viral YouTube Shorts strategist for ${this.theme.channelDescriptor} called "${this.profile.brandName}".
 
-Analyze this image carefully — read all visible text, identify the topic, tools, languages, or concepts shown. Check the authenticity and correctness of the information shown.
+Analyze this image carefully — read all visible text and identify the topic, theme, or concepts shown.
 
-Generate SEO-optimised YouTube Shorts metadata that will maximise clicks and watch time, and provide a fact-check verdict.
+Generate SEO-optimised YouTube Shorts metadata that will maximise clicks and watch time.
 
 Rules:
-- ${TITLE_RULES}
-- ${DESCRIPTION_RULES}
-- tags: 10-12 specific tags covering the topic, tools, and audience (no spaces in tags).
-- mood: Determine the emotional tone or theme of the content. Choose exactly one of: "funny", "sad", or "other" (for general, educational, motivational, or tech tips).
-- factCheckScore: (1-10) How technically accurate the image content is.
-- verdict: A short string summarizing the authenticity (e.g. "Accurate", "False - Syntax Error", "Misleading", "Meme/Joke").`;
+- ${this.theme.titleRules}
+- ${this.theme.descriptionRules(this.profile.brandName)}
+- tags: 10-12 specific tags covering the topic, theme, and audience (no spaces in tags).
+- mood: Determine the emotional tone or theme of the content. Choose exactly one of: "funny", "sad", or "other" (for general, educational, or motivational content).
+- ${this.theme.analysisRules}`;
 
     if (context?.userPrompt) {
       prompt += `\n\nThe user wants this adjustment: "${context.userPrompt}".\n`;
@@ -741,7 +752,7 @@ Rules:
         pipelineLogger.checkpoint("Metadata generated", true, `"${obj.title}"`);
         this.ensureRequiredHashtags(obj);
 
-        if (obj.verdict && obj.factCheckScore) {
+        if (this.theme.appendVerdict && obj.verdict && obj.factCheckScore) {
           obj.description += `\n\n🤖 Tech Fact Check Verdict: [${obj.verdict}] (${obj.factCheckScore}/10)`;
         }
         
@@ -769,19 +780,11 @@ Rules:
 
   private fallbackMetadata(): VideoMetadata {
     return {
-      title: "Mind-Blowing Tech Trick You Need To Know ⚡",
-      description:
-        "Level up your skills with this essential tip every developer should know. Drop a 🔥 if you found this useful!\n\n#coding #programming #developer #tech #shorts #science",
+      title: this.theme.fallback.title,
+      description: this.theme.fallback.description,
       tags: [
-        "coding",
-        "programming",
-        "developer",
-        "tech",
-        "shorts",
-        "codeorcap",
-        "learntocode",
-        "webdev",
-        "science",
+        ...this.theme.fallback.tags,
+        this.profile.handle.replace("@", ""),
       ],
     };
   }
@@ -794,17 +797,17 @@ Rules:
 
     const { base64, mimeType } = await this.getSmallBase64Image(imagePath);
 
-    let prompt = `You are an aggressive viral YouTube Shorts growth hacker for a tech channel called "CodeOrCap".
+    let prompt = `You are an aggressive viral YouTube Shorts growth hacker for ${this.theme.channelDescriptor} called "${this.profile.brandName}".
 
 Analyze this image and generate the most scroll-stopping, curiosity-gap, high-CTR metadata possible.
 
 TITLE RULES: Max 65 chars. Extreme curiosity gap, controversy, or shock. Primary keyword within first 30 chars. One emoji. No ALL CAPS (except AI, API, etc).
-${DESCRIPTION_RULES}
-KEYWORDS: Provide 1 primary keyword, 5 secondary keywords, 15 tags, and 8-12 hashtags (always include #science).
+${this.theme.descriptionRules(this.profile.brandName)}
+KEYWORDS: ${this.theme.keywordsRule}
 THUMBNAIL: Max 5 words, highly clickable, curiosity driven.
-FILENAME: SEO-friendly filename (e.g., viral-tech-video-2026.mp4).
+FILENAME: SEO-friendly filename (e.g., viral-short-video-2026.mp4).
 MOOD: Determine emotional tone: "funny", "sad", or "other".
-FACT CHECK: Provide a factCheckScore (1-10 accuracy) and a short verdict ("Accurate", "False", etc).`;
+${this.theme.analysisRules}`;
 
     if (context?.userPrompt) {
       prompt += `\n\nThe user wants this adjustment: "${context.userPrompt}".\n`;
@@ -847,7 +850,7 @@ FACT CHECK: Provide a factCheckScore (1-10 accuracy) and a short verdict ("Accur
         );
         this.ensureRequiredHashtags(obj);
 
-        if (obj.verdict && obj.factCheckScore) {
+        if (this.theme.appendVerdict && obj.verdict && obj.factCheckScore) {
           obj.description += `\n\n🤖 Tech Fact Check Verdict: [${obj.verdict}] (${obj.factCheckScore}/10)`;
         }
         
@@ -889,7 +892,7 @@ FACT CHECK: Provide a factCheckScore (1-10 accuracy) and a short verdict ("Accur
 
     await this.telegram.sendMessage(
       chatId,
-      `🚀 *Uploading to ${config.youtube.channels.length} YouTube channel(s) and ${config.instagram.accounts.length} Instagram account(s)…*`,
+      `🚀 *Uploading to ${this.profile.youtube.channels.length} YouTube channel(s) and ${this.profile.instagram.accounts.length} Instagram account(s)…*`,
       messageId,
     );
 
@@ -954,15 +957,28 @@ FACT CHECK: Provide a factCheckScore (1-10 accuracy) and a short verdict ("Accur
         const compressedVideoPath = path.join(path.dirname(finalVideoPath), "video_compressed.mp4");
         const videoToSend = fs.existsSync(compressedVideoPath) ? compressedVideoPath : finalVideoPath;
 
-        let caption = `*Title:* ${metadata.title}\n*Description:* ${metadata.description}`;
-        if (caption.length > 1000) {
-          caption = caption.substring(0, 1000) + '...';
-        }
-
-        await this.telegram.sendRawVideo(
+        const messageId = await this.telegram.sendRawVideo(
           chatId,
           videoToSend,
-          caption,
+          `*Title:* ${metadata.title}`,
+        );
+
+        let fullDescription = `*Description:*\n${metadata.description}`;
+        
+        if (metadata.factCheckScore !== undefined) {
+          fullDescription += `\n\n*Fact Check Score:* ${metadata.factCheckScore}/10`;
+        }
+        if (metadata.verdict) {
+          fullDescription += `\n*Verdict:* ${metadata.verdict}`;
+        }
+        if (fullDescription.length > 4000) {
+          fullDescription = fullDescription.substring(0, 4000) + '...';
+        }
+        
+        await this.telegram.sendMessage(
+          chatId,
+          fullDescription,
+          messageId
         );
       } catch (sendErr) {
         pipelineLogger.error('Failed to send final video with metadata', sendErr, 'DirectUploader');
@@ -1241,7 +1257,22 @@ FACT CHECK: Provide a factCheckScore (1-10 accuracy) and a short verdict ("Accur
 
   private async onReplaceMusic(id: string): Promise<void> {
     const pending = this.pending.get(id);
-    if (!pending) return;
+    if (!pending) {
+      pipelineLogger.warn(
+        `Replace music requested for ${id} but no pending review found in this instance`,
+        "DirectUploader",
+      );
+      return;
+    }
+
+    if (this.musicReplaceInFlight.has(id)) {
+      pipelineLogger.warn(
+        `Music replace already in progress for ${id} — ignoring duplicate tap`,
+        "DirectUploader",
+      );
+      return;
+    }
+    this.musicReplaceInFlight.add(id);
 
     pipelineLogger.info(`Replacing music for ${id}`, "DirectUploader");
 
@@ -1279,12 +1310,29 @@ FACT CHECK: Provide a factCheckScore (1-10 accuracy) and a short verdict ("Accur
         pending.musicCaptionLine +
         `⏳ _Waiting for review action..._`;
 
-      pending.reviewMessageId = await this.telegram.editReviewVideo(
-        pending.chatId,
-        pending.reviewMessageId,
-        pending.finalVideoPath,
-        caption,
-        id,
+      pipelineLogger.info(
+        `Uploading music-replaced video to Telegram review message…`,
+        "DirectUploader",
+      );
+      pending.reviewMessageId = await Promise.race([
+        this.telegram.editReviewVideo(
+          pending.chatId,
+          pending.reviewMessageId,
+          pending.finalVideoPath,
+          caption,
+          id,
+        ),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error("Telegram media edit timed out after 120s")),
+            120_000,
+          ),
+        ),
+      ]);
+      pipelineLogger.checkpoint(
+        "Review message updated with new music",
+        true,
+        path.basename(newTrack),
       );
 
       // Removed auto-publish timer as per user request
@@ -1300,6 +1348,8 @@ FACT CHECK: Provide a factCheckScore (1-10 accuracy) and a short verdict ("Accur
         `⚠️ *Music replace failed:* \`${err instanceof Error ? err.message : err}\``,
         pending.reviewMessageId,
       );
+    } finally {
+      this.musicReplaceInFlight.delete(id);
     }
   }
 
@@ -1520,7 +1570,7 @@ FACT CHECK: Provide a factCheckScore (1-10 accuracy) and a short verdict ("Accur
             "developer",
             "tech",
             "shorts",
-            "codeorcap",
+            this.profile.handle.replace("@", ""),
           ],
         };
         pipelineLogger.checkpoint(
@@ -1588,7 +1638,8 @@ FACT CHECK: Provide a factCheckScore (1-10 accuracy) and a short verdict ("Accur
           }
         }
 
-        // 2a — Blur other branding zones (logo, watermark, handle, profile_name, other) on the static image (excluding original_captions)
+        // 2a — Cover other branding zones (logo, watermark, handle, profile_name, other) on the static image
+        // with a brand badge (black bg + yellow handle text) instead of blurring (excluding original_captions)
         const otherZones = context.brandingDetection?.zones.filter(
           (z) =>
             z.type !== "main_post_content" &&
@@ -1597,7 +1648,7 @@ FACT CHECK: Provide a factCheckScore (1-10 accuracy) and a short verdict ("Accur
         if (otherZones && otherZones.length > 0) {
           try {
             pipelineLogger.info(
-              `Applying blur to ${otherZones.length} branding zones on static image...`,
+              `Covering ${otherZones.length} branding zones with ${this.profile.brandName} badge on static image...`,
               "DirectUploader",
             );
             const meta = await sharp(originalImagePath).metadata();
@@ -1611,48 +1662,62 @@ FACT CHECK: Provide a factCheckScore (1-10 accuracy) and a short verdict ("Accur
                 const w = Math.round(box.width * meta.width);
                 const h = Math.round(box.height * meta.height);
 
-                const safeX = Math.max(0, Math.min(meta.width - 10, x));
-                const safeY = Math.max(0, Math.min(meta.height - 10, y));
-                const safeW = Math.max(10, Math.min(meta.width - safeX, w));
-                const safeH = Math.max(10, Math.min(meta.height - safeY, h));
+                // Small padding so the badge fully hides the watermark underneath
+                const pad = Math.max(4, Math.round(h * 0.15));
+                const safeX = Math.max(0, Math.min(meta.width - 10, x - pad));
+                const safeY = Math.max(0, Math.min(meta.height - 10, y - pad));
+                const safeW = Math.max(
+                  40,
+                  Math.min(meta.width - safeX, w + pad * 2),
+                );
+                const safeH = Math.max(
+                  20,
+                  Math.min(meta.height - safeY, h + pad * 2),
+                );
 
-                // Extract the region, blur it, and prepare as a composite overlay
-                const blurredRegion = await sharp(originalImagePath)
-                  .extract({
-                    left: safeX,
-                    top: safeY,
-                    width: safeW,
-                    height: safeH,
-                  })
-                  .blur(20) // apply a strong blur to obliterate text
+                // Badge: dark rounded pill with yellow border + channel handle text
+                const label = this.profile.handle;
+                // Scale font to fit both the zone height and width (~0.62em avg glyph width)
+                const fontSize = Math.floor(
+                  Math.min(safeH * 0.6, (safeW * 0.85) / (label.length * 0.62)),
+                );
+                const rx = Math.min(safeH / 2, 14);
+                const textY = Math.round(safeH / 2 + fontSize * 0.35);
+                const badgeSvg = `<svg width="${safeW}" height="${safeH}" viewBox="0 0 ${safeW} ${safeH}" xmlns="http://www.w3.org/2000/svg">
+                  <rect x="1" y="1" width="${safeW - 2}" height="${safeH - 2}" rx="${rx}" fill="#0B0B0B" fill-opacity="0.95" stroke="#FFB800" stroke-width="1.5" stroke-opacity="0.85"/>
+                  <text x="${safeW / 2}" y="${textY}" font-family="-apple-system, BlinkMacSystemFont, Arial, sans-serif" font-size="${fontSize}" font-weight="800" fill="#FFB800" text-anchor="middle" letter-spacing="0.5">${label}</text>
+                </svg>`;
+
+                const badgeBuf = await sharp(Buffer.from(badgeSvg))
+                  .png()
                   .toBuffer();
 
                 composites.push({
-                  input: blurredRegion,
+                  input: badgeBuf,
                   left: safeX,
                   top: safeY,
                 });
               }
 
               if (composites.length > 0) {
-                const blurredTemp = path.join(tempDir, "original_blurred.jpg");
+                const brandedTemp = path.join(tempDir, "original_branded.jpg");
                 await sharp(originalImagePath)
                   .composite(composites)
-                  .toFile(blurredTemp);
+                  .toFile(brandedTemp);
 
-                fs.copyFileSync(blurredTemp, originalImagePath);
+                fs.copyFileSync(brandedTemp, originalImagePath);
                 try {
-                  fs.unlinkSync(blurredTemp);
+                  fs.unlinkSync(brandedTemp);
                 } catch {}
                 pipelineLogger.checkpoint(
-                  "Static image branding zones blurred successfully",
+                  "Static image branding zones covered with brand badge",
                   true,
                 );
               }
             }
           } catch (err) {
             pipelineLogger.error(
-              "Failed to blur static image branding zones",
+              "Failed to cover static image branding zones",
               err,
               "DirectUploader",
             );
@@ -1663,7 +1728,10 @@ FACT CHECK: Provide a factCheckScore (1-10 accuracy) and a short verdict ("Accur
         const mainContentZone = context.brandingDetection?.zones.find(
           (z) => z.type === "main_post_content",
         );
-        if (mainContentZone) {
+        const p = (context.userPrompt || "").toLowerCase();
+        const wantsFocus = p.includes("crop") || p.includes("focus") || p.includes("blur") || p.includes("remove chrome");
+
+        if (mainContentZone && wantsFocus) {
           try {
             pipelineLogger.info(
               "Main post content detected. Blurring outer areas of static image...",
@@ -1837,7 +1905,9 @@ FACT CHECK: Provide a factCheckScore (1-10 accuracy) and a short verdict ("Accur
           const rawOcrText = context.ocr?.text || "";
 
           let aiPrompt = "";
-          const viralPatterns = this.viralAnalyzer.getViralPatterns();
+          const viralPatterns = this.viralAnalyzer.getViralPatterns(
+            this.theme.noHistoryHint,
+          );
           if (context.userPrompt) {
             aiPrompt = `You are a copywriting expert for a tech meme channel.
 Modify the video caption based on the user's instructions.

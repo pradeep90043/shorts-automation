@@ -112,12 +112,14 @@ const getVideoDuration = (pathStr: string): Promise<number> => {
 
         cmd = `ffmpeg -y -i "${videoPath}" -ss ${startOffset} -i "${selectedTrack}" -i "${vocalOnlyPath}" -filter_complex "${filterComplex}" -map 0:v -map "[a]" -vcodec libx264 -preset fast -crf 23 -pix_fmt yuv420p -c:a aac -shortest "${outputPath}"`;
       } else {
-        // Apply sidechain compression to automatically duck background music when voiceover speech is detected
-        filterComplex =
-          `[1:a]volume=${volume},afade=t=in:ss=0:d=${fadeDuration},afade=t=out:st=${fadeOutStart}:d=${fadeDuration}[bg];` +
-          `[bg][0:a]sidechaincompress=threshold=0.08:ratio=12:attack=20:release=350[bg_ducked];` +
-          `[0:a][bg_ducked]amix=inputs=2:duration=first:dropout_transition=2[a]`;
-
+        // forceReplace requested but vocals could not be isolated (demucs not
+        // installed) — drop the original audio entirely so the original song is
+        // fully replaced by our track, played at full volume.
+        pipelineLogger.info(
+          "Vocal isolation unavailable — replacing original audio entirely with background music",
+          "MusicService",
+        );
+        filterComplex = `[1:a]volume=1.0,afade=t=in:ss=0:d=${fadeDuration},afade=t=out:st=${fadeOutStart}:d=${fadeDuration}[a]`;
         cmd = `ffmpeg -y -i "${videoPath}" -ss ${startOffset} -i "${selectedTrack}" -filter_complex "${filterComplex}" -map 0:v -map "[a]" -vcodec libx264 -preset fast -crf 23 -pix_fmt yuv420p -c:a aac -shortest "${outputPath}"`;
       }
 

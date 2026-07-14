@@ -1,8 +1,11 @@
 import dotenv from "dotenv";
 import path from "path";
+import { ContentTheme, CONTENT_THEMES } from "./themes";
 
 // Load environmental variables
 dotenv.config();
+
+export { ContentTheme, CONTENT_THEMES } from "./themes";
 
 export interface YoutubeChannel {
   name: string;
@@ -15,17 +18,37 @@ export interface InstagramAccount {
   igUserId: string;
 }
 
-export interface AppConfig {
+export interface YoutubeConfig {
+  clientId: string;
+  clientSecret: string;
+  redirectUri: string;
+  channels: YoutubeChannel[]; // one entry per channel
+}
+
+// A full brand/channel profile: one Telegram bot + its own YouTube/Instagram credentials.
+// The primary profile comes from the classic env vars (TELEGRAM_BOT_TOKEN, YOUTUBE_*, INSTAGRAM_*).
+// Extra profiles are auto-detected from prefixed vars, e.g. STORIYUM_TELEGRAM_BOT_TOKEN_LOCAL,
+// STORIYUM_YOUTUBE_REFRESH_TOKEN, STORIYUM_INSTAGRAM_ACCESS_TOKEN, ...
+export interface ChannelProfile {
+  key: string; // short id, e.g. "codeorcap", "storiyum"
+  brandName: string; // used in AI prompts, e.g. "CodeOrCap"
+  handle: string; // social handle used on branding overlays, e.g. "@codeorcap"
+  theme: ContentTheme; // niche-specific prompt fragments (NICHE / <PREFIX>_NICHE env)
+  isDefault: boolean;
   telegramToken: string;
-  youtube: {
-    clientId: string;
-    clientSecret: string;
-    redirectUri: string;
-    channels: YoutubeChannel[]; // one entry per channel
-  };
+  youtube: YoutubeConfig;
   instagram: {
     accounts: InstagramAccount[];
   };
+}
+
+export interface AppConfig {
+  telegramToken: string;
+  youtube: YoutubeConfig;
+  instagram: {
+    accounts: InstagramAccount[];
+  };
+  profiles: ChannelProfile[];
   ai: {
     provider: "claude" | "antigravity" | "freellmapi" | "mock";
     claudePath: string;
@@ -56,6 +79,11 @@ export interface AppConfig {
     ytdlp: string;
     python3: string;
     chrome: string;
+    fpcalc: string;
+  };
+  copyright: {
+    enabled: boolean;
+    acoustidApiKey: string;
   };
 }
 
@@ -100,19 +128,154 @@ function loadInstagramAccounts(): InstagramAccount[] {
   return accounts;
 }
 
-export const config: AppConfig = {
-  telegramToken: process.env.TELEGRAM_BOT_TOKEN || "",
-  youtube: {
-    clientId: process.env.YOUTUBE_CLIENT_ID || "",
-    clientSecret: process.env.YOUTUBE_CLIENT_SECRET || "",
+// ── Multi-channel profiles ────────────────────────────────────────────────────
+// BOT_ENV selects between <PREFIX>_TELEGRAM_BOT_TOKEN_LOCAL and _PROD (default: local)
+const BOT_ENV = (process.env.BOT_ENV || "local").toUpperCase();
+
+function titleCase(prefix: string): string {
+  return prefix.charAt(0) + prefix.slice(1).toLowerCase();
+}
+
+// Resolve a content theme from a NICHE env value; unknown/missing values fall back to "tech"
+function resolveTheme(nicheEnv: string | undefined, label: string): ContentTheme {
+  const niche = (nicheEnv || "tech").toLowerCase();
+  const theme = CONTENT_THEMES[niche];
+  if (!theme) {
+    console.warn(
+      `Warning: [${label}] Unknown NICHE "${nicheEnv}". Valid values: ${Object.keys(CONTENT_THEMES).join(", ")}. Falling back to "tech".`,
+    );
+    return CONTENT_THEMES.tech;
+  }
+  return theme;
+}
+
+function loadPrefixedYoutube(prefix: string, brandName: string): YoutubeConfig {
+  const env = (key: string) => process.env[`${prefix}_${key}`];
+
+  const channels: YoutubeChannel[] = [];
+  for (let i = 1; i <= 10; i++) {
+    const token = env(`YOUTUBE_CHANNEL_${i}_REFRESH_TOKEN`);
+    if (!token) break;
+    channels.push({
+      name: env(`YOUTUBE_CHANNEL_${i}_NAME`) || `${brandName} ${i}`,
+      refreshToken: token,
+    });
+  }
+  if (channels.length === 0 && env("YOUTUBE_REFRESH_TOKEN")) {
+    channels.push({
+      name: brandName,
+      refreshToken: env("YOUTUBE_REFRESH_TOKEN")!,
+    });
+  }
+
+  return {
+    // Fall back to the shared OAuth app if the profile doesn't have its own
+    clientId: env("YOUTUBE_CLIENT_ID") || process.env.YOUTUBE_CLIENT_ID || "",
+    clientSecret:
+      env("YOUTUBE_CLIENT_SECRET") || process.env.YOUTUBE_CLIENT_SECRET || "",
     redirectUri:
+      env("YOUTUBE_REDIRECT_URI") ||
       process.env.YOUTUBE_REDIRECT_URI ||
       "http://localhost:3000/oauth2callback",
-    channels: loadChannels(),
-  },
-  instagram: {
-    accounts: loadInstagramAccounts(),
-  },
+    channels,
+  };
+}
+
+function loadPrefixedInstagram(
+  prefix: string,
+  brandName: string,
+): InstagramAccount[] {
+  const env = (key: string) => process.env[`${prefix}_${key}`];
+  const accounts: InstagramAccount[] = [];
+  for (let i = 1; i <= 10; i++) {
+    const token = env(`INSTAGRAM_ACCOUNT_${i}_ACCESS_TOKEN`);
+    const userId = env(`INSTAGRAM_ACCOUNT_${i}_USER_ID`);
+    if (!token || !userId) break;
+    accounts.push({
+      name: env(`INSTAGRAM_ACCOUNT_${i}_NAME`) || `${brandName} IG ${i}`,
+      accessToken: token,
+      igUserId: userId,
+    });
+  }
+  if (
+    accounts.length === 0 &&
+    env("INSTAGRAM_ACCESS_TOKEN") &&
+    env("INSTAGRAM_USER_ID")
+  ) {
+    accounts.push({
+      name: `${brandName} Instagram`,
+      accessToken: env("INSTAGRAM_ACCESS_TOKEN")!,
+      igUserId: env("INSTAGRAM_USER_ID")!,
+    });
+  }
+  return accounts;
+}
+
+// Detect extra channel prefixes from env vars like STORIYUM_TELEGRAM_BOT_TOKEN[_LOCAL|_PROD]
+function loadExtraProfiles(): ChannelProfile[] {
+  const prefixes = new Set<string>();
+  for (const key of Object.keys(process.env)) {
+    const m = key.match(/^([A-Z0-9]+)_TELEGRAM_BOT_TOKEN(?:_LOCAL|_PROD)?$/);
+    if (m) prefixes.add(m[1]);
+  }
+
+  const profiles: ChannelProfile[] = [];
+  for (const prefix of prefixes) {
+    const env = (key: string) => process.env[`${prefix}_${key}`];
+    const telegramToken =
+      env(`TELEGRAM_BOT_TOKEN_${BOT_ENV}`) ||
+      env("TELEGRAM_BOT_TOKEN") ||
+      env("TELEGRAM_BOT_TOKEN_LOCAL") ||
+      env("TELEGRAM_BOT_TOKEN_PROD") ||
+      "";
+    if (!telegramToken) continue;
+
+    const brandName = env("BRAND_NAME") || titleCase(prefix);
+    profiles.push({
+      key: prefix.toLowerCase(),
+      brandName,
+      handle: env("BRAND_HANDLE") || `@${prefix.toLowerCase()}`,
+      theme: resolveTheme(env("NICHE"), brandName),
+      isDefault: false,
+      telegramToken,
+      youtube: loadPrefixedYoutube(prefix, brandName),
+      instagram: { accounts: loadPrefixedInstagram(prefix, brandName) },
+    });
+  }
+  return profiles;
+}
+
+function loadPrimaryProfile(): ChannelProfile {
+  return {
+    key: "codeorcap",
+    brandName: process.env.BRAND_NAME || "CodeOrCap",
+    handle: process.env.BRAND_HANDLE || "@codeorcap",
+    theme: resolveTheme(process.env.NICHE, "primary profile"),
+    isDefault: true,
+    telegramToken: process.env.TELEGRAM_BOT_TOKEN || "",
+    youtube: {
+      clientId: process.env.YOUTUBE_CLIENT_ID || "",
+      clientSecret: process.env.YOUTUBE_CLIENT_SECRET || "",
+      redirectUri:
+        process.env.YOUTUBE_REDIRECT_URI ||
+        "http://localhost:3000/oauth2callback",
+      channels: loadChannels(),
+    },
+    instagram: {
+      accounts: loadInstagramAccounts(),
+    },
+  };
+}
+
+const primaryProfile = loadPrimaryProfile();
+
+export const config: AppConfig = {
+  telegramToken: process.env.TELEGRAM_BOT_TOKEN || "",
+  youtube: primaryProfile.youtube,
+  instagram: primaryProfile.instagram,
+  profiles: [primaryProfile, ...loadExtraProfiles()].filter(
+    (p) => p.telegramToken,
+  ),
   ai: {
     provider: (process.env.AI_PROVIDER || "mock") as
       | "claude"
@@ -162,6 +325,11 @@ export const config: AppConfig = {
     chrome:
       process.env.PUPPETEER_EXECUTABLE_PATH ||
       "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    fpcalc: process.env.FPCALC_PATH || "fpcalc",
+  },
+  copyright: {
+    enabled: process.env.COPYRIGHT_CHECK_ENABLED !== "false",
+    acoustidApiKey: process.env.ACOUSTID_API_KEY || "",
   },
 };
 
@@ -169,16 +337,23 @@ export const config: AppConfig = {
 export function validateConfig(): void {
   const warnings: string[] = [];
 
-  if (!config.telegramToken) {
+  if (config.profiles.length === 0) {
     warnings.push(
-      "Warning: TELEGRAM_BOT_TOKEN is not configured. Bot will fail to start.",
+      "Warning: No Telegram bot tokens configured (TELEGRAM_BOT_TOKEN or <PREFIX>_TELEGRAM_BOT_TOKEN_*). Bot will fail to start.",
     );
   }
 
-  if (!config.youtube.clientId || config.youtube.channels.length === 0) {
-    warnings.push(
-      "Warning: YouTube API credentials are not fully configured. Upload will fall back to simulation mode.",
-    );
+  for (const p of config.profiles) {
+    if (!p.youtube.clientId || p.youtube.channels.length === 0) {
+      warnings.push(
+        `Warning: [${p.brandName}] YouTube API credentials are not fully configured. Upload will fall back to simulation mode.`,
+      );
+    }
+    if (p.instagram.accounts.length === 0) {
+      warnings.push(
+        `Warning: [${p.brandName}] No Instagram account configured. Instagram upload will be simulated.`,
+      );
+    }
   }
 
   if (
@@ -188,6 +363,12 @@ export function validateConfig(): void {
   ) {
     warnings.push(
       `Warning: AI_PROVIDER is set to '${config.ai.provider}' but its CLI path is not set. It will try to use the binary in PATH.`,
+    );
+  }
+
+  if (config.copyright.enabled && !config.copyright.acoustidApiKey) {
+    warnings.push(
+      "Warning: ACOUSTID_API_KEY is not set. Music copyright risk will show as 'unverified'. Get a free key at https://acoustid.org/new-application",
     );
   }
 
