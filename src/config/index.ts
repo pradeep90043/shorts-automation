@@ -252,7 +252,13 @@ function loadPrimaryProfile(): ChannelProfile {
     handle: process.env.BRAND_HANDLE || "@codeorcap",
     theme: resolveTheme(process.env.NICHE, "primary profile"),
     isDefault: true,
-    telegramToken: process.env.TELEGRAM_BOT_TOKEN || "",
+    // BOT_ENV (local|prod) picks the token variant; plain TELEGRAM_BOT_TOKEN still works
+    telegramToken:
+      process.env[`TELEGRAM_BOT_TOKEN_${BOT_ENV}`] ||
+      process.env.TELEGRAM_BOT_TOKEN ||
+      process.env.TELEGRAM_BOT_TOKEN_LOCAL ||
+      process.env.TELEGRAM_BOT_TOKEN_PROD ||
+      "",
     youtube: {
       clientId: process.env.YOUTUBE_CLIENT_ID || "",
       clientSecret: process.env.YOUTUBE_CLIENT_SECRET || "",
