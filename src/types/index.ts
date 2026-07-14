@@ -159,6 +159,7 @@ export interface PipelineContext {
   instagramSourceType?: "image" | "image_with_music" | "video";
   captionMetadata?: { title: string; description: string }; // user-provided title+description from Telegram caption
   userPrompt?: string; // custom re-generation prompt instruction from the user
+  metadataIsFallback?: boolean; // AI metadata failed — hardcoded template metadata in use
   previousMetadata?: VideoMetadata; // metadata before re-generation
   rephrasedCaption?: string; // AI rephrased caption
   mediaHash?: string; // SHA-256 fingerprint of media

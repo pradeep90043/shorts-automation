@@ -183,12 +183,14 @@ export class DirectUploader {
         "FreeLLMAPI client is not initialized",
         "DirectUploader",
       );
+      context.metadataIsFallback = true;
       context.metadata = this.fallbackMetadata();
       context.brandingDetection = { detected: false, zones: [] };
       return;
     }
 
     try {
+      context.metadataIsFallback = false;
       const { base64, mimeType } = await this.getSmallBase64Image(imagePath);
 
       let prompt = `You are a computer vision assistant and growth strategist for ${this.theme.channelDescriptor} called "${this.profile.brandName}".
@@ -709,7 +711,27 @@ Description: ${description}\n`;
       }
       throw new Error("Invalid format from text fallback");
     } catch (err) {
-      pipelineLogger.warn("Text fallback failed, using hardcoded metadata", "DirectUploader");
+      const msg = err instanceof Error ? err.message : String(err);
+      pipelineLogger.warn(
+        `Text fallback failed (${msg.slice(0, 150)}), using hardcoded template metadata`,
+        "DirectUploader",
+      );
+
+      // Surface the failure in Telegram — otherwise the video silently goes to
+      // review with a generic template title
+      if (context) context.metadataIsFallback = true;
+      const chatId = context?.telegramMeta?.chatId;
+      if (chatId) {
+        this.telegram
+          .sendMessage(
+            chatId,
+            `❌ *AI metadata generation failed* (FreeLLMAPI, model: auto)\n` +
+              `\`${msg.replace(/`/g, "'").slice(0, 200)}\`\n\n` +
+              `_Using a generic template title/description instead. Tap 🔄 Regenerate on the review message to retry AI generation._`,
+            context?.telegramMeta?.messageId,
+          )
+          .catch(() => {});
+      }
       return this.fallbackMetadata();
     }
   }
@@ -1235,7 +1257,8 @@ ${this.theme.analysisRules}`;
 
     generate
       .then(async (metadata) => {
-        // Update stored metadata
+        // Update stored metadata (regeneration succeeded — clear fallback flag)
+        pending.context.metadataIsFallback = false;
         pending.metadata = metadata;
 
         const caption =
@@ -1252,13 +1275,17 @@ ${this.theme.analysisRules}`;
           id,
         );
       })
-      .catch((err) =>
-        pipelineLogger.error(
-          `Regenerate failed for ${id}`,
-          err,
-          "DirectUploader",
-        ),
-      );
+      .catch(async (err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        pipelineLogger.error(`Regenerate failed for ${id}`, err, "DirectUploader");
+        await this.telegram.sendMessage(
+          pending.chatId,
+          `❌ *Metadata regeneration failed* (FreeLLMAPI, model: auto)\n` +
+            `\`${msg.replace(/`/g, "'").slice(0, 200)}\`\n\n` +
+            `_The previous title/description is unchanged. Tap 🔄 Regenerate to try again._`,
+          pending.reviewMessageId,
+        );
+      });
   }
 
   /**
@@ -2683,8 +2710,12 @@ Set all booleans carefully and include a brief explanation in "reason".`;
       }
 
       const musicCaptionLine = await this.buildMusicCaptionLine(context.selectedMusicTrack);
+      const fallbackWarningLine = context.metadataIsFallback
+        ? `❌ *AI metadata FAILED — generic template in use. Tap 🔄 Regenerate!*\n\n`
+        : "";
       const caption =
         `📋 *Review your Short*\n\n` +
+        fallbackWarningLine +
         `*Title:* ${escapeMarkdown(metadata.title)}\n\n` +
         `*Description:* ${escapeMarkdown(metadata.description.slice(0, 200))}…\n\n` +
         musicCaptionLine +
