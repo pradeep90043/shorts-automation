@@ -8,6 +8,8 @@ services:
     env_file: .env
     environment:
       - FREELLMAPI_URL=http://freellmapi:3001
+      # The VM is always prod: forces *_TELEGRAM_BOT_TOKEN_PROD variants regardless of .env
+      - BOT_ENV=prod
     depends_on:
       - freellmapi
     volumes:
