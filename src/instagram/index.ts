@@ -470,7 +470,7 @@ async function downloadViaPuppeteer(
           "Instagram",
         );
         await page.goto(url, {
-          waitUntil: "networkidle2",
+          waitUntil: "domcontentloaded",
           timeout: 90_000,
         });
 
