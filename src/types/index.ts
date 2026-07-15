@@ -103,6 +103,7 @@ export interface VideoMetadata {
   mood?: "funny" | "sad" | "other";
   factCheckScore?: number;
   verdict?: string;
+  voiceoverScript?: string;
 }
 
 export interface RenderOptions {
@@ -199,6 +200,9 @@ export interface PipelineContext {
   captionVariants?: { A: string; B: string; C: string }; // Multiple rephrased variants
   useRephrasedCaption?: boolean; // track if a rephrased caption variant was chosen
   selectedMusicTrack?: string; // Pre-selected music track for first frame review
+  useVoiceover?: boolean; // Whether to include AI voiceover (defaults to true if script exists)
+  ttsAudioPath?: string; // Path to generated TTS audio
+  ttsDuration?: number; // Duration of generated TTS audio
 }
 
 export interface ITelegramService {
@@ -223,6 +227,12 @@ export interface ITelegramService {
     id: string,
     replyToMessageId?: number,
   ): Promise<number>;
+  registerReviewCallback(
+    cb: (
+      action: "publish" | "cancel" | "regenerate" | "viral" | "toggle_voiceover",
+      id: string,
+    ) => void,
+  ): void;
   registerFrameReviewCallback(
     cb: (
       action: "approve" | "cancel" | "select_a" | "select_b" | "select_c",
@@ -302,6 +312,7 @@ export interface IMusicService {
     forceReplace?: boolean,
     excludeTrack?: string,
     specificTrack?: string,
+    voiceoverPath?: string,
   ): Promise<string>;
 }
 

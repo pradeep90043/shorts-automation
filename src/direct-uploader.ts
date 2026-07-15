@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import sharp from "sharp";
-import { exec } from "child_process";
+import { exec, execSync } from "child_process";
 import { config, ChannelProfile } from "./config";
 import { VideoRenderer, calculateVideoCrop } from "./renderer";
 import { OcrService } from "./ocr";
@@ -20,6 +20,8 @@ import { getCopyrightRisk, formatRisk } from "./audio/copyrightCheck";
 import { ViralAnalyzer } from "./utils/viral-analyzer";
 import { JobQueue } from "./utils/queue";
 import { ImageAnalyzer } from "./image-analysis";
+import { TTSService } from "./audio/tts";
+import { estimateWordTimings, groupWordsIntoLines, generateASSFile } from "./audio/subtitles";
 
 // Metadata format rules (title/description/keywords/analysis) live on the channel
 // profile's ContentTheme (src/config/themes.ts) so every generation path (unified
@@ -58,24 +60,23 @@ export class DirectUploader {
   private telegram: TelegramService;
   private db: JobDatabase;
   private profile: ChannelProfile;
+  private tts: TTSService;
 
   private get theme() {
     return this.profile.theme;
+  }
+  private get voiceoverPromptLanguage(): string {
+    return this.profile.key.toLowerCase() === "codeorcap"
+      ? "natural, professional English"
+      : "Hinglish (a conversational mix of Hindi and English, written in English alphabet)";
   }
   private viralAnalyzer = new ViralAnalyzer();
   private analyzer = new ImageAnalyzer();
   private queue = new JobQueue(1);
   private pending = new Map<string, PendingUpload>();
-  private musicReplaceInFlight = new Set<string>();
   private pendingFrameReviews = new Map<
     string,
-    {
-      context: PipelineContext;
-      timer: ReturnType<typeof setTimeout>;
-      reviewMessageId: number;
-      chatId: number;
-      messageId: number;
-    }
+    { context: PipelineContext; lastMusicTrack?: string; ttsPromise?: Promise<number>; timer: ReturnType<typeof setTimeout>; reviewMessageId: number; chatId: number; messageId: number; }
   >();
   private uploaded = new Map<
     string,
@@ -100,6 +101,7 @@ export class DirectUploader {
       this.profile.isDefault ? undefined : this.profile.key,
     );
     this.telegram = telegram;
+    this.tts = new TTSService();
 
     // Wire up inline-button callbacks from Telegram
     telegram.registerReviewCallback((action, id) => {
@@ -107,7 +109,7 @@ export class DirectUploader {
       else if (action === "cancel") this.onCancel(id);
       else if (action === "regenerate") this.onRegenerate(id, false);
       else if (action === "viral") this.onRegenerate(id, true);
-      else if (action === "replace_music") this.onReplaceMusic(id);
+      else if (action === "toggle_voiceover") this.onToggleVoiceover(id);
     });
 
     telegram.registerRevokeCallback(async (id) => {
@@ -218,6 +220,7 @@ KEYWORDS: ${this.theme.keywordsRule}
 THUMBNAIL: Max 5 words, highly clickable, curiosity driven.
 FILENAME: SEO-friendly filename (e.g., short-video-2026.mp4).
 MOOD: Determine emotional tone: "funny", "sad", or "other".
+VOICEOVER: Write a short, highly engaging 10-15 second script (approx 20-30 words) in ${this.voiceoverPromptLanguage} that describes the content. It should sound very natural, hook the viewer immediately, and explain what is happening or read the meme text in an entertaining way.
 
 TASK 3: Verbatim Text Extraction
 Read all text written on the image exactly as it appears verbatim, without correcting spelling, punctuation, or formatting. If there is no text, return an empty string.
@@ -305,7 +308,8 @@ Return ONLY a raw JSON object matching this schema — no markdown, no explanati
     "filename": string,
     "mood": "funny" | "sad" | "other",
     "factCheckScore": number,
-    "verdict": string
+    "verdict": string,
+    "voiceoverScript": string
   },
   "brandingZones": [
     {
@@ -481,6 +485,7 @@ Tags: ${context.previousMetadata.tags?.join(", ")}`;
           hashtags: Array.isArray((data as any).hashtags) ? (data as any).hashtags : [],
           primaryKeyword: (data as any).primaryKeyword,
           mood: (data as any).mood,
+          voiceoverScript: (data as any).voiceoverScript,
         };
       }
 
@@ -695,8 +700,8 @@ Description: ${description}\n`;
       }
 
       const prompt = viral
-        ? `You are a viral YouTube Shorts growth hacker for ${this.theme.channelDescriptor} called "${this.profile.brandName}". ${contentContext} Generate the most scroll-stopping, curiosity-gap, high-CTR metadata possible based on the text.\n${this.theme.titleRules}\n${this.theme.descriptionRules(this.profile.brandName)}\nReturn ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate"}}`
-        : `You are a YouTube Shorts strategist for ${this.theme.channelDescriptor} called "${this.profile.brandName}". ${contentContext} Generate SEO-optimised metadata based on the text.\n${this.theme.titleRules}\n${this.theme.descriptionRules(this.profile.brandName)}\nReturn ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate"}}`;
+        ? `You are a viral YouTube Shorts growth hacker for ${this.theme.channelDescriptor} called "${this.profile.brandName}". ${contentContext} Generate the most scroll-stopping, curiosity-gap, high-CTR metadata possible based on the text.\n${this.theme.titleRules}\n${this.theme.descriptionRules(this.profile.brandName)}\nWrite a short, engaging 10-15 second voiceover script (approx 20-30 words) in ${this.voiceoverPromptLanguage} describing the content.\nReturn ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate","voiceoverScript":"..."}}`
+        : `You are a YouTube Shorts strategist for ${this.theme.channelDescriptor} called "${this.profile.brandName}". ${contentContext} Generate SEO-optimised metadata based on the text.\n${this.theme.titleRules}\n${this.theme.descriptionRules(this.profile.brandName)}\nWrite a short, engaging 10-15 second voiceover script (approx 20-30 words) in ${this.voiceoverPromptLanguage} describing the content.\nReturn ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate","voiceoverScript":"..."}}`;
       
       const raw = await this.freellmapi.generateText(prompt);
       const data = parseAiJson<{metadata?: VideoMetadata} & Partial<VideoMetadata>>(raw);
@@ -752,6 +757,7 @@ Rules:
 - ${this.theme.descriptionRules(this.profile.brandName)}
 - tags: 10-12 specific tags covering the topic, theme, and audience (no spaces in tags).
 - mood: Determine the emotional tone or theme of the content. Choose exactly one of: "funny", "sad", or "other" (for general, educational, or motivational content).
+- voiceoverScript: Write a short, highly engaging 10-15 second script (approx 20-30 words) in ${this.voiceoverPromptLanguage} that describes the content. It should sound very natural, hook the viewer immediately, and explain what is happening or read the meme text in an entertaining way.
 - ${this.theme.analysisRules}`;
 
     if (context?.userPrompt) {
@@ -768,7 +774,7 @@ Rules:
     }
 
     prompt += `\nReturn ONLY a raw JSON object — no markdown, no explanation:
-{"title":"...","description":"...","tags":["...","..."],"mood":"funny" | "sad" | "other", "factCheckScore": 10, "verdict": "..."}`;
+{"title":"...","description":"...","tags":["...","..."],"mood":"funny" | "sad" | "other", "factCheckScore": 10, "verdict": "...", "voiceoverScript": "..."}`;
 
     for (let attempt = 0; attempt < AI_MAX_ATTEMPTS; attempt++) {
       try {
@@ -913,6 +919,55 @@ ${this.theme.analysisRules}`;
       }
     }
     return await this.generateTextMetadataFallback(true, context);
+  }
+
+  private async optimizeAndTrimVideo(videoPath: string): Promise<void> {
+    const tempDir = path.dirname(videoPath);
+    const tempOutPath = path.join(tempDir, `opt_${path.basename(videoPath)}`);
+    
+    // 1. Get video duration using ffprobe
+    const ffprobeCmd = `${config.binaries.ffprobe} -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${videoPath}"`;
+    const durationStr = await new Promise<string>((resolve, reject) => {
+      exec(ffprobeCmd, (err, stdout) => {
+        if (err) reject(err);
+        else resolve(stdout.trim());
+      });
+    });
+    
+    const duration = parseFloat(durationStr);
+    if (isNaN(duration) || duration <= 0) {
+      pipelineLogger.warn(`Could not determine video duration for optimization: ${videoPath}`, "DirectUploader");
+      return;
+    }
+    
+    pipelineLogger.info(`Input video duration: ${duration.toFixed(2)}s`, "DirectUploader");
+    
+    if (duration > 59.0) {
+      pipelineLogger.info(`Video exceeds 59s. Trimming and optimizing with faststart...`, "DirectUploader");
+      // Trimming requires re-encoding to prevent keyframe alignment issues
+      const trimCmd = `${config.binaries.ffmpeg} -y -i "${videoPath}" -t 59.0 -c:v libx264 -preset superfast -crf 23 -c:a aac -movflags +faststart "${tempOutPath}"`;
+      await new Promise<void>((resolve, reject) => {
+        exec(trimCmd, (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+    } else {
+      pipelineLogger.info(`Optimizing video with faststart...`, "DirectUploader");
+      // Just copy stream and add faststart flags (instant)
+      const fastCmd = `${config.binaries.ffmpeg} -y -i "${videoPath}" -c copy -movflags +faststart "${tempOutPath}"`;
+      await new Promise<void>((resolve, reject) => {
+        exec(fastCmd, (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+    }
+    
+    if (fs.existsSync(tempOutPath)) {
+      fs.renameSync(tempOutPath, videoPath);
+      pipelineLogger.info(`Video optimized successfully: ${videoPath}`, "DirectUploader");
+    }
   }
 
   // ── Upload to all channels ─────────────────────────────────────────────────
@@ -1122,32 +1177,118 @@ ${this.theme.analysisRules}`;
     this.resolveJob(id);
   }
 
+  private async onToggleVoiceover(id: string) {
+    const job = this.db.getJob(id);
+    // Only allow toggling voiceover during final review
+    if (!job || job.status !== "final_review") return;
+    
+    // Toggle the voiceover flag
+    job.context.useVoiceover = !job.context.useVoiceover;
+    
+    // Determine which video to show
+    const tempDir = job.context.tempDir;
+    const finalNoVoicePath = path.join(tempDir, "video_final_no_voice.mp4");
+    const finalVoicePath = path.join(tempDir, "video_final_voice.mp4");
+    
+    const finalVideoPath = job.context.useVoiceover && fs.existsSync(finalVoicePath) 
+      ? finalVoicePath 
+      : finalNoVoicePath;
+      
+    // Update the output file for final publishing
+    const metadata = job.context.metadata!;
+    const safeTitle = metadata.title
+      .replace(/[^a-zA-Z0-9 _-]/g, "")
+      .trim()
+      .replace(/\s+/g, "_")
+      .slice(0, 60);
+    const outputFileName = `${safeTitle}_${id}.mp4`;
+    const outputFilePath = path.join(config.paths.outputDir, outputFileName);
+    fs.copyFileSync(finalVideoPath, outputFilePath);
+
+    // Update the pending object in memory so the publisher uses the right video
+    const pending = this.pending.get(id);
+    if (pending) {
+      pending.finalVideoPath = finalVideoPath;
+    }
+
+    // Update context in DB
+    this.db.updateJob(id, { context: job.context });
+    
+    // Update the message to indicate status
+    const statusText = job.context.useVoiceover ? "🔊 Voiceover: **ON**" : "🔇 Voiceover: **OFF**";
+    const fallbackWarningLine = job.context.metadataIsFallback
+      ? `❌ *AI metadata FAILED — generic template in use. Tap 🔄 Regenerate!*\n\n`
+      : "";
+    const caption =
+      `📋 *Review your Short*\n\n` +
+      fallbackWarningLine +
+      `*Title:* ${escapeMarkdown(metadata.title)}\n\n` +
+      `*Description:* ${escapeMarkdown(metadata.description.slice(0, 200))}…\n\n` +
+      statusText + `\n\n` +
+      `⏳ _Waiting for review action..._`;
+
+    if (job.context.telegramMeta.messageId) {
+      // Compress if needed for Telegram
+      let reviewVideoPath = finalVideoPath;
+      const stats = fs.statSync(finalVideoPath);
+      if (stats.size > 45 * 1024 * 1024) {
+        pipelineLogger.info("Video exceeds 45MB. Compressing for Telegram...", "DirectUploader");
+        reviewVideoPath = path.join(tempDir, "video_compressed.mp4");
+        await new Promise<void>((resolve, reject) => {
+          const ffmpegCmd = `${config.binaries.ffmpeg} -y -i "${finalVideoPath}" -vcodec libx264 -crf 28 -preset fast -c:a copy -movflags +faststart "${reviewVideoPath}"`;
+          exec(ffmpegCmd, (error) => {
+            if (error) {
+              pipelineLogger.error("Failed to compress video for Telegram", error, "DirectUploader");
+              reject(error);
+            } else {
+              resolve();
+            }
+          });
+        });
+      }
+
+      await this.telegram.editReviewVideo(
+        job.context.telegramMeta.chatId,
+        job.context.telegramMeta.messageId,
+        reviewVideoPath,
+        caption,
+        id
+      );
+    }
+  }
+
   private async onApproveFrame(id: string): Promise<void> {
     const pending = this.pendingFrameReviews.get(id);
     if (!pending) return;
 
-    // Clear timeout and remove from map
-    clearTimeout(pending.timer);
+    // Remove from pending immediately to prevent double clicks
     this.pendingFrameReviews.delete(id);
+    
+    // Clear timeout
+    clearTimeout(pending.timer);
 
     // Clean up buttons from photo message
     await this.telegram
       .removeInlineButtons(pending.chatId, pending.reviewMessageId)
       .catch(() => {});
 
-    pipelineLogger.info(
-      `Frame approved for ${id}. Resuming video compilation...`,
-      "DirectUploader",
-    );
+    try {
+      // If voiceover is enabled and a promise is running, await it
+      if (pending.context.useVoiceover && pending.ttsPromise) {
+        pipelineLogger.info(`Awaiting parallel TTS generation for job ${id}...`, "DirectUploader");
+        try {
+          const duration = await pending.ttsPromise;
+          pending.context.ttsDuration = duration;
+          (pending.context as any).voiceoverPath = path.join(pending.context.tempDir, "voiceover.mp3");
+        } catch (err) {
+          pipelineLogger.error("Background TTS generation failed", err, "DirectUploader");
+        }
+      }
 
-    // Proceed to next steps
-    this.resumeFromFrameApproval(pending.context).catch((err) => {
-      pipelineLogger.error(
-        `Failed to resume pipeline after frame approval for ${id}`,
-        err,
-        "DirectUploader",
-      );
-    });
+      this.resumeFromFrameApproval(pending.context);
+    } catch (err) {
+      pipelineLogger.error("Failed to resume from frame approval", err, "DirectUploader");
+    }
   }
 
   private async onCancelFrame(id: string): Promise<void> {
@@ -1300,113 +1441,6 @@ ${this.theme.analysisRules}`;
     return `🎵 *Music:* ${escapeMarkdown(path.basename(track))} — ${escapeMarkdown(formatRisk(risk))}\n\n`;
   }
 
-  private async onReplaceMusic(id: string): Promise<void> {
-    const pending = this.pending.get(id);
-    if (!pending) {
-      pipelineLogger.warn(
-        `Replace music requested for ${id} but no pending review found in this instance`,
-        "DirectUploader",
-      );
-      return;
-    }
-
-    if (this.musicReplaceInFlight.has(id)) {
-      pipelineLogger.warn(
-        `Music replace already in progress for ${id} — ignoring duplicate tap`,
-        "DirectUploader",
-      );
-      return;
-    }
-    this.musicReplaceInFlight.add(id);
-
-    pipelineLogger.info(`Replacing music for ${id}`, "DirectUploader");
-
-    try {
-      const tempMusicVideoPath = path.join(pending.context.tempDir, "video_music_replaced.mp4");
-      const rawVideoPath = path.join(pending.context.tempDir, "video_raw.mp4");
-
-      const newTrack = this.music.selectLocalTrack(
-        config.paths.musicDir,
-        pending.metadata.mood,
-        pending.lastMusicTrack
-      );
-
-      await this.music.addBackgroundMusic(
-        rawVideoPath,
-        config.paths.musicDir,
-        tempMusicVideoPath,
-        pending.metadata.mood,
-        true, // always re-mix from the raw video, replacing any existing music
-        undefined, // excludeTrack is handled by selectLocalTrack above
-        newTrack // specificTrack
-      );
-
-      // The job may have been published/cancelled (and its temp dir cleaned)
-      // while ffmpeg was running — bail out instead of writing to deleted paths
-      if (this.pending.get(id) !== pending) {
-        pipelineLogger.warn(
-          `Job ${id} was published or cancelled during music replace — discarding result`,
-          "DirectUploader",
-        );
-        return;
-      }
-
-      fs.copyFileSync(tempMusicVideoPath, pending.finalVideoPath);
-      fs.copyFileSync(tempMusicVideoPath, pending.outputFilePath);
-
-      pending.lastMusicTrack = newTrack;
-      pending.musicCaptionLine = await this.buildMusicCaptionLine(newTrack);
-
-      // Edit the video in the existing review message
-      const caption =
-        `📋 *Review your Short*\n\n` +
-        `*Title:* ${escapeMarkdown(pending.metadata.title)}\n\n` +
-        `*Description:* ${escapeMarkdown(pending.metadata.description.slice(0, 200))}…\n\n` +
-        pending.musicCaptionLine +
-        `⏳ _Waiting for review action..._`;
-
-      pipelineLogger.info(
-        `Uploading music-replaced video to Telegram review message…`,
-        "DirectUploader",
-      );
-      pending.reviewMessageId = await Promise.race([
-        this.telegram.editReviewVideo(
-          pending.chatId,
-          pending.reviewMessageId,
-          pending.finalVideoPath,
-          caption,
-          id,
-        ),
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error("Telegram media edit timed out after 120s")),
-            120_000,
-          ),
-        ),
-      ]);
-      pipelineLogger.checkpoint(
-        "Review message updated with new music",
-        true,
-        path.basename(newTrack),
-      );
-
-      // Removed auto-publish timer as per user request
-
-    } catch (err) {
-      pipelineLogger.error(
-        `Failed to replace music for ${id}`,
-        err,
-        "DirectUploader",
-      );
-      await this.telegram.sendMessage(
-        pending.chatId,
-        `⚠️ *Music replace failed:* \`${err instanceof Error ? err.message : err}\``,
-        pending.reviewMessageId,
-      );
-    } finally {
-      this.musicReplaceInFlight.delete(id);
-    }
-  }
 
   private async onRevoke(id: string): Promise<void> {
     const uploadedData = this.uploaded.get(id);
@@ -1506,6 +1540,17 @@ ${this.theme.analysisRules}`;
     }
     if (fs.existsSync(pristineImagePath)) {
       fs.copyFileSync(pristineImagePath, originalImagePath);
+    }
+
+    if (isVideo && context.originalVideoPath && fs.existsSync(context.originalVideoPath)) {
+      try {
+        await this.optimizeAndTrimVideo(context.originalVideoPath);
+      } catch (optErr) {
+        pipelineLogger.warn(
+          `Failed to optimize and trim video: ${optErr instanceof Error ? optErr.message : optErr}`,
+          "DirectUploader"
+        );
+      }
     }
 
     try {
@@ -1940,12 +1985,32 @@ ${this.theme.analysisRules}`;
             );
           }
         }
+        let finalDuration = config.rendering.videoDurationSeconds;
+        let voiceoverPath: string | undefined = undefined;
+
+        if (context.useVoiceover && context.metadata?.voiceoverScript) {
+          if (context.ttsDuration && (context as any).voiceoverPath) {
+            // TTS was generated asynchronously and awaited in onApproveFrame
+            finalDuration = context.ttsDuration;
+            voiceoverPath = (context as any).voiceoverPath;
+          } else {
+            // Fallback: generate it synchronously if not already done
+            try {
+              const tempVoiceoverPath = path.join(tempDir, "voiceover.mp3");
+              finalDuration = await this.tts.generateVoiceover(context.metadata.voiceoverScript, tempVoiceoverPath, this.profile.key);
+              voiceoverPath = tempVoiceoverPath;
+              (context as any).voiceoverPath = voiceoverPath;
+            } catch (err) {
+              pipelineLogger.error("Failed to generate voiceover synchronously, proceeding without it", err, "DirectUploader");
+            }
+          }
+        }
 
         await this.renderer.renderImageToVideo(
           originalImagePath,
           rawVideoPath,
           {
-            durationSeconds: config.rendering.videoDurationSeconds,
+            durationSeconds: finalDuration,
             fps: config.rendering.fps,
             effect: "zoom",
           },
@@ -2323,161 +2388,6 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
             );
           }
 
-          // ── 5b. Post-render Visual Validation Pass ─────────────────────────
-          // Extract the first frame of the rendered video and ask AI Vision
-          // whether the caption is covering important scene content. If yes,
-          // drop the top candidate, try the next one, and re-render (max 2 retries).
-          if (this.freellmapi && (context.safeAreaCandidates?.length ?? 0) > 1) {
-            try {
-              const validationFramePath = path.join(tempDir, "validation_frame.png");
-              const extractValidFrame = `ffmpeg -y -ss 00:00:01 -i "${rawVideoPath}" -vframes 1 -q:v 2 "${validationFramePath}"`;
-              await new Promise<void>((res, rej) => exec(extractValidFrame, (e) => e ? rej(e) : res()));
-
-              let candidateIndex = 0;
-              let validationPassed = false;
-              const MAX_RETRIES = 2;
-
-              while (!validationPassed && candidateIndex < Math.min(MAX_RETRIES, context.safeAreaCandidates?.length ?? 0 - 1)) {
-                const { base64: valBase64, mimeType: valMime } = await this.getSmallBase64Image(validationFramePath);
-              const valPrompt = `Look at this rendered video frame. A caption text overlay has been added to it.
-Answer ONLY with a raw JSON object — no markdown, no explanation:
-{
-  "coversImportantContent": boolean,
-  "oldTextVisible": boolean,
-  "bannerOversized": boolean,
-  "looksNatural": boolean,
-  "reason": string
-}
-
-Evaluate ALL four criteria:
-
-1. coversImportantContent = true if the caption or any background rectangle behind it covers:
-   - a human face, eyes, or mouth
-   - an animated character's face or body
-   - hands or gesture motions
-   - the main subject or object of the scene (e.g. escalator, vehicle, animal, prop)
-   - important action or motion area
-   - the visual punchline of the meme
-
-2. oldTextVisible = true if ANY letters or words from the ORIGINAL meme caption are still partially readable
-   behind or around the new caption overlay (incomplete coverage of original text).
-
-3. bannerOversized = true if:
-   - The black or colored rectangle behind the caption is significantly taller than the text inside it
-   - The banner is floating and does not align with any original caption region
-   - There is clearly too much empty space above or below the text inside the banner
-
-4. looksNatural = true if the caption feels like it was part of the original meme:
-   - Text is centered in its region
-   - Old text is fully hidden
-   - No floating rectangles
-   - Style matches the scene (e.g. plain text on cartoon, not black box on green background)
-
-Set all booleans carefully and include a brief explanation in "reason".`;
-
-                const valRaw = await this.freellmapi.generateVision(valPrompt, valBase64, valMime);
-                let coversContent = false;
-                try {
-                  const valResult = parseAiJson<{
-                    coversImportantContent: boolean;
-                    oldTextVisible: boolean;
-                    bannerOversized: boolean;
-                    looksNatural: boolean;
-                    reason: string;
-                  }>(valRaw);
-                  coversContent =
-                    valResult.coversImportantContent === true ||
-                    valResult.oldTextVisible === true ||
-                    valResult.bannerOversized === true;
-                  pipelineLogger.info(
-                    `Post-render validation (candidate #${candidateIndex}): ` +
-                    `coversContent=${valResult.coversImportantContent}, ` +
-                    `oldTextVisible=${valResult.oldTextVisible}, ` +
-                    `bannerOversized=${valResult.bannerOversized}, ` +
-                    `looksNatural=${valResult.looksNatural}, ` +
-                    `reason="${valResult.reason}"`,
-                    "DirectUploader",
-                  );
-                } catch (parseErr) {
-                  pipelineLogger.warn(
-                    `Post-render validation response could not be parsed: ${valRaw.slice(0, 200)}`,
-                    "DirectUploader",
-                  );
-                  break;
-                }
-
-                if (!coversContent) {
-                  validationPassed = true;
-                  pipelineLogger.checkpoint("✓ Post-render validation passed — caption looks natural", true);
-                  break;
-                }
-
-                // Caption is covering content — try next candidate
-                candidateIndex++;
-                const safeCandidates = context.safeAreaCandidates ?? [];
-                if (candidateIndex >= safeCandidates.length) break;
-
-                const candidate = safeCandidates[candidateIndex];
-                pipelineLogger.info(
-                  `Caption covers important content — retrying with safe area candidate #${candidateIndex} (score=${candidate.score}, reason="${candidate.reason}")`,
-                  "DirectUploader",
-                );
-
-                // Re-render with next candidate promoted to position 0
-                const reorderedCandidates = [
-                  safeCandidates[candidateIndex],
-                  ...safeCandidates.filter((_, i) => i !== candidateIndex),
-                ];
-
-                const retryProps = {
-                  ...renderProps,
-                  safeAreaCandidates: reorderedCandidates,
-                  existingBanner: false, // Do not reuse banner for fallback candidates
-                  bannerBounds: null,
-                };
-
-                const retryPropsFile = path.join(tempDir, "remotion_props_retry.json");
-                fs.writeFileSync(retryPropsFile, JSON.stringify(retryProps));
-
-                const retryOutputPath = path.join(remotionPublicDir, "video_output_retry.mp4");
-                if (fs.existsSync(retryOutputPath)) fs.unlinkSync(retryOutputPath);
-
-                // Copy input video back (the original was already overwritten)
-                fs.copyFileSync(rawVideoPath, remotionInputPath);
-
-                const retryCmd = `npx remotion render DynamicText "${retryOutputPath}" --props="${retryPropsFile}" --duration=${durationInFrames}`;
-                await new Promise<void>((res, rej) => {
-                  exec(retryCmd, { cwd: remotionProjectDir }, (err) => err ? rej(err) : res());
-                });
-
-                if (fs.existsSync(retryOutputPath)) {
-                  fs.copyFileSync(retryOutputPath, rawVideoPath);
-                  pipelineLogger.checkpoint(`✓ Re-render with fallback candidate #${candidateIndex} complete`, true);
-                  // Extract new validation frame from re-rendered video
-                  await new Promise<void>((res, rej) => exec(
-                    `ffmpeg -y -ss 00:00:01 -i "${rawVideoPath}" -vframes 1 -q:v 2 "${validationFramePath}"`,
-                    (e) => e ? rej(e) : res()
-                  ));
-                  try { fs.unlinkSync(retryOutputPath); fs.unlinkSync(retryPropsFile); } catch (_) {}
-                }
-              }
-
-              if (!validationPassed) {
-                pipelineLogger.warn(
-                  "Post-render validation: could not find a fully safe placement after retries. Keeping last render.",
-                  "DirectUploader",
-                );
-              }
-
-              // Clean up validation frame
-              try { fs.unlinkSync(validationFramePath); } catch (_) {}
-            } catch (validationErr) {
-              pipelineLogger.warn(
-                `Post-render validation failed (non-fatal): ${validationErr instanceof Error ? validationErr.message : validationErr}`,
-                "DirectUploader",
-              );
-            }
-          }
 
           // Cleanup temp files
           try {
@@ -2559,6 +2469,18 @@ Set all booleans carefully and include a brief explanation in "reason".`;
         fs.copyFileSync(reviewFrameRawPath, reviewFramePath);
       }
 
+      context.useVoiceover = !!context.metadata?.voiceoverScript;
+
+      let ttsPromise: Promise<number> | undefined;
+      if (context.useVoiceover) {
+        pipelineLogger.info("Kicking off TTS generation asynchronously...", "DirectUploader");
+        ttsPromise = this.tts.generateVoiceover(
+          context.metadata!.voiceoverScript!, 
+          path.join(tempDir, "voiceover.mp3"),
+          this.profile.key
+        );
+      }
+
       const truncate = (str: string) => {
         if (!str) return "";
         return str.length > 150 ? str.slice(0, 150) + "..." : str;
@@ -2612,6 +2534,7 @@ Set all booleans carefully and include a brief explanation in "reason".`;
         reviewMessageId: frameReviewMessageId,
         chatId,
         messageId,
+        ttsPromise,
       });
 
       // Wait until the job is fully resolved (published, cancelled, or failed)
@@ -2664,17 +2587,107 @@ Set all booleans carefully and include a brief explanation in "reason".`;
         context,
       });
 
-      // 3 — Add music
-      const finalVideoPath = path.join(tempDir, "video_final.mp4");
-      await this.music.addBackgroundMusic(
-        rawVideoPath,
-        config.paths.musicDir,
-        finalVideoPath,
-        metadata.mood,
-        false,
-        undefined,
-        context.selectedMusicTrack,
-      );
+      // 3 — Prepare final videos (with and without voiceover)
+      const finalNoVoicePath = path.join(tempDir, "video_final_no_voice.mp4");
+      const finalVoicePath = path.join(tempDir, "video_final_voice.mp4");
+      
+      fs.copyFileSync(rawVideoPath, finalNoVoicePath);
+      
+      const voiceoverPath = (context as any).voiceoverPath;
+      if (voiceoverPath && fs.existsSync(voiceoverPath)) {
+        await new Promise<void>((resolve) => {
+          const hookVideoPath = path.join(tempDir, "hook_video.mp4");
+          
+          // Determine if input video has an audio stream
+          let hasAudio = false;
+          try {
+            const ffprobeCheck = execSync(
+              `"${config.binaries.ffprobe}" -v error -select_streams a -show_entries stream=codec_type -of csv=p=0 "${rawVideoPath}"`
+            ).toString().trim();
+            hasAudio = ffprobeCheck === "audio";
+          } catch (probeErr) {
+            pipelineLogger.warn("Failed to check raw video audio stream via ffprobe, assuming false", "DirectUploader");
+          }
+
+          let hookCmd = "";
+          const script = context.metadata?.voiceoverScript;
+          if (script) {
+            try {
+              const assPath = path.join(tempDir, "subtitles.ass");
+              const duration = context.ttsDuration || 10;
+              const wordTimings = estimateWordTimings(script, duration);
+              const lines = groupWordsIntoLines(wordTimings);
+              generateASSFile(lines, assPath);
+
+              const escapedAssPath = assPath
+                .replace(/\\/g, "/")
+                .replace(/:/g, "\\:")
+                .replace(/'/g, "'\\\\''");
+
+              const fps = config.rendering.fps || 30;
+              
+              let filterComplex = "";
+              if (hasAudio) {
+                filterComplex = `[0:v]subtitles='${escapedAssPath}'[vout];[0:a]volume=0.05[a0];[1:a]volume=3.5[a1];[a0][a1]amix=inputs=2:duration=shortest[aout]`;
+              } else {
+                filterComplex = `[0:v]subtitles='${escapedAssPath}'[vout];[1:a]volume=3.5[aout]`;
+              }
+
+              hookCmd = `${config.binaries.ffmpeg} -y -i "${rawVideoPath}" -i "${voiceoverPath}" -filter_complex "${filterComplex}" -map "[vout]" -map "[aout]" -c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p -r ${fps} -c:a aac -ar 44100 -ac 2 -shortest "${hookVideoPath}"`;
+              pipelineLogger.info(`Rendering hook video with word-by-word subtitles (hasAudio=${hasAudio})...`, "DirectUploader");
+            } catch (subErr) {
+              pipelineLogger.error("Failed to generate ASS subtitles, falling back to copy video", subErr, "DirectUploader");
+            }
+          }
+
+          if (!hookCmd) {
+            let filterComplex = "";
+            if (hasAudio) {
+              filterComplex = `[0:a]volume=0.05[a0];[1:a]volume=3.5[a1];[a0][a1]amix=inputs=2:duration=shortest[aout]`;
+            } else {
+              filterComplex = `[1:a]volume=3.5[aout]`;
+            }
+            hookCmd = `${config.binaries.ffmpeg} -y -i "${rawVideoPath}" -i "${voiceoverPath}" -filter_complex "${filterComplex}" -map 0:v:0 -map "[aout]" -c:v copy -c:a aac -ar 44100 -ac 2 -shortest "${hookVideoPath}"`;
+          }
+          
+          exec(hookCmd, (error) => {
+            if (error) {
+              pipelineLogger.error("Failed to generate hook video", error, "DirectUploader");
+              fs.copyFileSync(rawVideoPath, finalVoicePath);
+              return resolve();
+            }
+            
+            // Create part2 from rawVideoPath with the exact same audio format
+            const part2VideoPath = path.join(tempDir, "part2_video.mp4");
+            const part2Cmd = `${config.binaries.ffmpeg} -y -i "${rawVideoPath}" -c:v copy -c:a aac -ar 44100 -ac 2 "${part2VideoPath}"`;
+            
+            exec(part2Cmd, (part2Error) => {
+              if (part2Error) {
+                pipelineLogger.error("Failed to prepare part 2 video", part2Error, "DirectUploader");
+                fs.copyFileSync(rawVideoPath, finalVoicePath);
+                return resolve();
+              }
+
+              // Now concatenate the hook and the prepared part2 video
+              const concatTxtPath = path.join(tempDir, "concat.txt");
+              fs.writeFileSync(concatTxtPath, `file 'hook_video.mp4'\nfile 'part2_video.mp4'\n`);
+              
+              const concatCmd = `${config.binaries.ffmpeg} -y -f concat -safe 0 -i "${concatTxtPath}" -c:v copy -c:a aac -movflags +faststart "${finalVoicePath}"`;
+              exec(concatCmd, (concatError) => {
+                if (concatError) {
+                  pipelineLogger.error("Failed to concatenate hook and full video", concatError, "DirectUploader");
+                  fs.copyFileSync(rawVideoPath, finalVoicePath);
+                }
+                resolve();
+              });
+            });
+          });
+        });
+      }
+
+      // Default to no voiceover initially based on user preference
+      context.useVoiceover = false;
+      const finalVideoPath = context.useVoiceover && fs.existsSync(finalVoicePath) ? finalVoicePath : finalNoVoicePath;
 
       // 4 — Save to output folder
       fs.mkdirSync(config.paths.outputDir, { recursive: true });
@@ -2687,8 +2700,6 @@ Set all booleans carefully and include a brief explanation in "reason".`;
       const outputFilePath = path.join(config.paths.outputDir, outputFileName);
       fs.copyFileSync(finalVideoPath, outputFilePath);
 
-
-
       // 5 — Send video to Telegram for review
       let reviewVideoPath = finalVideoPath;
       const stats = fs.statSync(finalVideoPath);
@@ -2697,7 +2708,7 @@ Set all booleans carefully and include a brief explanation in "reason".`;
         pipelineLogger.info("Video exceeds 45MB. Compressing for Telegram...", "DirectUploader");
         reviewVideoPath = path.join(tempDir, "video_compressed.mp4");
         await new Promise<void>((resolve, reject) => {
-          const ffmpegCmd = `${config.binaries.ffmpeg} -y -i "${finalVideoPath}" -vcodec libx264 -crf 28 -preset fast -c:a copy "${reviewVideoPath}"`;
+          const ffmpegCmd = `${config.binaries.ffmpeg} -y -i "${finalVideoPath}" -vcodec libx264 -crf 28 -preset fast -c:a copy -movflags +faststart "${reviewVideoPath}"`;
           exec(ffmpegCmd, (error) => {
             if (error) {
               pipelineLogger.error("Failed to compress video for Telegram", error, "DirectUploader");
