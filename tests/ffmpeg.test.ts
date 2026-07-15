@@ -18,6 +18,23 @@ function hasAudioStream(videoPath: string, ffprobePath = "ffprobe"): boolean {
 
 (async () => {
   console.log("Running Subtitle FFmpeg Integration test...");
+
+  // Verify if FFmpeg is installed/working on the current system
+  try {
+    execSync(`"${config.binaries.ffmpeg}" -version`, { stdio: "ignore" });
+  } catch (err) {
+    console.warn("⚠️ FFmpeg binary not found or not working. Skipping FFmpeg integration test on this build runner.");
+    process.exit(0);
+  }
+
+  // Verify if FFprobe is installed/working
+  try {
+    execSync(`"${config.binaries.ffprobe}" -version`, { stdio: "ignore" });
+  } catch (err) {
+    console.warn("⚠️ FFprobe binary not found or not working. Skipping FFmpeg integration test on this build runner.");
+    process.exit(0);
+  }
+
   const tempDir = path.resolve(__dirname, "../temp/test-subtitles");
   if (!fs.existsSync(tempDir)) {
     fs.mkdirSync(tempDir, { recursive: true });
