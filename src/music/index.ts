@@ -27,6 +27,7 @@ export class MusicService implements IMusicService {
     forceReplace: boolean = false,
     excludeTrack?: string,
     specificTrack?: string,
+    voiceoverPath?: string,
   ): Promise<string> {
     pipelineLogger.info(
       `Adding background music to video ${videoPath} (Mood: ${mood || "unspecified"})`,
@@ -71,8 +72,8 @@ const getVideoDuration = (pathStr: string): Promise<number> => {
       const duration = await getVideoDuration(videoPath);
       const hasAudio = await hasAudioStream(videoPath);
 
-      let vocalOnlyPath: string | null = null;
-      if (hasAudio) {
+      let vocalOnlyPath: string | null = voiceoverPath || null;
+      if (hasAudio && !vocalOnlyPath) {
         if (!forceReplace) {
           pipelineLogger.info(
             `Video already has audio and forceReplace is false. Keeping original audio.`,
@@ -100,11 +101,11 @@ const getVideoDuration = (pathStr: string): Promise<number> => {
       let filterComplex = "";
       let cmd = "";
 
-      if (!hasAudio) {
+      if (!hasAudio && !vocalOnlyPath) {
         filterComplex = `[1:a]volume=${volume},afade=t=in:ss=0:d=${fadeDuration},afade=t=out:st=${fadeOutStart}:d=${fadeDuration}[a]`;
         cmd = `ffmpeg -y -i "${videoPath}" -ss ${startOffset} -i "${selectedTrack}" -filter_complex "${filterComplex}" -map 0:v -map "[a]" -c:v copy -c:a aac -shortest "${outputPath}"`;
       } else if (vocalOnlyPath) {
-        // [0:v] video, [1:a] bg music, [2:a] vocals
+        // [0:v] video, [1:a] bg music, [2:a] vocals/voiceover
         filterComplex =
           `[1:a]volume=${volume},afade=t=in:ss=0:d=${fadeDuration},afade=t=out:st=${fadeOutStart}:d=${fadeDuration}[bg];` +
           `[bg][2:a]sidechaincompress=threshold=0.08:ratio=12:attack=20:release=350[bg_ducked];` +

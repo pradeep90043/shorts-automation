@@ -74,6 +74,7 @@ export class InstagramPublisher {
           'Authorization': `OAuth ${token}`,
           'offset': '0',
           'file_size': fileStats.size.toString(),
+          'Content-Type': 'application/octet-stream',
         },
         body: fileBuffer
       });

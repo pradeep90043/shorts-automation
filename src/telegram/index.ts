@@ -31,7 +31,7 @@ export class TelegramService implements ITelegramService {
   private pipelineTrigger?: (context: PipelineContext) => Promise<void>;
   private approvalTrigger?: (genId: string) => Promise<void>;
   private reviewCallback?: (
-    action: "publish" | "cancel" | "regenerate" | "viral" | "replace_music",
+    action: "publish" | "cancel" | "regenerate" | "viral" | "toggle_voiceover",
     id: string,
   ) => void;
   private revokeCallback?: (id: string) => Promise<void>;
@@ -79,7 +79,7 @@ export class TelegramService implements ITelegramService {
    */
   public registerReviewCallback(
     cb: (
-      action: "publish" | "cancel" | "regenerate" | "viral" | "replace_music",
+      action: "publish" | "cancel" | "regenerate" | "viral" | "toggle_voiceover",
       id: string,
     ) => void,
   ): void {
@@ -120,7 +120,7 @@ export class TelegramService implements ITelegramService {
           { text: "🎯 More Viral", callback_data: `rv_vrl_${id}` },
         ],
         [
-          { text: "🎵 Replace Music", callback_data: `rv_mus_${id}` },
+          { text: "🔊 / 🔇 Toggle Voiceover", callback_data: `rv_togv_${id}` },
         ],
       ],
     };
@@ -634,18 +634,18 @@ export class TelegramService implements ITelegramService {
     });
 
     // Handle review inline button callbacks
-    this.bot.action(/^rv_(pub|can|reg|vrl|mus)_(.+)$/, async (ctx) => {
+    this.bot.action(/^rv_(pub|can|reg|vrl|togv)_(.+)$/, async (ctx) => {
       const code = ctx.match[1];
       const id = ctx.match[2];
       const actionMap: Record<
         string,
-        "publish" | "cancel" | "regenerate" | "viral" | "replace_music"
+        "publish" | "cancel" | "regenerate" | "viral" | "toggle_voiceover"
       > = {
         pub: "publish",
         can: "cancel",
         reg: "regenerate",
         vrl: "viral",
-        mus: "replace_music",
+        togv: "toggle_voiceover",
       };
       const action = actionMap[code];
       const ackMap = {
@@ -653,7 +653,7 @@ export class TelegramService implements ITelegramService {
         cancel: "❌ Cancelled",
         regenerate: "🔄 Regenerating…",
         viral: "🎯 Making it viral…",
-        replace_music: "🎵 Replacing music…",
+        toggle_voiceover: "🔊 Toggling Voiceover…",
       };
       try {
         await ctx.answerCbQuery(ackMap[action]);
@@ -698,11 +698,11 @@ export class TelegramService implements ITelegramService {
       };
       const action = actionMap[code];
       const ackMap = {
-        approve: "✅ Frame approved!",
+        approve: "✅ Approving frame…",
         cancel: "❌ Cancelled",
-        select_a: "🅰️ Selected Variant A!",
-        select_b: "🅱️ Selected Variant B!",
-        select_c: "🅲 Selected Variant C!",
+        select_a: "🅰️ Selected Variant A",
+        select_b: "🅱️ Selected Variant B",
+        select_c: "🅲 Selected Variant C",
       };
       try {
         await ctx.answerCbQuery(ackMap[action]);

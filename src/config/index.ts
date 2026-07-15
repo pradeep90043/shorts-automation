@@ -1,5 +1,6 @@
 import dotenv from "dotenv";
 import path from "path";
+import fs from "fs";
 import { ContentTheme, CONTENT_THEMES } from "./themes";
 
 // Load environmental variables
@@ -338,6 +339,18 @@ export const config: AppConfig = {
     acoustidApiKey: process.env.ACOUSTID_API_KEY || "",
   },
 };
+
+// Resolve best ffmpeg binary dynamically on macOS if ffmpeg-full is installed
+if (process.platform === "darwin") {
+  const brewFfmpegFull = "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg";
+  const brewFfprobeFull = "/opt/homebrew/opt/ffmpeg-full/bin/ffprobe";
+  if (fs.existsSync(brewFfmpegFull)) {
+    config.binaries.ffmpeg = brewFfmpegFull;
+  }
+  if (fs.existsSync(brewFfprobeFull)) {
+    config.binaries.ffprobe = brewFfprobeFull;
+  }
+}
 
 // Simple configuration checker
 export function validateConfig(): void {

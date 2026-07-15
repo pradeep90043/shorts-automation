@@ -15,35 +15,8 @@ export function calculateVideoCrop(context: PipelineContext): {
   hasManualCrop: boolean;
   expandFrame: boolean;
 } {
-  const detection = context.brandingDetection;
-  const zones = detection ? [...detection.zones] : [];
-
   let cropTop = 0;
   let cropBottom = 0;
-
-  // Check system status bar / header / footer edge zones first
-  const edgeTopZones = zones.filter(
-    (z) =>
-      !z.id.startsWith("ai-branding-") &&
-      z.boundingBox.y === 0 &&
-      z.boundingBox.height <= 0.12,
-  );
-  const edgeBottomZones = zones.filter(
-    (z) =>
-      !z.id.startsWith("ai-branding-") &&
-      z.boundingBox.y >= 0.88 &&
-      z.boundingBox.height <= 0.12,
-  );
-
-  if (edgeTopZones.length > 0) {
-    cropTop = Math.max(...edgeTopZones.map((z) => z.boundingBox.height));
-  }
-  if (edgeBottomZones.length > 0) {
-    cropBottom = Math.max(
-      ...edgeBottomZones.map((z) => z.boundingBox.height),
-    );
-  }
-
   let expandFrame = false;
   let hasManualCrop = false;
 
@@ -89,47 +62,27 @@ export function calculateVideoCrop(context: PipelineContext): {
       }
     }
 
-    // 2. If no manual crop was specified, check for frame expansion requests
-    if (!hasManualCrop) {
-      if (
-        p.includes("expand") ||
-        p.includes("less crop") ||
-        p.includes("dont crop") ||
-        p.includes("don't crop") ||
-        p.includes("no crop") ||
-        p.includes("full screen") ||
-        p.includes("show all") ||
-        p.includes("cropped too much") ||
-        p.includes("full caption")
-      ) {
-        expandFrame = true;
-      }
+    if (
+      p.includes("expand") ||
+      p.includes("less crop") ||
+      p.includes("dont crop") ||
+      p.includes("don't crop") ||
+      p.includes("no crop") ||
+      p.includes("full screen") ||
+      p.includes("show all") ||
+      p.includes("cropped too much") ||
+      p.includes("full caption")
+    ) {
+      expandFrame = true;
     }
   }
 
-  // For Instagram Reels, enforce a minimum crop of 8% to clear status bars for sides not overridden
-  if (context.instagramSource && !expandFrame) {
-    const p = context.userPrompt ? context.userPrompt.toLowerCase() : "";
-    if (!p.includes("top")) {
-      cropTop = Math.max(cropTop, 0.08);
-    }
-    if (!p.includes("bottom")) {
-      cropBottom = Math.max(cropBottom, 0.08);
-    }
+  // All automated cropping (status bar, banners, etc.) is disabled as per user instruction: "do not crop anything".
+  // We only crop if explicitly requested via userPrompt (hasManualCrop = true).
+  if (!hasManualCrop) {
+    cropTop = 0;
+    cropBottom = 0;
   }
-
-  // Enforce existing banner top crop to remove profile headers/branding above the banner
-  if (context.existingBanner && context.bannerBounds && !expandFrame) {
-    const bannerTop = context.bannerBounds.y;
-    if (bannerTop > 0) {
-      cropTop = Math.max(cropTop, bannerTop);
-    }
-  }
-
-  // Limit crop to prevent over-cropping (max 35% normally, but up to 45% if manually specified or existing banner is present)
-  const maxCrop = (hasManualCrop || context.existingBanner) ? 0.45 : 0.35;
-  cropTop = Math.min(cropTop, maxCrop);
-  cropBottom = Math.min(cropBottom, maxCrop);
 
   return { cropTop, cropBottom, hasManualCrop, expandFrame };
 }
@@ -253,7 +206,7 @@ export class VideoRenderer implements IVideoRenderer {
       filterString = "";
     }
 
-    const cmd = `ffmpeg -y -loop 1 -i "${imagePath}" -t ${duration} ${filterString} -c:v libx264 -preset ultrafast -pix_fmt yuv420p -r ${fps} "${outputPath}"`;
+    const cmd = `ffmpeg -y -loop 1 -i "${imagePath}" -t ${duration} ${filterString} -c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p -r ${fps} -movflags +faststart "${outputPath}"`;
 
     pipelineLogger.info(`Executing FFmpeg command: ${cmd}`, "VideoRenderer");
 
@@ -611,9 +564,9 @@ export class VideoRenderer implements IVideoRenderer {
     const watermarkInputIndex = 1 + badgeInputPaths.length;
     let finalCmd = "";
     if (hasWatermark) {
-      finalCmd = `ffmpeg -y -i "${videoPath}" ${badgeInputArgs} -i "${watermarkPath}" -filter_complex "${filterChain}; [${currentLabel}][${watermarkInputIndex}:v]overlay=W-w-40:H-h-40[out]" -map "[out]" -map 0:a? -c:v libx264 -preset ultrafast -pix_fmt yuv420p -r ${fps} -c:a copy "${outputPath}"`;
+      finalCmd = `ffmpeg -y -i "${videoPath}" ${badgeInputArgs} -i "${watermarkPath}" -filter_complex "${filterChain}; [${currentLabel}][${watermarkInputIndex}:v]overlay=W-w-40:H-h-40[out]" -map "[out]" -map 0:a? -c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p -r ${fps} -c:a copy -movflags +faststart "${outputPath}"`;
     } else {
-      finalCmd = `ffmpeg -y -i "${videoPath}" ${badgeInputArgs} -filter_complex "${filterChain}" -map "[${currentLabel}]" -map 0:a? -c:v libx264 -preset ultrafast -pix_fmt yuv420p -r ${fps} -c:a copy "${outputPath}"`;
+      finalCmd = `ffmpeg -y -i "${videoPath}" ${badgeInputArgs} -filter_complex "${filterChain}" -map "[${currentLabel}]" -map 0:a? -c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p -r ${fps} -c:a copy -movflags +faststart "${outputPath}"`;
     }
 
     pipelineLogger.info(

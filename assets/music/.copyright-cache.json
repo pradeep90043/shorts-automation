@@ -162,5 +162,12 @@
     "reason": "Matched known recording: Otis McDonald – Not For Nothing",
     "checkedAt": "2026-07-14T11:38:35.664Z",
     "file": "Otis_McDonald_Not_For_Nothing.mp3"
+  },
+  "9d8bc46016173468f3e7932950cbc794a37e2d89": {
+    "score": 10,
+    "match": "Karl Casey – Hackers",
+    "reason": "Matched known recording: Karl Casey – Hackers",
+    "checkedAt": "2026-07-15T05:35:59.087Z",
+    "file": "Karl_Casey_Hacker_Synthwave.mp3"
   }
 }
