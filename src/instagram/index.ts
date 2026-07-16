@@ -426,6 +426,9 @@ async function downloadViaPuppeteer(
     // byte-range segments of it while preloads fetch only one or two — so we
     // count requests per (byte-range-stripped) URL and pick the busiest one.
     const interceptedVideoUrls = new Map<string, number>();
+    // Reels are served as SEPARATE video and audio DASH streams — the audio
+    // must be captured too, or the downloaded reel is silent.
+    const interceptedAudioUrls = new Map<string, number>();
     page.on("response", (response: any) => {
       const resUrl = response.url();
       if (
@@ -436,28 +439,29 @@ async function downloadViaPuppeteer(
           const parsed = new URL(resUrl);
 
           // Decode Facebook/Instagram efg encoding metadata parameter to check if it's an audio stream
+          let isAudio = false;
           const efg = parsed.searchParams.get("efg");
           if (efg) {
             try {
               const decoded = Buffer.from(efg, "base64").toString("utf8");
               if (decoded.toLowerCase().includes("audio")) {
-                return; // Skip audio stream
+                isAudio = true;
               }
             } catch (_) {}
           }
-
           if (resUrl.toLowerCase().includes("audio")) {
-            return; // Skip standard audio paths
+            isAudio = true;
           }
 
           parsed.searchParams.delete("bytestart");
           parsed.searchParams.delete("byteend");
           const cleaned = parsed.toString();
-          const count = (interceptedVideoUrls.get(cleaned) || 0) + 1;
-          interceptedVideoUrls.set(cleaned, count);
+          const target = isAudio ? interceptedAudioUrls : interceptedVideoUrls;
+          const count = (target.get(cleaned) || 0) + 1;
+          target.set(cleaned, count);
           if (count === 1) {
             pipelineLogger.info(
-              `Intercepted direct CDN video URL: ${cleaned.slice(0, 100)}...`,
+              `Intercepted direct CDN ${isAudio ? "audio" : "video"} URL: ${cleaned.slice(0, 100)}...`,
               "Instagram",
             );
           }
@@ -625,6 +629,10 @@ async function downloadViaPuppeteer(
           );
         }
 
+        // DASH reels are video-only at this point — mux in the intercepted
+        // original audio stream so "original audio" survives downstream.
+        await muxInterceptedAudio(videoPath, interceptedAudioUrls, destDir);
+
         const isStatic = await checkIfVideoIsStatic(videoPath);
         const instagramSourceType = isStatic ? "image_with_music" : "video";
         pipelineLogger.info(
@@ -717,6 +725,94 @@ async function downloadViaPuppeteer(
     return { framePath, instagramSourceType: "image", sourceCaption };
   } finally {
     await browser.close();
+  }
+}
+
+/**
+ * Instagram serves reels as separate video and audio DASH streams, so the
+ * downloaded video file is usually silent. If the video has no audio track
+ * and an audio stream URL was intercepted, download the busiest one (the
+ * playing reel's, by segment-request count) and mux it in losslessly.
+ */
+async function muxInterceptedAudio(
+  videoPath: string,
+  audioUrls: Map<string, number>,
+  destDir: string,
+): Promise<void> {
+  if (audioUrls.size === 0) return;
+
+  // Skip when the video already carries audio (progressive MP4 reels)
+  try {
+    const probe = await runCommandWithBufferOutput(
+      FFPROBE,
+      [
+        "-v",
+        "error",
+        "-select_streams",
+        "a",
+        "-show_entries",
+        "stream=codec_type",
+        "-of",
+        "csv=p=0",
+        videoPath,
+      ],
+      "probe-audio",
+    );
+    if (probe.toString().trim().includes("audio")) return;
+  } catch (_) {
+    // Probe failure — attempt the mux anyway
+  }
+
+  let bestUrl: string | null = null;
+  let bestCount = 0;
+  for (const [candidate, count] of audioUrls) {
+    if (count > bestCount) {
+      bestUrl = candidate;
+      bestCount = count;
+    }
+  }
+  if (!bestUrl) return;
+
+  const audioPath = path.join(destDir, "reel_audio.m4a");
+  const muxedPath = path.join(destDir, "reel_video_muxed.mp4");
+  try {
+    await downloadFileFromUrl(bestUrl, audioPath);
+    await runCommand(
+      FFMPEG,
+      [
+        "-y",
+        "-i",
+        videoPath,
+        "-i",
+        audioPath,
+        "-map",
+        "0:v:0",
+        "-map",
+        "1:a:0",
+        "-c",
+        "copy",
+        "-shortest",
+        muxedPath,
+      ],
+      "mux-audio",
+    );
+    fs.renameSync(muxedPath, videoPath);
+    pipelineLogger.info(
+      `Muxed intercepted original audio into reel video (${bestCount} segment request(s) out of ${audioUrls.size} audio candidate(s)).`,
+      "Instagram",
+    );
+  } catch (err) {
+    pipelineLogger.warn(
+      `Failed to mux intercepted audio stream, continuing with silent video: ${err instanceof Error ? err.message : err}`,
+      "Instagram",
+    );
+    try {
+      fs.unlinkSync(muxedPath);
+    } catch {}
+  } finally {
+    try {
+      fs.unlinkSync(audioPath);
+    } catch {}
   }
 }
 
