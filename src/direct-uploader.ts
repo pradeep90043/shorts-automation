@@ -238,7 +238,7 @@ ${this.theme.descriptionRules(this.profile.brandName)}
 KEYWORDS: ${this.theme.keywordsRule}
 THUMBNAIL: Max 5 words, highly clickable, curiosity driven.
 FILENAME: SEO-friendly filename (e.g., short-video-2026.mp4).
-MOOD: Determine emotional tone: "funny", "serious", "emotional", "motivational", "technical", "horror", "sad", or "other".
+MOOD: Determine emotional tone: "funny", "serious", "emotional", "motivational", "technical", "horror", "romantic", "sad", or "other".
 VOICEOVER: Write a short, highly engaging 10-15 second script (approx 20-30 words) in ${this.voiceoverPromptLanguage} that describes the content. It should sound very natural, hook the viewer immediately, and explain what is happening or read the meme text in an entertaining way.
 
 TASK 3: Verbatim Text Extraction
@@ -335,7 +335,7 @@ Return ONLY a raw JSON object matching this schema — no markdown, no explanati
     "hashtags": string[],
     "thumbnailText": string,
     "filename": string,
-    "mood": "funny" | "serious" | "emotional" | "motivational" | "technical" | "horror" | "sad" | "other",
+    "mood": "funny" | "serious" | "emotional" | "motivational" | "technical" | "horror" | "romantic" | "sad" | "other",
     "factCheckScore": number,
     "verdict": string,
     "voiceoverScript": string
@@ -983,7 +983,7 @@ ${this.theme.descriptionRules(this.profile.brandName)}
 KEYWORDS: ${this.theme.keywordsRule}
 THUMBNAIL: Max 5 words, highly clickable, curiosity driven.
 FILENAME: SEO-friendly filename (e.g., viral-short-video-2026.mp4).
-MOOD: Determine emotional tone: "funny", "serious", "emotional", "motivational", "technical", "horror", "sad", or "other".
+MOOD: Determine emotional tone: "funny", "serious", "emotional", "motivational", "technical", "horror", "romantic", "sad", or "other".
 ${this.theme.analysisRules}`;
 
     if (context?.userPrompt) {
@@ -1112,6 +1112,21 @@ ${this.theme.analysisRules}`;
       metadata,
       finalVideoPath,
     } = pending;
+
+    // CC-BY tracks (Kevin MacLeod / incompetech) legally require attribution
+    const musicFile =
+      pending.lastMusicTrack || pending.context.selectedMusicTrack;
+    if (
+      musicFile &&
+      path.basename(musicFile).startsWith("Kevin_MacLeod_") &&
+      !metadata.description.includes("Kevin MacLeod")
+    ) {
+      const trackName = path
+        .basename(musicFile, path.extname(musicFile))
+        .replace(/^Kevin_MacLeod_/, "")
+        .replace(/_/g, " ");
+      metadata.description += `\n\nMusic: "${trackName}" by Kevin MacLeod (incompetech.com), licensed under CC BY 4.0: https://creativecommons.org/licenses/by/4.0/`;
+    }
 
     // Remove the inline buttons from the review message
     await this.telegram.removeInlineButtons(chatId, reviewMessageId);
