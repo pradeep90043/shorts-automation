@@ -8,11 +8,23 @@ import { pipelineLogger } from "../utils/logger";
 
 const AUDIO_EXTENSIONS = [".mp3", ".wav", ".m4a", ".aac", ".ogg"];
 
-type Mood = "funny" | "sad" | "other";
+// Each mood maps to a sub-folder of the music dir; unknown moods use "other".
+const KNOWN_MOODS = [
+  "funny",
+  "sad",
+  "horror",
+  "emotional",
+  "romantic",
+  "motivational",
+  "serious",
+  "technical",
+  "other",
+] as const;
+type Mood = (typeof KNOWN_MOODS)[number];
 
 function normalizeMood(mood?: string): Mood {
-  if (mood === "funny" || mood === "sad") return mood;
-  return "other";
+  const m = (mood || "").toLowerCase().trim() as Mood;
+  return KNOWN_MOODS.includes(m) ? m : "other";
 }
 
 export class MusicService implements IMusicService {
