@@ -244,6 +244,7 @@ export interface ITelegramService {
     id: string,
     settings: ReviewSettings,
     replyToMessageId?: number,
+    previewImagePath?: string,
   ): Promise<number>;
   updateSettingsReview(
     chatId: number,
