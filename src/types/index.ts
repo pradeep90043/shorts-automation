@@ -203,6 +203,10 @@ export interface PipelineContext {
   useVoiceover?: boolean; // Whether to include AI voiceover (defaults to true if script exists)
   ttsAudioPath?: string; // Path to generated TTS audio
   ttsDuration?: number; // Duration of generated TTS audio
+  transcript?: {
+    text: string;
+    words: Array<{ word: string; start: number; end: number }>;
+  } | null;
 }
 
 export interface ITelegramService {
@@ -226,12 +230,46 @@ export interface ITelegramService {
     caption: string,
     id: string,
     replyToMessageId?: number,
+    variants?: { A: string; B: string; C: string },
   ): Promise<number>;
+  sendVideoForReview(
+    chatId: number,
+    videoPath: string,
+    caption: string,
+    id: string,
+    replyToMessageId?: number,
+  ): Promise<number>;
+  updateReviewCaption(
+    chatId: number,
+    messageId: number,
+    caption: string,
+    id: string,
+  ): Promise<void>;
+  editReviewVideo(
+    chatId: number,
+    messageId: number,
+    videoPath: string,
+    caption: string,
+    id: string,
+  ): Promise<number>;
+  removeInlineButtons(chatId: number, messageId: number): Promise<void>;
   registerReviewCallback(
     cb: (
-      action: "publish" | "cancel" | "regenerate" | "viral" | "toggle_voiceover",
+      action: "publish" | "cancel" | "regenerate" | "viral" | "toggle_voiceover" | "replace_music",
       id: string,
     ) => void,
+  ): void;
+  registerRevokeCallback(cb: (id: string) => Promise<void>): void;
+  registerTextPromptCallback(
+    cb: (chatId: number, text: string, messageId: number) => Promise<boolean>,
+  ): void;
+  registerAudioUploadCallback(
+    cb: (
+      chatId: number,
+      fileId: string,
+      fileName: string,
+      messageId: number,
+    ) => Promise<boolean>,
   ): void;
   registerFrameReviewCallback(
     cb: (

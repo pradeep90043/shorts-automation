@@ -82,7 +82,7 @@ export class TTSService {
       const base64Audio = await page.evaluate(async (selectedVoice: string, inputText: string) => {
         const formData = new FormData();
         formData.append("input", inputText);
-        formData.append("prompt", `Voice Affect: Deep, resonant, high emotional expression, and dramatic power. Speak in a clear, natural Indian English accent (Indian pronunciation and cadence of English words) filled with excitement, suspense, and raw feeling.\n\nTone: High intensity, serious, mysterious, and engaging, maintaining strong emotional presence.\n\nPacing: Deliberate, with strong pauses for emphasis and maximum dramatic effect.\n\nEmotion: Highly expressive, full of emotion, and dramatically intense.`);
+        formData.append("prompt", `Voice Affect: Extremely energetic, highly enthusiastic, loud, clear, and powerful. Speak in a natural Indian English accent with high excitement, motivation, and punchy cadence.\n\nTone: High intensity, energetic, enthusiastic, and confident.\n\nPacing: Fast-paced, punchy, and highly dynamic.\n\nEmotion: Full of energy, excitement, and positive hype.`);
         formData.append("voice", selectedVoice);
         formData.append("vibe", "");
         

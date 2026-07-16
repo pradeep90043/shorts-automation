@@ -31,13 +31,19 @@ export class TelegramService implements ITelegramService {
   private pipelineTrigger?: (context: PipelineContext) => Promise<void>;
   private approvalTrigger?: (genId: string) => Promise<void>;
   private reviewCallback?: (
-    action: "publish" | "cancel" | "regenerate" | "viral" | "toggle_voiceover",
+    action: "publish" | "cancel" | "regenerate" | "viral" | "toggle_voiceover" | "replace_music",
     id: string,
   ) => void;
   private revokeCallback?: (id: string) => Promise<void>;
   private textPromptCallback?: (
     chatId: number,
     text: string,
+    messageId: number,
+  ) => Promise<boolean>;
+  private audioUploadCallback?: (
+    chatId: number,
+    fileId: string,
+    fileName: string,
     messageId: number,
   ) => Promise<boolean>;
   private frameReviewCallback?: (
@@ -79,7 +85,7 @@ export class TelegramService implements ITelegramService {
    */
   public registerReviewCallback(
     cb: (
-      action: "publish" | "cancel" | "regenerate" | "viral" | "toggle_voiceover",
+      action: "publish" | "cancel" | "regenerate" | "viral" | "toggle_voiceover" | "replace_music",
       id: string,
     ) => void,
   ): void {
@@ -97,6 +103,12 @@ export class TelegramService implements ITelegramService {
     cb: (chatId: number, text: string, messageId: number) => Promise<boolean>,
   ): void {
     this.textPromptCallback = cb;
+  }
+
+  public registerAudioUploadCallback(
+    cb: (chatId: number, fileId: string, fileName: string, messageId: number) => Promise<boolean>,
+  ): void {
+    this.audioUploadCallback = cb;
   }
 
   public registerFrameReviewCallback(
@@ -121,6 +133,7 @@ export class TelegramService implements ITelegramService {
         ],
         [
           { text: "🔊 / 🔇 Toggle Voiceover", callback_data: `rv_togv_${id}` },
+          { text: "🎵 Replace Music", callback_data: `rv_mus_${id}` },
         ],
       ],
     };
@@ -570,7 +583,7 @@ export class TelegramService implements ITelegramService {
       }
     });
 
-    // Handle document attachments (e.g. uncompressed images)
+    // Handle document attachments (e.g. uncompressed images or audio files)
     this.bot.on("document", async (ctx) => {
       try {
         const doc = ctx.message.document;
@@ -590,8 +603,13 @@ export class TelegramService implements ITelegramService {
             ctx.from.first_name,
             ctx.message.caption,
           );
+        } else if (
+          mimeType.startsWith("audio/") ||
+          doc.file_name?.match(/\.(mp3|wav|m4a|aac|ogg)$/i)
+        ) {
+          await this.handleIncomingAudio(ctx, doc.file_id, doc.file_name || "audio.mp3");
         } else {
-          ctx.reply("⚠️ Please send only image files (PNG, JPG, JPEG).");
+          ctx.reply("⚠️ Please send only image files (PNG, JPG, JPEG) or audio files (MP3, WAV, M4A, AAC, OGG).");
         }
       } catch (err) {
         pipelineLogger.error(
@@ -600,8 +618,30 @@ export class TelegramService implements ITelegramService {
           "Telegram",
         );
         ctx.reply(
-          "❌ An error occurred while initializing the image pipeline.",
+          "❌ An error occurred while processing the document.",
         );
+      }
+    });
+
+    // Handle audio files sent directly as audio
+    this.bot.on("audio", async (ctx) => {
+      try {
+        const audio = ctx.message.audio;
+        await this.handleIncomingAudio(ctx, audio.file_id, audio.file_name || "audio.mp3");
+      } catch (err) {
+        pipelineLogger.error("Error handling Telegram audio message", err, "Telegram");
+        ctx.reply("❌ An error occurred while processing the audio.");
+      }
+    });
+
+    // Handle voice notes
+    this.bot.on("voice", async (ctx) => {
+      try {
+        const voice = ctx.message.voice;
+        await this.handleIncomingAudio(ctx, voice.file_id, "voice.ogg");
+      } catch (err) {
+        pipelineLogger.error("Error handling Telegram voice message", err, "Telegram");
+        ctx.reply("❌ An error occurred while processing the voice note.");
       }
     });
 
@@ -634,18 +674,19 @@ export class TelegramService implements ITelegramService {
     });
 
     // Handle review inline button callbacks
-    this.bot.action(/^rv_(pub|can|reg|vrl|togv)_(.+)$/, async (ctx) => {
+    this.bot.action(/^rv_(pub|can|reg|vrl|togv|mus)_(.+)$/, async (ctx) => {
       const code = ctx.match[1];
       const id = ctx.match[2];
       const actionMap: Record<
         string,
-        "publish" | "cancel" | "regenerate" | "viral" | "toggle_voiceover"
+        "publish" | "cancel" | "regenerate" | "viral" | "toggle_voiceover" | "replace_music"
       > = {
         pub: "publish",
         can: "cancel",
         reg: "regenerate",
         vrl: "viral",
         togv: "toggle_voiceover",
+        mus: "replace_music",
       };
       const action = actionMap[code];
       const ackMap = {
@@ -654,6 +695,7 @@ export class TelegramService implements ITelegramService {
         regenerate: "🔄 Regenerating…",
         viral: "🎯 Making it viral…",
         toggle_voiceover: "🔊 Toggling Voiceover…",
+        replace_music: "🎵 Send your audio file now…",
       };
       try {
         await ctx.answerCbQuery(ackMap[action]);
@@ -901,6 +943,24 @@ export class TelegramService implements ITelegramService {
     const title = lines[0].slice(0, 100);
     const description = lines.slice(1).join("\n").trim() || lines[0];
     return { title, description };
+  }
+
+  private async handleIncomingAudio(ctx: any, fileId: string, fileName: string): Promise<void> {
+    try {
+      if (this.audioUploadCallback) {
+        const handled = await this.audioUploadCallback(
+          ctx.chat.id,
+          fileId,
+          fileName,
+          ctx.message.message_id
+        );
+        if (handled) return;
+      }
+      ctx.reply("🎵 Audio file received, but no active video is currently awaiting a music change.");
+    } catch (err) {
+      pipelineLogger.error("Error handling incoming audio", err, "Telegram");
+      ctx.reply("❌ Failed to process the audio file.");
+    }
   }
 
   private async initiatePipeline(
