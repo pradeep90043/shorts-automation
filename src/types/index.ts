@@ -100,10 +100,19 @@ export interface VideoMetadata {
   hashtags?: string[];
   thumbnailText?: string;
   filename?: string;
-  mood?: "funny" | "sad" | "other";
+  mood?: string; // e.g. funny, serious, emotional, motivational, technical, horror, sad, other
   factCheckScore?: number;
   verdict?: string;
   voiceoverScript?: string;
+}
+
+export interface ReviewSettings {
+  voiceover: boolean;
+  originalAudio: boolean;
+  music: boolean;
+  captions: boolean;
+  cropTopPct: number; // 0 | 5 | 10 | 15 | 20 | 25
+  cropBottomPct: number; // 0 | 5 | 10 | 15 | 20 | 25
 }
 
 export interface RenderOptions {
@@ -207,6 +216,11 @@ export interface PipelineContext {
     text: string;
     words: Array<{ word: string; start: number; end: number }>;
   } | null;
+  hasOriginalAudio?: boolean; // video has an audio stream (independent of Whisper availability)
+  creatorTextDetected?: boolean; // AI found creator captions/text baked into the video
+  aiRecommendedSettings?: ReviewSettings; // what the AI suggests
+  reviewSettings?: ReviewSettings; // final settings (user overrides or AI defaults)
+  settingsReviewDone?: boolean; // gate already passed — do not re-show on re-entry
 }
 
 export interface ITelegramService {
@@ -224,14 +238,20 @@ export interface ITelegramService {
     id: string,
     replyToMessageId?: number,
   ): Promise<number>;
-  sendPhotoForReview(
+  sendSettingsReview(
     chatId: number,
-    photoPath: string,
-    caption: string,
+    text: string,
     id: string,
+    settings: ReviewSettings,
     replyToMessageId?: number,
-    variants?: { A: string; B: string; C: string },
   ): Promise<number>;
+  updateSettingsReview(
+    chatId: number,
+    messageId: number,
+    text: string,
+    id: string,
+    settings: ReviewSettings,
+  ): Promise<void>;
   sendVideoForReview(
     chatId: number,
     videoPath: string,
@@ -271,12 +291,7 @@ export interface ITelegramService {
       messageId: number,
     ) => Promise<boolean>,
   ): void;
-  registerFrameReviewCallback(
-    cb: (
-      action: "approve" | "cancel" | "select_a" | "select_b" | "select_c",
-      id: string,
-    ) => void,
-  ): void;
+  registerSettingsReviewCallback(cb: (code: string, id: string) => void): void;
 }
 
 export interface IImageAnalyzer {

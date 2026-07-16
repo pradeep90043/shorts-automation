@@ -16,7 +16,9 @@ export class FreeLlmApiClient {
   public async generateChat(messages: any[], isVision = false): Promise<string> {
     const url = `${this.baseUrl}/v1/chat/completions`;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout
+    // Vision calls carry 4 base64 keyframes and a large prompt — give them longer
+    const timeoutMs = isVision ? 120000 : 60000;
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
       const res = await fetch(url, {
@@ -41,7 +43,7 @@ export class FreeLlmApiClient {
       return json.choices?.[0]?.message?.content ?? '';
     } catch (err: any) {
       if (err.name === "AbortError") {
-        throw new Error(`FreeLLMAPI request timed out after 60 seconds`);
+        throw new Error(`FreeLLMAPI request timed out after ${timeoutMs / 1000} seconds`);
       }
       throw err;
     } finally {

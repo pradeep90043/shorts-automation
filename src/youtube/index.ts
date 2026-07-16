@@ -49,13 +49,19 @@ export class YouTubeService {
         "YouTubeService",
       );
 
+      // YouTube rejects angle brackets in titles/descriptions (invalidTitle 400)
+      const sanitize = (text: string): string =>
+        (text || "").replace(/[<>]/g, "").replace(/\s+/g, " ").trim();
+      const safeTitle =
+        sanitize(metadata.title).substring(0, 100) || "YouTube Shorts Video";
+
       const response = await yt.videos.insert(
         {
           part: ["snippet", "status"],
           requestBody: {
             snippet: {
-              title: metadata.title.substring(0, 100),
-              description: metadata.description,
+              title: safeTitle,
+              description: (metadata.description || "").replace(/[<>]/g, ""),
               tags: metadata.tags,
               categoryId: "28",
               defaultLanguage: "en",

@@ -36,6 +36,8 @@ export class TranscriptionService {
       hasAudio = true;
     }
 
+    context.hasOriginalAudio = hasAudio;
+
     if (!hasAudio) {
       pipelineLogger.info("No audio track detected in video, skipping transcription.", "TranscriptionService");
       context.transcript = null;
@@ -65,6 +67,7 @@ export class TranscriptionService {
         errMsg.includes("Output file does not contain any stream")
       ) {
         pipelineLogger.info("Silently skipping transcription: no audio stream found during extraction", "TranscriptionService");
+        context.hasOriginalAudio = false;
         context.transcript = null;
         return;
       }

@@ -705,11 +705,12 @@ async function downloadViaPuppeteer(
 }
 
 /**
- * Decodes 3 frames of the video (start, middle, end), downscales to 16x16 grayscale,
- * and compares them. If the differences are below a threshold, it is considered
- * a static image disguised as a video.
+ * Decodes 5 frames of the video (10/30/50/70/90%), downscales to 16x16 grayscale,
+ * and compares them. Only videos of 15 seconds or less can be classified as static:
+ * genuine "image with music" reels are short loops, and misclassifying a long real
+ * video routes it through the image renderer, which discards all but one frame.
  */
-async function checkIfVideoIsStatic(videoPath: string): Promise<boolean> {
+export async function checkIfVideoIsStatic(videoPath: string): Promise<boolean> {
   try {
     // 1. Get video duration using ffprobe
     const durationBuffer = await runCommandWithBufferOutput(
@@ -734,13 +735,26 @@ async function checkIfVideoIsStatic(videoPath: string): Promise<boolean> {
       return false;
     }
 
-    // 2. Define the 3 timestamps (start, middle, end)
-    const t1 = Math.min(1.0, duration * 0.1);
-    const t2 = duration * 0.5;
-    const t3 = Math.max(duration - 1.0, duration * 0.9);
+    // A long video is never a static image disguised as a video.
+    const STATIC_CHECK_MAX_DURATION = 15;
+    if (duration > STATIC_CHECK_MAX_DURATION) {
+      pipelineLogger.info(
+        `Video is ${duration.toFixed(1)}s (> ${STATIC_CHECK_MAX_DURATION}s) — treating as dynamic video.`,
+        "Instagram",
+      );
+      return false;
+    }
+
+    // 2. Define 5 sample timestamps across the video
+    const timestamps = [0.1, 0.3, 0.5, 0.7, 0.9].map((f) => duration * f);
+    timestamps[0] = Math.min(1.0, timestamps[0]);
+    timestamps[timestamps.length - 1] = Math.max(
+      duration - 1.0,
+      timestamps[timestamps.length - 1],
+    );
 
     pipelineLogger.info(
-      `Checking if video is static. Duration: ${duration.toFixed(2)}s, sampling at: ${t1.toFixed(2)}s, ${t2.toFixed(2)}s, ${t3.toFixed(2)}s`,
+      `Checking if video is static. Duration: ${duration.toFixed(2)}s, sampling at: ${timestamps.map((t) => t.toFixed(2)).join("s, ")}s`,
       "Instagram",
     );
 
@@ -766,12 +780,7 @@ async function checkIfVideoIsStatic(videoPath: string): Promise<boolean> {
       );
     };
 
-    // Extract all 3 frames
-    const [b1, b2, b3] = await Promise.all([
-      extractFrame(t1),
-      extractFrame(t2),
-      extractFrame(t3),
-    ]);
+    const frames = await Promise.all(timestamps.map((t) => extractFrame(t)));
 
     // Helper to compute difference between two raw 16x16 grayscale buffers
     const getDiff = (bA: Buffer, bB: Buffer): number => {
@@ -783,17 +792,20 @@ async function checkIfVideoIsStatic(videoPath: string): Promise<boolean> {
       return total / bA.length;
     };
 
-    const diff12 = getDiff(b1, b2);
-    const diff23 = getDiff(b2, b3);
+    const adjacentDiffs = frames
+      .slice(1)
+      .map((frame, i) => getDiff(frames[i], frame));
+    const firstToLastDiff = getDiff(frames[0], frames[frames.length - 1]);
 
     pipelineLogger.info(
-      `Frame difference scores: start-to-middle=${diff12.toFixed(3)}, middle-to-end=${diff23.toFixed(3)}`,
+      `Frame difference scores: adjacent=[${adjacentDiffs.map((d) => d.toFixed(3)).join(", ")}], first-to-last=${firstToLastDiff.toFixed(3)}`,
       "Instagram",
     );
 
-    // If both differences are extremely small (less than 1.5 gray levels on average),
-    // then the frames are virtually identical, indicating a static image.
-    const isStatic = diff12 < 1.5 && diff23 < 1.5;
+    // Static only if every adjacent pair AND the endpoints are virtually
+    // identical (less than 1.5 gray levels on average).
+    const isStatic =
+      adjacentDiffs.every((d) => d < 1.5) && firstToLastDiff < 1.5;
     return isStatic;
   } catch (err) {
     pipelineLogger.warn(

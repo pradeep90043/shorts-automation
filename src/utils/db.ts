@@ -10,7 +10,7 @@ export interface JobEntry {
     | "pending"
     | "analyzing"
     | "rendering_video"
-    | "frame_review"
+    | "settings_review"
     | "adding_music"
     | "final_review"
     | "completed"
