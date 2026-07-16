@@ -117,11 +117,17 @@ const getVideoDuration = (pathStr: string): Promise<number> => {
         filterComplex = `[1:a]volume=${volume},afade=t=in:ss=0:d=${fadeDuration},afade=t=out:st=${fadeOutStart}:d=${fadeDuration}[a]`;
         cmd = `ffmpeg -y -i "${videoPath}" -ss ${startOffset} -i "${selectedTrack}" -filter_complex "${filterComplex}" -map 0:v -map "[a]" -c:v copy -c:a aac -shortest "${outputPath}"`;
       } else if (vocalOnlyPath) {
-        // [0:v] video, [1:a] bg music, [2:a] vocals/voiceover
+        // [0:v] video, [1:a] bg music, [2:a] vocals/voiceover.
+        // Voice must always win over music: music runs at half the configured
+        // volume and is sidechain-ducked under the voice; the voice is boosted
+        // and amix runs with normalize=0 so it doesn't attenuate the inputs.
+        const duckedMusicVolume = Math.min(volume, 0.08);
         filterComplex =
-          `[1:a]volume=${volume},afade=t=in:ss=0:d=${fadeDuration},afade=t=out:st=${fadeOutStart}:d=${fadeDuration}[bg];` +
-          `[bg][2:a]sidechaincompress=threshold=0.08:ratio=12:attack=20:release=350[bg_ducked];` +
-          `[2:a][bg_ducked]amix=inputs=2:duration=first:dropout_transition=2[a]`;
+          `[2:a]asplit=2[vokey][vomix];` +
+          `[1:a]volume=${duckedMusicVolume},afade=t=in:ss=0:d=${fadeDuration},afade=t=out:st=${fadeOutStart}:d=${fadeDuration}[bg];` +
+          `[bg][vokey]sidechaincompress=threshold=0.05:ratio=15:attack=10:release=300[bg_ducked];` +
+          `[vomix]volume=2.0[vo];` +
+          `[vo][bg_ducked]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[a]`;
 
         cmd = `ffmpeg -y -i "${videoPath}" -ss ${startOffset} -i "${selectedTrack}" -i "${vocalOnlyPath}" -filter_complex "${filterComplex}" -map 0:v -map "[a]" -c:v copy -c:a aac -shortest "${outputPath}"`;
       } else {
