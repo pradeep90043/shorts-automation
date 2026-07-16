@@ -1,0 +1,119 @@
+import { exec, execSync } from "child_process";
+import fs from "fs";
+import path from "path";
+import { OpenAI } from "openai";
+import { config } from "../config";
+import { PipelineContext } from "../types";
+import { pipelineLogger } from "../utils/logger";
+
+export class TranscriptionService {
+  /**
+   * Extracts audio and transcribes it using OpenAI Whisper.
+   * If there is no audio track, skips silently and sets context.transcript to null.
+   */
+  public static async transcribe(context: PipelineContext): Promise<void> {
+    const videoPath = context.originalVideoPath;
+    if (!videoPath || !fs.existsSync(videoPath)) {
+      pipelineLogger.warn("No original video path found for transcription", "TranscriptionService");
+      context.transcript = null;
+      return;
+    }
+
+    const audioWavPath = path.join(context.tempDir, "audio.wav");
+
+    // 1. Check if the video has an audio stream using ffprobe
+    let hasAudio = false;
+    try {
+      const ffprobeCmd = `"${config.binaries.ffprobe || "ffprobe"}" -v error -select_streams a -show_entries stream=codec_type -of csv=p=0 "${videoPath}"`;
+      const ffprobeCheck = execSync(ffprobeCmd).toString().trim();
+      hasAudio = ffprobeCheck === "audio";
+    } catch (probeErr) {
+      pipelineLogger.warn(
+        `Failed to check video audio stream via ffprobe: ${probeErr instanceof Error ? probeErr.message : probeErr}`,
+        "TranscriptionService"
+      );
+      // Fallback: we will try to extract anyway, and if it fails, check the error message.
+      hasAudio = true;
+    }
+
+    if (!hasAudio) {
+      pipelineLogger.info("No audio track detected in video, skipping transcription.", "TranscriptionService");
+      context.transcript = null;
+      return;
+    }
+
+    // 2. Extract audio using FFmpeg
+    // ffmpeg -i [videoPath] -vn -ar 16000 -ac 1 -c:a pcm_s16le [audioWavPath]
+    const ffmpegCmd = `"${config.binaries.ffmpeg || "ffmpeg"}" -y -i "${videoPath}" -vn -ar 16000 -ac 1 -c:a pcm_s16le "${audioWavPath}"`;
+    
+    try {
+      await new Promise<void>((resolve, reject) => {
+        exec(ffmpegCmd, (err) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve();
+          }
+        });
+      });
+    } catch (ffmpegErr) {
+      const errMsg = ffmpegErr instanceof Error ? ffmpegErr.message : String(ffmpegErr);
+      // If it fails because of no audio stream, skip silently
+      if (
+        errMsg.includes("does not contain any stream") ||
+        errMsg.includes("matches no streams") ||
+        errMsg.includes("Output file does not contain any stream")
+      ) {
+        pipelineLogger.info("Silently skipping transcription: no audio stream found during extraction", "TranscriptionService");
+        context.transcript = null;
+        return;
+      }
+      pipelineLogger.error("FFmpeg audio extraction failed", ffmpegErr as Error, "TranscriptionService");
+      context.transcript = null;
+      return;
+    }
+
+    if (!fs.existsSync(audioWavPath)) {
+      pipelineLogger.warn("Extracted audio file does not exist, skipping transcription.", "TranscriptionService");
+      context.transcript = null;
+      return;
+    }
+
+    // 3. Run Whisper transcription
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      pipelineLogger.warn("OPENAI_API_KEY environment variable is not set, skipping Whisper transcription.", "TranscriptionService");
+      context.transcript = null;
+      return;
+    }
+
+    try {
+      const openai = new OpenAI({ apiKey });
+      pipelineLogger.info(`Running OpenAI Whisper transcription on ${audioWavPath}...`, "TranscriptionService");
+      
+      const response = await openai.audio.transcriptions.create({
+        file: fs.createReadStream(audioWavPath),
+        model: "whisper-1",
+        response_format: "verbose_json",
+        timestamp_granularities: ["word"],
+      });
+
+      // The API returns verbose_json which includes text and words list
+      const text = response.text || "";
+      const words = ((response as any).words || []).map((w: any) => ({
+        word: w.word,
+        start: w.start,
+        end: w.end,
+      }));
+
+      context.transcript = { text, words };
+      pipelineLogger.info(`Successfully transcribed audio. Word count: ${words.length}`, "TranscriptionService");
+    } catch (whisperErr) {
+      pipelineLogger.warn(
+        `OpenAI Whisper transcription failed: ${whisperErr instanceof Error ? whisperErr.message : whisperErr}`,
+        "TranscriptionService"
+      );
+      context.transcript = null;
+    }
+  }
+}

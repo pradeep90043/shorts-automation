@@ -55,18 +55,27 @@ export class FreeLlmApiClient {
     ]);
   }
 
-  public async generateVision(prompt: string, imageBase64: string, mimeType: string): Promise<string> {
+  public async generateVision(
+    prompt: string,
+    imageBase64: string | string[],
+    mimeType: string | string[]
+  ): Promise<string> {
+    const images = Array.isArray(imageBase64) ? imageBase64 : [imageBase64];
+    const mimeTypes = Array.isArray(mimeType) ? mimeType : Array(images.length).fill(mimeType);
+
+    const imageContentParts = images.map((base64, idx) => ({
+      type: 'image_url' as const,
+      image_url: {
+        url: `data:${mimeTypes[idx] || 'image/jpeg'};base64,${base64}`
+      }
+    }));
+
     return this.generateChat([
       {
         role: 'user',
         content: [
           { type: 'text', text: prompt },
-          {
-            type: 'image_url',
-            image_url: {
-              url: `data:${mimeType};base64,${imageBase64}`
-            }
-          }
+          ...imageContentParts
         ]
       }
     ], true);
