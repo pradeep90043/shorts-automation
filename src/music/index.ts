@@ -113,23 +113,32 @@ const getVideoDuration = (pathStr: string): Promise<number> => {
       let filterComplex = "";
       let cmd = "";
 
+      // The output must ALWAYS be exactly as long as the video. The music
+      // input is looped infinitely (so a short track or the start offset can
+      // never truncate the video via -shortest) and the final audio is
+      // trimmed/padded to the video duration.
+      const musicInput = `-stream_loop -1 -ss ${startOffset} -i "${selectedTrack}"`;
+
       if (!hasAudio && !vocalOnlyPath) {
-        filterComplex = `[1:a]volume=${volume},afade=t=in:ss=0:d=${fadeDuration},afade=t=out:st=${fadeOutStart}:d=${fadeDuration}[a]`;
-        cmd = `ffmpeg -y -i "${videoPath}" -ss ${startOffset} -i "${selectedTrack}" -filter_complex "${filterComplex}" -map 0:v -map "[a]" -c:v copy -c:a aac -shortest "${outputPath}"`;
+        filterComplex = `[1:a]volume=${volume},afade=t=in:ss=0:d=${fadeDuration},afade=t=out:st=${fadeOutStart}:d=${fadeDuration},atrim=0:${duration}[a]`;
+        cmd = `ffmpeg -y -i "${videoPath}" ${musicInput} -filter_complex "${filterComplex}" -map 0:v -map "[a]" -c:v copy -c:a aac -shortest "${outputPath}"`;
       } else if (vocalOnlyPath) {
         // [0:v] video, [1:a] bg music, [2:a] vocals/voiceover.
         // Voice must always win over music: music runs at half the configured
         // volume and is sidechain-ducked under the voice; the voice is boosted
         // and amix runs with normalize=0 so it doesn't attenuate the inputs.
+        // The voice is padded with silence to the full video duration so
+        // amix (duration=first) always yields video-length audio — a short
+        // TTS voiceover must never cut the video down to its own length.
         const duckedMusicVolume = Math.min(volume, 0.08);
         filterComplex =
           `[2:a]asplit=2[vokey][vomix];` +
           `[1:a]volume=${duckedMusicVolume},afade=t=in:ss=0:d=${fadeDuration},afade=t=out:st=${fadeOutStart}:d=${fadeDuration}[bg];` +
           `[bg][vokey]sidechaincompress=threshold=0.05:ratio=15:attack=10:release=300[bg_ducked];` +
-          `[vomix]volume=2.0[vo];` +
-          `[vo][bg_ducked]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[a]`;
+          `[vomix]volume=2.0,apad=whole_dur=${duration}[vo];` +
+          `[vo][bg_ducked]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,atrim=0:${duration}[a]`;
 
-        cmd = `ffmpeg -y -i "${videoPath}" -ss ${startOffset} -i "${selectedTrack}" -i "${vocalOnlyPath}" -filter_complex "${filterComplex}" -map 0:v -map "[a]" -c:v copy -c:a aac -shortest "${outputPath}"`;
+        cmd = `ffmpeg -y -i "${videoPath}" ${musicInput} -i "${vocalOnlyPath}" -filter_complex "${filterComplex}" -map 0:v -map "[a]" -c:v copy -c:a aac -shortest "${outputPath}"`;
       } else {
         // forceReplace requested but vocals could not be isolated (demucs not
         // installed) — drop the original audio entirely so the original song is
@@ -138,8 +147,8 @@ const getVideoDuration = (pathStr: string): Promise<number> => {
           "Vocal isolation unavailable — replacing original audio entirely with background music",
           "MusicService",
         );
-        filterComplex = `[1:a]volume=1.0,afade=t=in:ss=0:d=${fadeDuration},afade=t=out:st=${fadeOutStart}:d=${fadeDuration}[a]`;
-        cmd = `ffmpeg -y -i "${videoPath}" -ss ${startOffset} -i "${selectedTrack}" -filter_complex "${filterComplex}" -map 0:v -map "[a]" -c:v copy -c:a aac -shortest "${outputPath}"`;
+        filterComplex = `[1:a]volume=1.0,afade=t=in:ss=0:d=${fadeDuration},afade=t=out:st=${fadeOutStart}:d=${fadeDuration},atrim=0:${duration}[a]`;
+        cmd = `ffmpeg -y -i "${videoPath}" ${musicInput} -filter_complex "${filterComplex}" -map 0:v -map "[a]" -c:v copy -c:a aac -shortest "${outputPath}"`;
       }
 
       pipelineLogger.info(
