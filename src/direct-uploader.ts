@@ -22,6 +22,7 @@ import { JobQueue } from "./utils/queue";
 import { ImageAnalyzer } from "./image-analysis";
 import { TTSService } from "./audio/tts";
 import { estimateWordTimings, groupWordsIntoLines, generateASSFile } from "./audio/subtitles";
+import { buildGridPreview } from "./utils/gridPreview";
 import { TranscriptionService } from "./audio/transcription";
 
 // Metadata format rules (title/description/keywords/analysis) live on the channel
@@ -1489,12 +1490,23 @@ ${this.theme.analysisRules}`;
       };
     }
 
+    // First-frame preview with the crop grid so the user can judge the crop
+    // buttons against the actual content (labels sit on the grid lines).
+    const previewSource = context.isVideo
+      ? path.join(context.tempDir, "frame_0.jpg")
+      : context.originalImagePath;
+    const previewImagePath = await buildGridPreview(
+      previewSource,
+      path.join(context.tempDir, "settings_preview.png"),
+    );
+
     const reviewMessageId = await this.telegram.sendSettingsReview(
       chatId,
       this.buildSettingsReviewText(context),
       id,
       context.reviewSettings,
       messageId,
+      previewImagePath ?? undefined,
     );
     (context as any).settingsReviewMessageId = reviewMessageId;
 

@@ -190,7 +190,9 @@ export class TelegramService implements ITelegramService {
   }
 
   /**
-   * Send the pre-processing settings review message with toggle buttons.
+   * Send the pre-processing settings review with toggle buttons. When a
+   * preview image (first frame + crop grid) is available it is sent as a
+   * photo with the settings as its caption; otherwise falls back to text.
    * Returns the message_id of the sent message.
    */
   public async sendSettingsReview(
@@ -199,7 +201,24 @@ export class TelegramService implements ITelegramService {
     id: string,
     settings: ReviewSettings,
     replyToMessageId?: number,
+    previewImagePath?: string,
   ): Promise<number> {
+    if (previewImagePath && fs.existsSync(previewImagePath)) {
+      const res = await this.bot.telegram.sendPhoto(
+        chatId,
+        { source: fs.readFileSync(previewImagePath) },
+        {
+          caption: text,
+          parse_mode: "Markdown",
+          reply_parameters: replyToMessageId
+            ? { message_id: replyToMessageId }
+            : undefined,
+          reply_markup: this.settingsKeyboard(id, settings),
+        } as any,
+      );
+      return res.message_id;
+    }
+
     const res = await this.bot.telegram.sendMessage(chatId, text, {
       parse_mode: "Markdown",
       reply_parameters: replyToMessageId
@@ -211,8 +230,9 @@ export class TelegramService implements ITelegramService {
   }
 
   /**
-   * Refresh the settings review message after a toggle tap. Errors are
-   * swallowed so rapid taps hitting Telegram rate limits cannot crash.
+   * Refresh the settings review message after a toggle tap. Tries the photo
+   * caption first, then plain text (whichever matches how it was sent).
+   * Errors are swallowed so rapid taps hitting Telegram rate limits cannot crash.
    */
   public async updateSettingsReview(
     chatId: number,
@@ -221,12 +241,17 @@ export class TelegramService implements ITelegramService {
     id: string,
     settings: ReviewSettings,
   ): Promise<void> {
+    const extra = {
+      parse_mode: "Markdown",
+      reply_markup: this.settingsKeyboard(id, settings),
+    } as any;
     try {
-      await this.bot.telegram.editMessageText(chatId, messageId, undefined, text, {
-        parse_mode: "Markdown",
-        reply_markup: this.settingsKeyboard(id, settings),
-      } as any);
-    } catch (_) {}
+      await this.bot.telegram.editMessageCaption(chatId, messageId, undefined, text, extra);
+    } catch (_) {
+      try {
+        await this.bot.telegram.editMessageText(chatId, messageId, undefined, text, extra);
+      } catch (_) {}
+    }
   }
   /**
    * Update the caption of the review message (after regenerating metadata)
