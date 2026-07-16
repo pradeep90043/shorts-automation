@@ -4,7 +4,7 @@ import path from "path";
 import { pipeline } from "stream";
 import { promisify } from "util";
 import { config, ChannelProfile } from "../config";
-import { ITelegramService, PipelineContext, TelegramMetadata, AssetKind } from "../types";
+import { ITelegramService, PipelineContext, TelegramMetadata, AssetKind, ReviewSettings } from "../types";
 import { pipelineLogger } from "../utils/logger";
 import {
   isInstagramReelUrl,
@@ -46,10 +46,7 @@ export class TelegramService implements ITelegramService {
     fileName: string,
     messageId: number,
   ) => Promise<boolean>;
-  private frameReviewCallback?: (
-    action: "approve" | "cancel" | "select_a" | "select_b" | "select_c",
-    id: string,
-  ) => void;
+  private settingsReviewCallback?: (code: string, id: string) => void;
 
   constructor(profile: ChannelProfile = config.profiles[0]) {
     if (!profile || !profile.telegramToken) {
@@ -111,13 +108,10 @@ export class TelegramService implements ITelegramService {
     this.audioUploadCallback = cb;
   }
 
-  public registerFrameReviewCallback(
-    cb: (
-      action: "approve" | "cancel" | "select_a" | "select_b" | "select_c",
-      id: string,
-    ) => void,
+  public registerSettingsReviewCallback(
+    cb: (code: string, id: string) => void,
   ): void {
-    this.frameReviewCallback = cb;
+    this.settingsReviewCallback = cb;
   }
 
   private reviewKeyboard(id: string) {
@@ -165,45 +159,74 @@ export class TelegramService implements ITelegramService {
     return res.message_id;
   }
   /**
-   * Send a photo of the first frame for manual layout verification before rendering video.
-   * Returns the message_id of the sent photo message.
+   * Inline keyboard for the pre-processing settings review.
+   * Toggle buttons reflect the current state; the selected crop step is marked.
    */
-  public async sendPhotoForReview(
-    chatId: number,
-    photoPath: string,
-    caption: string,
-    id: string,
-    replyToMessageId?: number,
-    variants?: { A: string; B: string; C: string },
-  ): Promise<number> {
-    const buttons = [];
-    if (variants) {
-      buttons.push([
-        { text: "🅰️ Select A", callback_data: `frm_sela_${id}` },
-        { text: "🅱️ Select B", callback_data: `frm_selb_${id}` },
-        { text: "🅲 Select C", callback_data: `frm_selc_${id}` },
-      ]);
-    }
-    buttons.push([
-      { text: "✅ Approve Frame", callback_data: `frm_app_${id}` },
-      { text: "❌ Cancel", callback_data: `frm_can_${id}` },
-    ]);
+  private settingsKeyboard(id: string, s: ReviewSettings) {
+    const onOff = (v: boolean) => (v ? "ON ✅" : "OFF");
+    const cropRow = (prefix: "ct" | "cb", selected: number, arrow: string) =>
+      [0, 5, 10, 15, 20, 25].map((pct) => ({
+        text: `${pct === selected ? "•" : ""}${arrow}${pct}`,
+        callback_data: `st_${prefix}${pct}_${id}`,
+      }));
+    return {
+      inline_keyboard: [
+        [
+          { text: `🎙 Voiceover: ${onOff(s.voiceover)}`, callback_data: `st_vo_${id}` },
+          { text: `🔊 Orig Audio: ${onOff(s.originalAudio)}`, callback_data: `st_oa_${id}` },
+        ],
+        [
+          { text: `🎵 Music: ${onOff(s.music)}`, callback_data: `st_mu_${id}` },
+          { text: `💬 Captions: ${onOff(s.captions)}`, callback_data: `st_cc_${id}` },
+        ],
+        cropRow("ct", s.cropTopPct, "⬆"),
+        cropRow("cb", s.cropBottomPct, "⬇"),
+        [
+          { text: "▶️ Process Now", callback_data: `st_go_${id}` },
+          { text: "❌ Cancel", callback_data: `st_can_${id}` },
+        ],
+      ],
+    };
+  }
 
-    const res = await this.bot.telegram.sendPhoto(
-      chatId,
-      { source: fs.readFileSync(photoPath) },
-      {
-        caption,
-        parse_mode: "Markdown",
-        reply_parameters: replyToMessageId
-          ? { message_id: replyToMessageId }
-          : undefined,
-        reply_markup: {
-          inline_keyboard: buttons,
-        },
-      } as any,
-    );
+  /**
+   * Send the pre-processing settings review message with toggle buttons.
+   * Returns the message_id of the sent message.
+   */
+  public async sendSettingsReview(
+    chatId: number,
+    text: string,
+    id: string,
+    settings: ReviewSettings,
+    replyToMessageId?: number,
+  ): Promise<number> {
+    const res = await this.bot.telegram.sendMessage(chatId, text, {
+      parse_mode: "Markdown",
+      reply_parameters: replyToMessageId
+        ? { message_id: replyToMessageId }
+        : undefined,
+      reply_markup: this.settingsKeyboard(id, settings),
+    } as any);
     return res.message_id;
+  }
+
+  /**
+   * Refresh the settings review message after a toggle tap. Errors are
+   * swallowed so rapid taps hitting Telegram rate limits cannot crash.
+   */
+  public async updateSettingsReview(
+    chatId: number,
+    messageId: number,
+    text: string,
+    id: string,
+    settings: ReviewSettings,
+  ): Promise<void> {
+    try {
+      await this.bot.telegram.editMessageText(chatId, messageId, undefined, text, {
+        parse_mode: "Markdown",
+        reply_markup: this.settingsKeyboard(id, settings),
+      } as any);
+    } catch (_) {}
   }
   /**
    * Update the caption of the review message (after regenerating metadata)
@@ -724,37 +747,25 @@ export class TelegramService implements ITelegramService {
       }
     });
 
-    // Handle first frame review inline button callbacks
-    this.bot.action(/^frm_(app|can|sela|selb|selc)_(.+)$/, async (ctx) => {
+    // Handle pre-processing settings review inline button callbacks
+    this.bot.action(/^st_([a-z]+\d*)_(.+)$/, async (ctx) => {
       const code = ctx.match[1];
       const id = ctx.match[2];
-      const actionMap: Record<
-        string,
-        "approve" | "cancel" | "select_a" | "select_b" | "select_c"
-      > = {
-        app: "approve",
-        can: "cancel",
-        sela: "select_a",
-        selb: "select_b",
-        selc: "select_c",
-      };
-      const action = actionMap[code];
-      const ackMap = {
-        approve: "✅ Approving frame…",
-        cancel: "❌ Cancelled",
-        select_a: "🅰️ Selected Variant A",
-        select_b: "🅱️ Selected Variant B",
-        select_c: "🅲 Selected Variant C",
-      };
+      const ack =
+        code === "go"
+          ? "▶️ Processing…"
+          : code === "can"
+            ? "❌ Cancelled"
+            : "✔️ Updated";
       try {
-        await ctx.answerCbQuery(ackMap[action]);
+        await ctx.answerCbQuery(ack);
       } catch (err) {
         pipelineLogger.warn(
           `Failed to answer callback query: ${err instanceof Error ? err.message : err}`,
           "Telegram",
         );
       }
-      if (this.frameReviewCallback) this.frameReviewCallback(action, id);
+      if (this.settingsReviewCallback) this.settingsReviewCallback(code, id);
     });
 
     // Handle text messages — detect Instagram reel links

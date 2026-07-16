@@ -15,6 +15,19 @@ export function calculateVideoCrop(context: PipelineContext): {
   hasManualCrop: boolean;
   expandFrame: boolean;
 } {
+  // Settings chosen at the pre-processing review are the single source of truth;
+  // free-text "crop top X%" prompts are parsed into reviewSettings upstream.
+  if (context.reviewSettings) {
+    const cropTop = (context.reviewSettings.cropTopPct || 0) / 100;
+    const cropBottom = (context.reviewSettings.cropBottomPct || 0) / 100;
+    return {
+      cropTop,
+      cropBottom,
+      hasManualCrop: cropTop > 0 || cropBottom > 0,
+      expandFrame: false,
+    };
+  }
+
   let cropTop = 0;
   let cropBottom = 0;
   let expandFrame = false;

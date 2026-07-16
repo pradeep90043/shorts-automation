@@ -27,9 +27,15 @@ class MockTelegramService {
   }
   async deleteMessage(_: number, __: number): Promise<void> {}
   async removeInlineButtons(_: number, __: number): Promise<void> {}
+  async sendSettingsReview(chatId: number, text: string, id: string, _settings: any, _replyToMessageId?: number): Promise<number> {
+    console.log('[MOCK] sendSettingsReview', { chatId, text, id });
+    return 4;
+  }
+  async updateSettingsReview(_: number, __: number, ___: string, ____: string, _____: any): Promise<void> {}
   registerReviewCallback(_: any) {}
   registerRevokeCallback(_: any) {}
-  registerFrameReviewCallback(_: any) {}
+  registerSettingsReviewCallback(_: any) {}
+  registerAudioUploadCallback(_: any) {}
   registerTextPromptCallback(_: any) {}
   registerApprovalTrigger(_: any) {}
   registerPipelineTrigger(_: any) {}
