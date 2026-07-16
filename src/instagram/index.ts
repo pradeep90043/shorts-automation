@@ -420,7 +420,12 @@ async function downloadViaPuppeteer(
       await page.setCookie(...cookies);
     }
 
-    const interceptedVideoUrls: string[] = [];
+    // The reel page also preloads NEIGHBORING reels from the feed, so the
+    // first intercepted video URL is often a different reel entirely. The
+    // requested reel is the one actually playing, and the player fetches many
+    // byte-range segments of it while preloads fetch only one or two — so we
+    // count requests per (byte-range-stripped) URL and pick the busiest one.
+    const interceptedVideoUrls = new Map<string, number>();
     page.on("response", (response: any) => {
       const resUrl = response.url();
       if (
@@ -429,7 +434,7 @@ async function downloadViaPuppeteer(
       ) {
         try {
           const parsed = new URL(resUrl);
-          
+
           // Decode Facebook/Instagram efg encoding metadata parameter to check if it's an audio stream
           const efg = parsed.searchParams.get("efg");
           if (efg) {
@@ -448,8 +453,9 @@ async function downloadViaPuppeteer(
           parsed.searchParams.delete("bytestart");
           parsed.searchParams.delete("byteend");
           const cleaned = parsed.toString();
-          if (!interceptedVideoUrls.includes(cleaned)) {
-            interceptedVideoUrls.push(cleaned);
+          const count = (interceptedVideoUrls.get(cleaned) || 0) + 1;
+          interceptedVideoUrls.set(cleaned, count);
+          if (count === 1) {
             pipelineLogger.info(
               `Intercepted direct CDN video URL: ${cleaned.slice(0, 100)}...`,
               "Instagram",
@@ -543,15 +549,25 @@ async function downloadViaPuppeteer(
 
     // Wait up to 3 seconds to let the video buffer stream so we can intercept direct CDN URLs
     let waitCount = 0;
-    while (interceptedVideoUrls.length === 0 && waitCount < 6) {
+    while (interceptedVideoUrls.size === 0 && waitCount < 6) {
       await new Promise((r) => setTimeout(r, 500));
       waitCount++;
     }
 
-    if (interceptedVideoUrls.length > 0) {
-      videoSrc = interceptedVideoUrls[0];
+    if (interceptedVideoUrls.size > 0) {
+      // Let the playing reel accumulate segment requests so it clearly
+      // outnumbers the one-shot preloads of neighboring reels.
+      await new Promise((r) => setTimeout(r, 2500));
+
+      let bestCount = 0;
+      for (const [candidate, count] of interceptedVideoUrls) {
+        if (count > bestCount) {
+          videoSrc = candidate;
+          bestCount = count;
+        }
+      }
       pipelineLogger.info(
-        `Using intercepted CDN video URL: ${videoSrc.slice(0, 100)}...`,
+        `Selected CDN video URL with ${bestCount} segment request(s) out of ${interceptedVideoUrls.size} candidate(s): ${videoSrc?.slice(0, 100)}...`,
         "Instagram",
       );
     } else {
