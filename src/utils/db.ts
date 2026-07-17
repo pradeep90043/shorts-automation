@@ -58,7 +58,7 @@ export class JobDatabase {
           this.jobs.set(id, job);
         }
         pipelineLogger.info(
-          `Loaded ${this.jobs.size} active jobs from database`,
+          `Loaded ${this.jobs.size} total job record(s) from database`,
           "JobDatabase",
         );
       } else {
@@ -80,8 +80,11 @@ export class JobDatabase {
       }
 
       // Perform an atomic write: write to temp file first, then rename.
-      // This prevents database corruption if the process crashes mid-write.
-      const tempPath = `${this.dbFilePath}.tmp`;
+      // Unique per-write temp filename so concurrent processes (e.g. a
+      // duplicate bot instance) can never interleave writes to the same
+      // temp file — rename() itself is atomic, so this fully prevents
+      // corruption even without the single-instance lock.
+      const tempPath = `${this.dbFilePath}.${process.pid}.${Date.now()}.tmp`;
       fs.writeFileSync(tempPath, JSON.stringify(records, null, 2), "utf8");
       fs.renameSync(tempPath, this.dbFilePath);
     } catch (err) {

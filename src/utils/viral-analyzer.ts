@@ -56,7 +56,11 @@ export class ViralAnalyzer {
   private writeDb(records: AnalyticsRecord[]): void {
     try {
       this.ensureDbExists();
-      const tempPath = `${this.dbPath}.tmp`;
+      // Unique per-write temp filename — if two processes ever raced on this
+      // file (as happened when duplicate bot instances were running), a
+      // shared ".tmp" name let their writes interleave and corrupt the file.
+      // rename() is atomic, so distinct temp files can never do that.
+      const tempPath = `${this.dbPath}.${process.pid}.${Date.now()}.tmp`;
       fs.writeFileSync(tempPath, JSON.stringify(records, null, 2), "utf8");
       fs.renameSync(tempPath, this.dbPath);
     } catch (err) {
