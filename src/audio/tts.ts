@@ -14,22 +14,12 @@ export class TTSService {
       const openaiVoice = isEnglishMale ? 'onyx' : 'nova';
       
       let generated = false;
-      
-      // Try OpenAI first
+
+      // Edge TTS is the fast, reliable primary — no browser launch required.
+      // OpenAI.fm needs a real headless Chromium (a 30s+ launch on constrained
+      // hosts, and it has never once succeeded in production), so it's kept
+      // only as a last-resort fallback rather than tried first on every job.
       try {
-        pipelineLogger.info(`Attempting OpenAI.fm TTS voiceover generation with voice: ${openaiVoice}...`, 'TTSService');
-        await this.generateOpenAIVoiceover(script, openaiVoice, outputPath);
-        generated = true;
-        pipelineLogger.info(`✓ OpenAI.fm TTS generation successful. Output: ${outputPath}`, 'TTSService');
-      } catch (openAiErr) {
-        pipelineLogger.warn(
-          `OpenAI.fm TTS generation failed/limit reached. Falling back to Edge TTS. Error: ${openAiErr instanceof Error ? openAiErr.message : openAiErr}`,
-          'TTSService'
-        );
-      }
-      
-      // Fallback to Edge TTS
-      if (!generated) {
         pipelineLogger.info(`Generating Edge TTS voiceover with voice: ${edgeVoice}...`, 'TTSService');
         const tts = new EdgeTTS({
           voice: edgeVoice,
@@ -37,7 +27,26 @@ export class TTSService {
           outputFormat: 'audio-24khz-48kbitrate-mono-mp3'
         });
         await tts.ttsPromise(script, outputPath);
+        generated = true;
         pipelineLogger.info(`✓ Edge TTS generation successful. Output: ${outputPath}`, 'TTSService');
+      } catch (edgeErr) {
+        pipelineLogger.warn(
+          `Edge TTS generation failed. Falling back to OpenAI.fm. Error: ${edgeErr instanceof Error ? edgeErr.message : edgeErr}`,
+          'TTSService'
+        );
+      }
+
+      // Fallback to OpenAI.fm only if Edge TTS itself failed
+      if (!generated) {
+        try {
+          pipelineLogger.info(`Attempting OpenAI.fm TTS voiceover generation with voice: ${openaiVoice}...`, 'TTSService');
+          await this.generateOpenAIVoiceover(script, openaiVoice, outputPath);
+          generated = true;
+          pipelineLogger.info(`✓ OpenAI.fm TTS generation successful. Output: ${outputPath}`, 'TTSService');
+        } catch (openAiErr) {
+          pipelineLogger.error(`Both Edge TTS and OpenAI.fm TTS failed`, openAiErr, 'TTSService');
+          throw openAiErr;
+        }
       }
       
       // Determine duration using ffprobe
