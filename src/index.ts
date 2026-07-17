@@ -3,12 +3,17 @@ import { TelegramService } from "./telegram";
 import { DirectUploader } from "./direct-uploader";
 import { ensureAssetsExist } from "./utils/assets";
 import { pipelineLogger } from "./utils/logger";
+import { acquireSingleInstanceLock } from "./utils/singleInstanceLock";
 
 async function bootstrap() {
   pipelineLogger.info(
     "Starting Shorts Automation System...",
     "Bootstrap",
   );
+
+  // 0. Refuse to start if another instance is already polling Telegram —
+  // duplicate pollers cause the same message to be handled twice.
+  acquireSingleInstanceLock();
 
   // 1. Validate environment configuration
   validateConfig();
