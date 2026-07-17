@@ -12,6 +12,7 @@ import { TelegramService, escapeMarkdown } from "./telegram";
 import { PipelineContext, VideoMetadata } from "./types";
 import { pipelineLogger } from "./utils/logger";
 import { FreeLlmApiClient } from "./ai/freellmapi";
+import { GeminiClient } from "./ai/gemini";
 import { parseAiJson } from "./utils/json";
 import { getFileHash } from "./utils/cache";
 import { JobDatabase } from "./utils/db";
@@ -38,6 +39,61 @@ const isPermanentQuotaError = (msg: string): boolean =>
 const AI_MAX_ATTEMPTS = 3;
 const AI_RETRY_DELAY_MS = 15000;
 
+interface UnifiedVisionResponse {
+  metadata: VideoMetadata;
+  brandingZones: Array<{
+    type:
+      | "logo"
+      | "watermark"
+      | "handle"
+      | "profile_name"
+      | "main_post_content"
+      | "original_captions";
+    box: { x: number; y: number; width: number; height: number };
+    description: string;
+  }>;
+  extractedText?: string;
+  existingBanner: boolean;
+  bannerBounds: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null;
+  safeAreas: Array<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    score: number;
+    reason: string;
+  }>;
+  protectedRegions: Array<{
+    type: string;
+    box: { x: number; y: number; width: number; height: number };
+    description: string;
+  }>;
+  recommendedPlacement: "existing_banner" | "top" | "bottom" | "left" | "right";
+  captionStyle?: "style1_outline" | "style2_banner_replace" | "style3_black_banner" | "style4_gradient";
+  backgroundType?: "plain" | "busy" | "existing_banner";
+  qualityScore?: {
+    readability: number;
+    watermarkRisk: number;
+    isStandardMemeStyle: boolean;
+    recommendation: string;
+  };
+  recommendedSettings?: {
+    voiceover?: boolean;
+    originalAudio?: boolean;
+    music?: boolean;
+    captions?: boolean;
+    cropTopPct?: number;
+    cropBottomPct?: number;
+    creatorTextDetected?: boolean;
+    reason?: string;
+  };
+}
+
 interface PendingUpload {
   id: string;
   chatId: number;
@@ -56,6 +112,7 @@ interface PendingUpload {
 
 export class DirectUploader {
   private freellmapi: FreeLlmApiClient | null = null;
+  private gemini: GeminiClient = new GeminiClient();
   private renderer: VideoRenderer;
   private music: MusicService;
   private youtube: YouTubeService;
@@ -439,6 +496,8 @@ Use this to write a voiceover script that matches the content arc of the video. 
       }
 
       let raw = "";
+      let usedProvider = "FreeLLMAPI";
+      let freeLlmApiFailure: any = null;
       if (this.freellmapi) {
         let attempts = 0;
         const maxAttempts = AI_MAX_ATTEMPTS;
@@ -457,11 +516,15 @@ Use this to write a voiceover script that matches the content arc of the video. 
                 "FreeLLMAPI quota is exhausted (permanent for this run) — skipping retries and falling back.",
                 "DirectUploader",
               );
-              throw e;
+              freeLlmApiFailure = e;
+              break;
             }
             if (msg.includes("429") || msg.includes("rate")) {
               attempts++;
-              if (attempts >= maxAttempts) throw e;
+              if (attempts >= maxAttempts) {
+                freeLlmApiFailure = e;
+                break;
+              }
               pipelineLogger.warn(
                 `FreeLLMAPI rate limited (429). Waiting 15s before retry (${attempts}/${maxAttempts})...`,
                 "DirectUploader"
@@ -469,81 +532,71 @@ Use this to write a voiceover script that matches the content arc of the video. 
               await new Promise((r) => setTimeout(r, AI_RETRY_DELAY_MS));
             } else if (msg.includes("timed out")) {
               attempts++;
-              if (attempts >= maxAttempts) throw e;
+              if (attempts >= maxAttempts) {
+                freeLlmApiFailure = e;
+                break;
+              }
               pipelineLogger.warn(
                 `FreeLLMAPI timed out. Retrying immediately (${attempts}/${maxAttempts})...`,
                 "DirectUploader"
               );
             } else {
-              throw e;
+              freeLlmApiFailure = e;
+              break;
             }
           }
         }
       }
 
-      if (!raw) {
-        throw new Error("FreeLLMAPI failed to respond.");
+      if (!raw && freeLlmApiFailure && this.gemini.enabled) {
+        pipelineLogger.warn(
+          `FreeLLMAPI failed (${freeLlmApiFailure.message || freeLlmApiFailure}) — falling back to Gemini vision...`,
+          "DirectUploader",
+        );
+        try {
+          raw = await this.gemini.generateVision(prompt, base64s, mimeTypes);
+          usedProvider = "Gemini";
+          pipelineLogger.info("Gemini vision fallback succeeded.", "DirectUploader");
+        } catch (geminiErr: any) {
+          pipelineLogger.warn(
+            `Gemini vision fallback also failed: ${geminiErr.message || geminiErr}`,
+            "DirectUploader",
+          );
+        }
       }
 
-      const data = parseAiJson<{
-        metadata: VideoMetadata;
-        brandingZones: Array<{
-          type:
-            | "logo"
-            | "watermark"
-            | "handle"
-            | "profile_name"
-            | "main_post_content"
-            | "original_captions";
-          box: { x: number; y: number; width: number; height: number };
-          description: string;
-        }>;
-        extractedText?: string;
-        existingBanner: boolean;
-        bannerBounds: {
-          x: number;
-          y: number;
-          width: number;
-          height: number;
-        } | null;
-        safeAreas: Array<{
-          x: number;
-          y: number;
-          width: number;
-          height: number;
-          score: number;
-          reason: string;
-        }>;
-        protectedRegions: Array<{
-          type: string;
-          box: { x: number; y: number; width: number; height: number };
-          description: string;
-        }>;
-        recommendedPlacement:
-          | "existing_banner"
-          | "top"
-          | "bottom"
-          | "left"
-          | "right";
-        captionStyle?: "style1_outline" | "style2_banner_replace" | "style3_black_banner" | "style4_gradient";
-        backgroundType?: "plain" | "busy" | "existing_banner";
-        qualityScore?: {
-          readability: number;
-          watermarkRisk: number;
-          isStandardMemeStyle: boolean;
-          recommendation: string;
-        };
-        recommendedSettings?: {
-          voiceover?: boolean;
-          originalAudio?: boolean;
-          music?: boolean;
-          captions?: boolean;
-          cropTopPct?: number;
-          cropBottomPct?: number;
-          creatorTextDetected?: boolean;
-          reason?: string;
-        };
-      }>(raw);
+      if (!raw) {
+        throw freeLlmApiFailure || new Error("FreeLLMAPI failed to respond.");
+      }
+
+      let data: UnifiedVisionResponse;
+      try {
+        data = parseAiJson<UnifiedVisionResponse>(raw);
+      } catch (parseErr: any) {
+        // A malformed-JSON response can't be fixed by re-asking the same
+        // provider the same way — but a different provider might return
+        // valid JSON from the identical prompt+images.
+        if (usedProvider === "FreeLLMAPI" && this.gemini.enabled) {
+          pipelineLogger.warn(
+            `FreeLLMAPI returned malformed JSON (${parseErr.message}) — retrying vision via Gemini...`,
+            "DirectUploader",
+          );
+          try {
+            raw = await this.gemini.generateVision(prompt, base64s, mimeTypes);
+            data = parseAiJson<UnifiedVisionResponse>(raw);
+            usedProvider = "Gemini";
+            pipelineLogger.info("Gemini vision fallback succeeded.", "DirectUploader");
+          } catch (geminiErr: any) {
+            pipelineLogger.warn(
+              `Gemini vision fallback also failed: ${geminiErr.message || geminiErr}`,
+              "DirectUploader",
+            );
+            throw parseErr;
+          }
+        } else {
+          throw parseErr;
+        }
+      }
 
       // Fallback if the LLM forgot the "metadata" wrapper but included the fields at the root
       if (!data.metadata && (data as any).title && (data as any).description) {
@@ -822,19 +875,27 @@ Description: ${description}\n`;
         ? `You are a viral YouTube Shorts growth hacker for ${this.theme.channelDescriptor} called "${this.profile.brandName}". ${contentContext} Generate the most scroll-stopping, curiosity-gap, high-CTR metadata possible based on the text.\n${this.theme.titleRules}\n${this.theme.descriptionRules(this.profile.brandName)}\nWrite a short, engaging 10-15 second voiceover script (approx 20-30 words) in ${this.voiceoverPromptLanguage} describing the content.\nReturn ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate","voiceoverScript":"..."}}`
         : `You are a YouTube Shorts strategist for ${this.theme.channelDescriptor} called "${this.profile.brandName}". ${contentContext} Generate SEO-optimised metadata based on the text.\n${this.theme.titleRules}\n${this.theme.descriptionRules(this.profile.brandName)}\nWrite a short, engaging 10-15 second voiceover script (approx 20-30 words) in ${this.voiceoverPromptLanguage} describing the content.\nReturn ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate","voiceoverScript":"..."}}`;
       
-      // Retry timeouts once — the free API is intermittently slow, and this is
-      // the last stop before the hardcoded template.
+      // Retry timeouts once — the free API is intermittently slow. If
+      // FreeLLMAPI still fails, Gemini gets one attempt with the same prompt
+      // before giving up to the hardcoded template.
       let raw = "";
       try {
         raw = await this.freellmapi.generateText(prompt);
       } catch (e: any) {
         const msg = e?.message || String(e);
-        if (!msg.includes("timed out")) throw e;
-        pipelineLogger.warn(
-          "Text fallback timed out. Retrying once...",
-          "DirectUploader",
-        );
-        raw = await this.freellmapi.generateText(prompt);
+        if (msg.includes("timed out")) {
+          pipelineLogger.warn(
+            "Text fallback timed out. Retrying once...",
+            "DirectUploader",
+          );
+          try {
+            raw = await this.freellmapi.generateText(prompt);
+          } catch (e2: any) {
+            raw = await this.tryGeminiTextFallback(prompt, e2);
+          }
+        } else {
+          raw = await this.tryGeminiTextFallback(prompt, e);
+        }
       }
       const data = parseAiJson<{metadata?: VideoMetadata} & Partial<VideoMetadata>>(raw);
       
@@ -870,6 +931,31 @@ Description: ${description}\n`;
           .catch(() => {});
       }
       return this.fallbackMetadata();
+    }
+  }
+
+  /**
+   * Last attempt before the hardcoded template: retry the same text prompt
+   * via Gemini. Re-throws the ORIGINAL FreeLLMAPI error (not a Gemini error)
+   * if Gemini is unavailable or also fails, so the eventual Telegram warning
+   * still names the real root cause.
+   */
+  private async tryGeminiTextFallback(prompt: string, originalErr: any): Promise<string> {
+    if (!this.gemini.enabled) throw originalErr;
+    pipelineLogger.warn(
+      `FreeLLMAPI text fallback failed (${originalErr?.message || originalErr}) — trying Gemini...`,
+      "DirectUploader",
+    );
+    try {
+      const raw = await this.gemini.generateText(prompt);
+      pipelineLogger.info("Gemini text fallback succeeded.", "DirectUploader");
+      return raw;
+    } catch (geminiErr: any) {
+      pipelineLogger.warn(
+        `Gemini text fallback also failed: ${geminiErr.message || geminiErr}`,
+        "DirectUploader",
+      );
+      throw originalErr;
     }
   }
 

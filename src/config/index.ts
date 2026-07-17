@@ -59,6 +59,8 @@ export interface AppConfig {
     freellmapiKey: string;
     freellmapiModel: string;
     freellmapiVisionModel: string;
+
+    geminiApiKey: string; // fallback AI provider used only when FreeLLMAPI fails
   };
   paths: {
     assetsDir: string;
@@ -296,6 +298,8 @@ export const config: AppConfig = {
     freellmapiKey: process.env.FREELLMAPI_KEY || "",
     freellmapiModel: process.env.FREELLMAPI_MODEL || "auto",
     freellmapiVisionModel: process.env.FREELLMAPI_VISION_MODEL || "auto",
+
+    geminiApiKey: process.env.GEMINI_API_KEY || "",
   },
   paths: {
     assetsDir: process.env.ASSETS_DIR
