@@ -3200,6 +3200,20 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
    * over the input audio, optional burned subtitles) and concatenate it with
    * the full video — preserving the pre-existing hook+part2 structure.
    */
+  /**
+   * Mix the voiceover over the original video's audio for its FULL duration
+   * (voiceover ON, music OFF). Previously this built a separate "hook"
+   * segment truncated to the voiceover's length and concatenated it with an
+   * untrimmed copy of the whole video — which duplicated the opening seconds
+   * and, worse, silenced the original audio for the rest of the video once
+   * the voiceover's short duration was hit by a `-shortest`/`duration=shortest`
+   * combo. Now it's a single-pass sidechain duck, matching the same pattern
+   * used for music: the voice is padded with silence to the video's full
+   * length before it's split (so the sidechain key never runs dry early —
+   * that was what silenced the bed audio entirely, not just stopped ducking
+   * it), and the original audio sits at its natural volume so it plays at
+   * full presence once the voice ends, not a permanently-attenuated level.
+   */
   private async renderVoiceoverHook(
     context: PipelineContext,
     inputPath: string,
@@ -3208,120 +3222,85 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     includeCaptions: boolean,
   ): Promise<void> {
     const tempDir = context.tempDir;
-    await new Promise<void>((resolve) => {
-      const hookVideoPath = path.join(tempDir, "hook_video.mp4");
 
-      // Determine if input video has an audio stream
-      let hasAudio = false;
+    let duration = context.ttsDuration || 10;
+    try {
+      const stdout = execSync(
+        `"${config.binaries.ffprobe}" -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${inputPath}"`,
+      )
+        .toString()
+        .trim();
+      const parsed = parseFloat(stdout);
+      if (!isNaN(parsed) && parsed > 0) duration = parsed;
+    } catch (probeErr) {
+      pipelineLogger.warn(
+        "Failed to probe video duration for voiceover mix, using TTS duration as fallback",
+        "DirectUploader",
+      );
+    }
+
+    let hasAudio = false;
+    try {
+      const ffprobeCheck = execSync(
+        `"${config.binaries.ffprobe}" -v error -select_streams a -show_entries stream=codec_type -of csv=p=0 "${inputPath}"`,
+      )
+        .toString()
+        .trim();
+      hasAudio = ffprobeCheck === "audio";
+    } catch (probeErr) {
+      pipelineLogger.warn(
+        "Failed to check video audio stream via ffprobe, assuming false",
+        "DirectUploader",
+      );
+    }
+
+    let subtitlesFilter = "";
+    const script = context.metadata?.voiceoverScript;
+    if (script && includeCaptions) {
       try {
-        const ffprobeCheck = execSync(
-          `"${config.binaries.ffprobe}" -v error -select_streams a -show_entries stream=codec_type -of csv=p=0 "${inputPath}"`,
-        )
-          .toString()
-          .trim();
-        hasAudio = ffprobeCheck === "audio";
-      } catch (probeErr) {
-        pipelineLogger.warn(
-          "Failed to check video audio stream via ffprobe, assuming false",
+        const assPath = path.join(tempDir, "subtitles.ass");
+        const wordTimings = estimateWordTimings(script, context.ttsDuration || 10);
+        const lines = groupWordsIntoLines(wordTimings);
+        generateASSFile(lines, assPath);
+        const escapedAssPath = assPath
+          .replace(/\\/g, "/")
+          .replace(/:/g, "\\:")
+          .replace(/'/g, "'\\\\''");
+        subtitlesFilter = `subtitles='${escapedAssPath}'`;
+      } catch (subErr) {
+        pipelineLogger.error(
+          "Failed to generate ASS subtitles, continuing without captions",
+          subErr,
           "DirectUploader",
         );
       }
+    }
 
-      let hookCmd = "";
-      const script = context.metadata?.voiceoverScript;
-      if (script && includeCaptions) {
-        try {
-          const assPath = path.join(tempDir, "subtitles.ass");
-          const duration = context.ttsDuration || 10;
-          const wordTimings = estimateWordTimings(script, duration);
-          const lines = groupWordsIntoLines(wordTimings);
-          generateASSFile(lines, assPath);
+    const fps = config.rendering.fps || 30;
+    const videoFilter = subtitlesFilter ? `[0:v]${subtitlesFilter}[vout];` : "";
+    const videoMap = subtitlesFilter ? `-map "[vout]"` : `-map 0:v:0`;
+    const videoCodec = subtitlesFilter
+      ? `-c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p -r ${fps}`
+      : `-c:v copy`;
 
-          const escapedAssPath = assPath
-            .replace(/\\/g, "/")
-            .replace(/:/g, "\\:")
-            .replace(/'/g, "'\\\\''");
+    const audioFilter = hasAudio
+      ? `[1:a]apad=whole_dur=${duration}[vopad];` +
+        `[vopad]asplit=2[vokey][vomix];` +
+        `[0:a]volume=1.0[bg];` +
+        `[bg][vokey]sidechaincompress=threshold=0.05:ratio=15:attack=10:release=300[bg_ducked];` +
+        `[vomix]volume=2.0[vo];` +
+        `[vo][bg_ducked]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,atrim=0:${duration}[aout]`
+      : `[1:a]apad=whole_dur=${duration},volume=2.0,atrim=0:${duration}[aout]`;
 
-          const fps = config.rendering.fps || 30;
+    const cmd = `${config.binaries.ffmpeg} -y -i "${inputPath}" -i "${voiceoverPath}" -filter_complex "${videoFilter}${audioFilter}" ${videoMap} -map "[aout]" ${videoCodec} -c:a aac -ar 44100 -ac 2 "${outputPath}"`;
 
-          let filterComplex = "";
-          if (hasAudio) {
-            filterComplex = `[0:v]subtitles='${escapedAssPath}'[vout];[0:a]volume=0.18[a0];[1:a]volume=5.5[a1];[a0][a1]amix=inputs=2:duration=shortest[aout]`;
-          } else {
-            filterComplex = `[0:v]subtitles='${escapedAssPath}'[vout];[1:a]volume=5.5[aout]`;
-          }
+    pipelineLogger.info(
+      `Mixing voiceover over original audio for full video duration (hasAudio=${hasAudio}, duration=${duration.toFixed(1)}s)...`,
+      "DirectUploader",
+    );
 
-          hookCmd = `${config.binaries.ffmpeg} -y -i "${inputPath}" -i "${voiceoverPath}" -filter_complex "${filterComplex}" -map "[vout]" -map "[aout]" -c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p -r ${fps} -c:a aac -ar 44100 -ac 2 -shortest "${hookVideoPath}"`;
-          pipelineLogger.info(
-            `Rendering hook video with word-by-word subtitles (hasAudio=${hasAudio})...`,
-            "DirectUploader",
-          );
-        } catch (subErr) {
-          pipelineLogger.error(
-            "Failed to generate ASS subtitles, falling back to plain hook mix",
-            subErr,
-            "DirectUploader",
-          );
-        }
-      }
-
-      if (!hookCmd) {
-        let filterComplex = "";
-        if (hasAudio) {
-          filterComplex = `[0:a]volume=0.18[a0];[1:a]volume=5.5[a1];[a0][a1]amix=inputs=2:duration=shortest[aout]`;
-        } else {
-          filterComplex = `[1:a]volume=5.5[aout]`;
-        }
-        hookCmd = `${config.binaries.ffmpeg} -y -i "${inputPath}" -i "${voiceoverPath}" -filter_complex "${filterComplex}" -map 0:v:0 -map "[aout]" -c:v copy -c:a aac -ar 44100 -ac 2 -shortest "${hookVideoPath}"`;
-      }
-
-      exec(hookCmd, (error) => {
-        if (error) {
-          pipelineLogger.error(
-            "Failed to generate hook video",
-            error,
-            "DirectUploader",
-          );
-          fs.copyFileSync(inputPath, outputPath);
-          return resolve();
-        }
-
-        // Create part2 from the input with the exact same audio format
-        const part2VideoPath = path.join(tempDir, "part2_video.mp4");
-        const part2Cmd = `${config.binaries.ffmpeg} -y -i "${inputPath}" -c:v copy -c:a aac -ar 44100 -ac 2 "${part2VideoPath}"`;
-
-        exec(part2Cmd, (part2Error) => {
-          if (part2Error) {
-            pipelineLogger.error(
-              "Failed to prepare part 2 video",
-              part2Error,
-              "DirectUploader",
-            );
-            fs.copyFileSync(inputPath, outputPath);
-            return resolve();
-          }
-
-          // Now concatenate the hook and the prepared part2 video
-          const concatTxtPath = path.join(tempDir, "concat.txt");
-          fs.writeFileSync(
-            concatTxtPath,
-            `file 'hook_video.mp4'\nfile 'part2_video.mp4'\n`,
-          );
-
-          const concatCmd = `${config.binaries.ffmpeg} -y -f concat -safe 0 -i "${concatTxtPath}" -c:v copy -c:a aac -movflags +faststart "${outputPath}"`;
-          exec(concatCmd, (concatError) => {
-            if (concatError) {
-              pipelineLogger.error(
-                "Failed to concatenate hook and full video",
-                concatError,
-                "DirectUploader",
-              );
-              fs.copyFileSync(inputPath, outputPath);
-            }
-            resolve();
-          });
-        });
-      });
+    await new Promise<void>((resolve, reject) => {
+      exec(cmd, (error) => (error ? reject(error) : resolve()));
     });
   }
 
