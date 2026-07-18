@@ -226,6 +226,7 @@ export interface PipelineContext {
   aiRecommendedSettings?: ReviewSettings; // what the AI suggests
   reviewSettings?: ReviewSettings; // final settings (user overrides or AI defaults)
   settingsReviewDone?: boolean; // gate already passed — do not re-show on re-entry
+  moodPinned?: string; // user explicitly picked this mood via the settings review — force it onto whatever the next AI regeneration returns, regardless of the AI's own classification
 }
 
 export interface ITelegramService {
@@ -248,6 +249,7 @@ export interface ITelegramService {
     text: string,
     id: string,
     settings: ReviewSettings,
+    mood: string,
     replyToMessageId?: number,
     previewImagePath?: string,
   ): Promise<number>;
@@ -257,6 +259,7 @@ export interface ITelegramService {
     text: string,
     id: string,
     settings: ReviewSettings,
+    mood: string,
   ): Promise<void>;
   sendVideoForReview(
     chatId: number,
