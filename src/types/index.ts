@@ -108,11 +108,14 @@ export interface VideoMetadata {
 
 export interface ReviewSettings {
   voiceover: boolean;
+  // Single mutually-exclusive audio-bed selector: true = keep the original
+  // video's audio, false = replace it with a selected background music
+  // track. There is no "neither" state — one of the two is always the bed.
+  // Voiceover (above) layers on top of whichever bed is active either way.
   originalAudio: boolean;
-  music: boolean;
   captions: boolean;
-  cropTopPct: number; // 0 | 5 | 10 | 15 | 20 | 25
-  cropBottomPct: number; // 0 | 5 | 10 | 15 | 20 | 25
+  cropTopPct: number; // 0 | 5 | 10 | 15 | 20 | 25 | 30 | 35
+  cropBottomPct: number; // 0 | 5 | 10 | 15 | 20 | 25 | 30 | 35
   sticker: boolean; // overlay a mood-matched reaction sticker (assets/stickers/<mood>.mov)
 }
 
