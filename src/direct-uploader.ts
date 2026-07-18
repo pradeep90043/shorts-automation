@@ -85,7 +85,6 @@ interface UnifiedVisionResponse {
   recommendedSettings?: {
     voiceover?: boolean;
     originalAudio?: boolean;
-    music?: boolean;
     captions?: boolean;
     cropTopPct?: number;
     cropBottomPct?: number;
@@ -396,11 +395,10 @@ Evaluate the image quality, text readability, watermark risk, and style format:
 
 TASK 6: Recommended Processing Settings
 Recommend how this video should be processed. Rules:
-- originalAudio: true when the original audio carries the content (speech, dialogue, a story being told, meaningful sound). False when audio is just generic music or absent.
-- voiceover: true when the video has no meaningful audio narrative and would benefit from an AI-narrated script (e.g. silent memes, stories told via on-screen text). False when the original speech IS the content.
-- music: true when there is no dialogue/speech to preserve (background music enhances silent or music-only clips). False when original speech must stay audible.
+- originalAudio: true when the original audio carries the content (speech, dialogue, a story being told, meaningful sound) and should be kept. False when audio is just generic/absent and should be REPLACED ENTIRELY by background music (this is a single either/or choice — original audio and background music are never both on).
+- voiceover: true when the video has no meaningful audio narrative and would benefit from an AI-narrated script (e.g. silent memes, stories told via on-screen text). False when the original speech IS the content. Voiceover layers on top of whichever audio bed (original or music) is chosen above.
 - captions: true when there is speech to subtitle or a voiceover script will be narrated. False for pure visual/music content.
-- cropTopPct / cropBottomPct: percentage of the frame height to crop away (MUST be one of 0, 5, 10, 15, 20, 25). Recommend cropping only to remove creator banners, usernames, app chrome, or captions baked near the very top/bottom edges (use the brandingZones you found). 0 when nothing needs removing.
+- cropTopPct / cropBottomPct: percentage of the frame height to crop away (MUST be one of 0, 5, 10, 15, 20, 25, 30, 35). Recommend cropping only to remove creator banners, usernames, app chrome, or captions baked near the very top/bottom edges (use the brandingZones you found). 0 when nothing needs removing.
 - creatorTextDetected: true if any creator captions, usernames, or text overlays are baked into the video frames.
 - reason: one short sentence explaining the recommendation.
 
@@ -474,7 +472,6 @@ Return ONLY a raw JSON object matching this schema — no markdown, no explanati
   "recommendedSettings": {
     "voiceover": boolean,
     "originalAudio": boolean,
-    "music": boolean,
     "captions": boolean,
     "cropTopPct": number,
     "cropBottomPct": number,
@@ -786,7 +783,6 @@ Use this to write a voiceover script that matches the content arc of the video. 
     rec?: {
       voiceover?: boolean;
       originalAudio?: boolean;
-      music?: boolean;
       captions?: boolean;
       cropTopPct?: number;
       cropBottomPct?: number;
@@ -796,7 +792,7 @@ Use this to write a voiceover script that matches the content arc of the video. 
   ): void {
     const snapCrop = (value: unknown): number => {
       const n = typeof value === "number" && isFinite(value) ? value : 0;
-      const clamped = Math.min(25, Math.max(0, n));
+      const clamped = Math.min(35, Math.max(0, n));
       return Math.round(clamped / 5) * 5;
     };
 
@@ -804,7 +800,6 @@ Use this to write a voiceover script that matches the content arc of the video. 
     context.aiRecommendedSettings = {
       voiceover: rec?.voiceover ?? !!context.metadata?.voiceoverScript,
       originalAudio: rec?.originalAudio ?? !!context.hasOriginalAudio,
-      music: rec?.music ?? !context.hasOriginalAudio,
       captions:
         rec?.captions ??
         (hasTranscriptWords || !!context.metadata?.voiceoverScript),
@@ -1591,7 +1586,6 @@ ${this.theme.analysisRules}`;
         ...(context.aiRecommendedSettings ?? {
           voiceover: !!context.metadata?.voiceoverScript,
           originalAudio: !!context.hasOriginalAudio,
-          music: !context.hasOriginalAudio,
           captions: false,
           cropTopPct: 0,
           cropBottomPct: 0,
@@ -1696,12 +1690,11 @@ ${this.theme.analysisRules}`;
 
     if (code === "vo") settings.voiceover = !settings.voiceover;
     else if (code === "oa") settings.originalAudio = !settings.originalAudio;
-    else if (code === "mu") settings.music = !settings.music;
     else if (code === "cc") settings.captions = !settings.captions;
     else if (code === "sk") settings.sticker = !settings.sticker;
-    else if (/^ct(0|5|10|15|20|25)$/.test(code)) {
+    else if (/^ct(0|5|10|15|20|25|30|35)$/.test(code)) {
       settings.cropTopPct = parseInt(code.slice(2), 10);
-    } else if (/^cb(0|5|10|15|20|25)$/.test(code)) {
+    } else if (/^cb(0|5|10|15|20|25|30|35)$/.test(code)) {
       settings.cropBottomPct = parseInt(code.slice(2), 10);
     } else {
       return; // unknown code
@@ -2962,8 +2955,9 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         context,
       });
 
-      // Music selection honours the settings-review toggle
-      if (settings.music) {
+      // Original audio and background music are a single mutually-exclusive
+      // toggle now: music plays exactly when original audio is off.
+      if (!settings.originalAudio) {
         context.selectedMusicTrack = this.music.selectLocalTrack(
           config.paths.musicDir,
           context.metadata?.mood,

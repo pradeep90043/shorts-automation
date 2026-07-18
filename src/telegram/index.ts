@@ -164,26 +164,35 @@ export class TelegramService implements ITelegramService {
    */
   private settingsKeyboard(id: string, s: ReviewSettings) {
     const onOff = (v: boolean) => (v ? "ON ✅" : "OFF");
-    const cropRow = (prefix: "ct" | "cb", selected: number, arrow: string) =>
-      [0, 5, 10, 15, 20, 25].map((pct) => ({
+    // Split each crop direction into two narrower rows of 4 — a single row of
+    // 8 (0-35 in steps of 5) renders too cramped, especially under a photo
+    // message, which gives inline keyboards less width than a text message.
+    const cropRows = (prefix: "ct" | "cb", selected: number, arrow: string) => {
+      const steps = [0, 5, 10, 15, 20, 25, 30, 35];
+      const toButton = (pct: number) => ({
         text: `${pct === selected ? "•" : ""}${arrow}${pct}`,
         callback_data: `st_${prefix}${pct}_${id}`,
-      }));
+      });
+      return [
+        steps.slice(0, 4).map(toButton),
+        steps.slice(4).map(toButton),
+      ];
+    };
     return {
       inline_keyboard: [
         [
           { text: `🎙 Voiceover: ${onOff(s.voiceover)}`, callback_data: `st_vo_${id}` },
-          { text: `🔊 Orig Audio: ${onOff(s.originalAudio)}`, callback_data: `st_oa_${id}` },
+          {
+            text: s.originalAudio ? "🔊 Audio: Original" : "🎵 Audio: Music",
+            callback_data: `st_oa_${id}`,
+          },
         ],
         [
-          { text: `🎵 Music: ${onOff(s.music)}`, callback_data: `st_mu_${id}` },
           { text: `💬 Captions: ${onOff(s.captions)}`, callback_data: `st_cc_${id}` },
+          { text: `🎭 Sticker: ${onOff(s.sticker)}`, callback_data: `st_sk_${id}` },
         ],
-        [
-          { text: `🎭 Reaction Sticker: ${onOff(s.sticker)}`, callback_data: `st_sk_${id}` },
-        ],
-        cropRow("ct", s.cropTopPct, "⬆"),
-        cropRow("cb", s.cropBottomPct, "⬇"),
+        ...cropRows("ct", s.cropTopPct, "⬆"),
+        ...cropRows("cb", s.cropBottomPct, "⬇"),
         [
           { text: "▶️ Process Now", callback_data: `st_go_${id}` },
           { text: "❌ Cancel", callback_data: `st_can_${id}` },
