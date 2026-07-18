@@ -130,6 +130,28 @@ export class DirectUploader {
       ? "natural, professional English"
       : "Hinglish (a conversational mix of Hindi and English, written in English alphabet)";
   }
+
+  /**
+   * The voiceover script's spoken length must match the ACTUAL video
+   * duration — otherwise the narration (and the captions timed off it)
+   * runs out partway through and the rest of the video plays in silence.
+   * When the real duration isn't known yet (e.g. image-only jobs), falls
+   * back to the previous fixed ~10-15s/20-30-word guidance.
+   */
+  private buildVoiceoverLengthInstruction(context?: PipelineContext): string {
+    const duration = context?.videoDurationSeconds;
+    if (!duration || duration <= 0) {
+      return "Write a short, highly engaging 10-15 second script (approx 20-30 words)";
+    }
+    const wordsPerSecond = 2.2;
+    const targetWords = Math.max(10, Math.min(170, Math.round(duration * wordsPerSecond)));
+    return (
+      `Write a highly engaging, natural-sounding script paced to fill the ENTIRE ` +
+      `${Math.round(duration)}-second video when read aloud at a natural conversational ` +
+      `pace (approx ${targetWords} words) — the narration must continue all the way to ` +
+      `the end of the video, not stop partway through and leave the rest silent`
+    );
+  }
   private viralAnalyzer = new ViralAnalyzer();
   private analyzer = new ImageAnalyzer();
   private queue = new JobQueue(1);
@@ -297,7 +319,7 @@ KEYWORDS: ${this.theme.keywordsRule}
 THUMBNAIL: Max 5 words, highly clickable, curiosity driven.
 FILENAME: SEO-friendly filename (e.g., short-video-2026.mp4).
 MOOD: Determine emotional tone: "funny", "serious", "emotional", "motivational", "technical", "horror", "romantic", "sad", or "other".
-VOICEOVER: Write a short, highly engaging 10-15 second script (approx 20-30 words) in ${this.voiceoverPromptLanguage} that describes the content. It should sound very natural, hook the viewer immediately, and explain what is happening or read the meme text in an entertaining way.
+VOICEOVER: ${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} that describes the content. It should sound very natural, hook the viewer immediately, and explain what is happening or read the meme text in an entertaining way.
 
 TASK 3: Verbatim Text Extraction
 Read all text written on the image exactly as it appears verbatim, without correcting spelling, punctuation, or formatting. If there is no text, return an empty string.
@@ -873,8 +895,8 @@ Description: ${description}\n`;
       }
 
       const prompt = viral
-        ? `You are a viral YouTube Shorts growth hacker for ${this.theme.channelDescriptor} called "${this.profile.brandName}". ${contentContext} Generate the most scroll-stopping, curiosity-gap, high-CTR metadata possible based on the text.\n${this.theme.titleRules}\n${this.theme.descriptionRules(this.profile.brandName)}\nWrite a short, engaging 10-15 second voiceover script (approx 20-30 words) in ${this.voiceoverPromptLanguage} describing the content.\nReturn ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate","voiceoverScript":"..."}}`
-        : `You are a YouTube Shorts strategist for ${this.theme.channelDescriptor} called "${this.profile.brandName}". ${contentContext} Generate SEO-optimised metadata based on the text.\n${this.theme.titleRules}\n${this.theme.descriptionRules(this.profile.brandName)}\nWrite a short, engaging 10-15 second voiceover script (approx 20-30 words) in ${this.voiceoverPromptLanguage} describing the content.\nReturn ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate","voiceoverScript":"..."}}`;
+        ? `You are a viral YouTube Shorts growth hacker for ${this.theme.channelDescriptor} called "${this.profile.brandName}". ${contentContext} Generate the most scroll-stopping, curiosity-gap, high-CTR metadata possible based on the text.\n${this.theme.titleRules}\n${this.theme.descriptionRules(this.profile.brandName)}\n${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} describing the content.\nReturn ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate","voiceoverScript":"..."}}`
+        : `You are a YouTube Shorts strategist for ${this.theme.channelDescriptor} called "${this.profile.brandName}". ${contentContext} Generate SEO-optimised metadata based on the text.\n${this.theme.titleRules}\n${this.theme.descriptionRules(this.profile.brandName)}\n${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} describing the content.\nReturn ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate","voiceoverScript":"..."}}`;
       
       // Retry timeouts once — the free API is intermittently slow. If
       // FreeLLMAPI still fails, Gemini gets one attempt with the same prompt
@@ -976,7 +998,7 @@ Rules:
 - ${this.theme.descriptionRules(this.profile.brandName)}
 - tags: 10-12 specific tags covering the topic, theme, and audience (no spaces in tags).
 - mood: Determine the emotional tone or theme of the content. Choose exactly one of: "funny", "sad", or "other" (for general, educational, or motivational content).
-- voiceoverScript: Write a short, highly engaging 10-15 second script (approx 20-30 words) in ${this.voiceoverPromptLanguage} that describes the content. It should sound very natural, hook the viewer immediately, and explain what is happening or read the meme text in an entertaining way.
+- voiceoverScript: ${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} that describes the content. It should sound very natural, hook the viewer immediately, and explain what is happening or read the meme text in an entertaining way.
 - ${this.theme.analysisRules}`;
 
     if (context?.userPrompt) {
@@ -1929,6 +1951,15 @@ ${this.theme.analysisRules}`;
           }
           pipelineLogger.info("Reusing existing keyframes from tempDir.", "DirectUploader");
           try {
+            const stdout = execSync(
+              `"${config.binaries.ffprobe}" -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${context.originalVideoPath}"`,
+            ).toString().trim();
+            const parsed = parseFloat(stdout);
+            if (!isNaN(parsed) && parsed > 0) context.videoDurationSeconds = parsed;
+          } catch (durErr) {
+            pipelineLogger.warn("Failed to probe video duration on keyframe reuse path", "DirectUploader");
+          }
+          try {
             await TranscriptionService.transcribe(context);
           } catch (txErr) {
             pipelineLogger.warn(
@@ -1947,6 +1978,7 @@ ${this.theme.analysisRules}`;
             if (isNaN(duration) || duration <= 0) {
               throw new Error("Invalid duration parsed: " + stdout);
             }
+            context.videoDurationSeconds = duration;
 
             const t0 = Math.max(0.5, 0.0 * duration);
             const t25 = 0.25 * duration;
