@@ -113,6 +113,7 @@ export interface ReviewSettings {
   captions: boolean;
   cropTopPct: number; // 0 | 5 | 10 | 15 | 20 | 25
   cropBottomPct: number; // 0 | 5 | 10 | 15 | 20 | 25
+  sticker: boolean; // overlay a mood-matched reaction sticker (assets/stickers/<mood>.mov)
 }
 
 export interface RenderOptions {

@@ -9,7 +9,9 @@ import { pipelineLogger } from "../utils/logger";
 const AUDIO_EXTENSIONS = [".mp3", ".wav", ".m4a", ".aac", ".ogg"];
 
 // Each mood maps to a sub-folder of the music dir; unknown moods use "other".
-const KNOWN_MOODS = [
+// Exported so other assets keyed by mood (e.g. reaction stickers) share the
+// exact same taxonomy and normalization as the music library.
+export const KNOWN_MOODS = [
   "funny",
   "sad",
   "horror",
@@ -20,9 +22,9 @@ const KNOWN_MOODS = [
   "technical",
   "other",
 ] as const;
-type Mood = (typeof KNOWN_MOODS)[number];
+export type Mood = (typeof KNOWN_MOODS)[number];
 
-function normalizeMood(mood?: string): Mood {
+export function normalizeMood(mood?: string): Mood {
   const m = (mood || "").toLowerCase().trim() as Mood;
   return KNOWN_MOODS.includes(m) ? m : "other";
 }
