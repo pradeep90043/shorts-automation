@@ -1550,7 +1550,10 @@ ${this.theme.analysisRules}`;
 
   private buildSettingsReviewText(context: PipelineContext): string {
     const rec = context.aiRecommendedSettings;
-    const mood = context.metadata?.mood || "other";
+    // Normalized so the displayed mood always matches whichever mood button
+    // is marked "•" in the keyboard below — an unrecognized raw AI string
+    // would otherwise show one mood in the text and a different one selected.
+    const mood = normalizeMood(context.metadata?.mood);
     const captionSource = context.transcript?.words?.length
       ? "Whisper transcript"
       : context.metadata?.voiceoverScript
@@ -1558,7 +1561,7 @@ ${this.theme.analysisRules}`;
         : "None available";
     return (
       `🛠 *Review Processing Settings*\n\n` +
-      `🎭 *Mood:* ${escapeMarkdown(mood)}\n` +
+      `🎭 *Mood:* ${escapeMarkdown(mood)} _(tap a mood below to change — rewrites the storyline to match)_\n` +
       `✍️ *Creator text detected:* ${context.creatorTextDetected ? "Yes" : "No"}\n` +
       `🔊 *Original audio present:* ${context.hasOriginalAudio ? "Yes" : "No"}\n` +
       `💬 *Caption source:* ${captionSource}\n` +
@@ -1609,6 +1612,7 @@ ${this.theme.analysisRules}`;
       this.buildSettingsReviewText(context),
       id,
       context.reviewSettings,
+      normalizeMood(context.metadata?.mood),
       messageId,
       previewImagePath ?? undefined,
     );
@@ -1688,6 +1692,55 @@ ${this.theme.analysisRules}`;
       return;
     }
 
+    if (code.startsWith("md")) {
+      const requestedMood = normalizeMood(code.slice(2));
+      const currentMood = normalizeMood(entry.context.metadata?.mood);
+      if (requestedMood === currentMood) return; // already this mood — nothing to do
+
+      clearTimeout(entry.timer);
+      this.pendingSettingsReviews.delete(id);
+      this.telegram
+        .removeInlineButtons(entry.chatId, entry.reviewMessageId)
+        .catch(() => {});
+      this.telegram
+        .sendMessage(
+          entry.chatId,
+          `🔄 *Changing mood to ${requestedMood}…*\n\nRewriting the title, description, and voiceover script to match — this can take up to a minute.`,
+          entry.reviewMessageId,
+        )
+        .catch(() => {});
+
+      const context = entry.context;
+      context.previousMetadata = context.metadata;
+      context.userPrompt = `Change the mood/tone of this Short to "${requestedMood}". Set metadata.mood to exactly "${requestedMood}" and rewrite the title, description, and voiceoverScript so they authentically match this mood, while staying relevant to the original content.`;
+      context.moodPinned = requestedMood;
+      context.metadata = undefined;
+      context.brandingDetection = undefined;
+
+      try {
+        for (const name of [
+          "video_raw.mp4",
+          "video_raw_captioned.mp4",
+          "video_muted.mp4",
+          "video_final.mp4",
+        ]) {
+          const p = path.join(context.tempDir, name);
+          if (fs.existsSync(p)) fs.unlinkSync(p);
+        }
+      } catch (_) {}
+
+      entry.resolve("restart");
+      this.resolveJob(id);
+      this.run(context).catch((err) => {
+        pipelineLogger.error(
+          `Mood-change regeneration failed for ${id}`,
+          err,
+          "DirectUploader",
+        );
+      });
+      return;
+    }
+
     if (code === "vo") settings.voiceover = !settings.voiceover;
     else if (code === "oa") settings.originalAudio = !settings.originalAudio;
     else if (code === "cc") settings.captions = !settings.captions;
@@ -1717,6 +1770,7 @@ ${this.theme.analysisRules}`;
         this.buildSettingsReviewText(entry.context),
         id,
         settings,
+        normalizeMood(entry.context.metadata?.mood),
       )
       .catch(() => {});
   }
@@ -2079,6 +2133,15 @@ ${this.theme.analysisRules}`;
             );
           }
         }
+      }
+
+      // A mood explicitly picked via the settings-review mood grid always wins
+      // over whatever the AI classified this regeneration as — regardless of
+      // which path produced context.metadata (unified vision, Gemini fallback,
+      // text-only fallback, or the hardcoded template).
+      if (context.moodPinned && context.metadata) {
+        context.metadata.mood = context.moodPinned;
+        context.moodPinned = undefined;
       }
 
       this.db.updateJob(id, {
@@ -3142,10 +3205,17 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     inputPath: string,
   ): Promise<string | null> {
     const mood = normalizeMood(context.metadata?.mood);
-    const stickerPath = path.join(config.paths.assetsDir, "stickers", `${mood}.mov`);
+    // Each channel profile has its own reaction-sticker performer — never
+    // cross-mix, e.g. CodeOrCap's man and Storiyum's woman.
+    const stickerPath = path.join(
+      config.paths.assetsDir,
+      "stickers",
+      this.profile.key.toLowerCase(),
+      `${mood}.mov`,
+    );
     if (!fs.existsSync(stickerPath)) {
       pipelineLogger.info(
-        `Reaction sticker requested but none available for mood "${mood}" — skipping.`,
+        `Reaction sticker requested but none available for mood "${mood}" in profile "${this.profile.key}" — skipping.`,
         "DirectUploader",
       );
       return null;
