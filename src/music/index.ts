@@ -126,18 +126,22 @@ const getVideoDuration = (pathStr: string): Promise<number> => {
         cmd = `ffmpeg -y -i "${videoPath}" ${musicInput} -filter_complex "${filterComplex}" -map 0:v -map "[a]" -c:v copy -c:a aac -shortest "${outputPath}"`;
       } else if (vocalOnlyPath) {
         // [0:v] video, [1:a] bg music, [2:a] vocals/voiceover.
-        // Voice must always win over music: music runs at half the configured
-        // volume and is sidechain-ducked under the voice; the voice is boosted
-        // and amix runs with normalize=0 so it doesn't attenuate the inputs.
-        // The voice is padded with silence to the full video duration so
-        // amix (duration=first) always yields video-length audio — a short
-        // TTS voiceover must never cut the video down to its own length.
-        const duckedMusicVolume = Math.min(volume, 0.08);
+        // Voice must always win over music while it's speaking, but music
+        // must return to its full configured volume once the voice ends —
+        // sidechaincompress alone drives the ducking (no static pre-cap on
+        // [bg]'s volume), so it naturally un-ducks in silence.
+        // The voice is padded with silence to the full video duration BEFORE
+        // splitting into the sidechain key and the mix copy: if the key
+        // input were shorter than the video (i.e. the raw, unpadded voice),
+        // sidechaincompress stops emitting ANY audio once its key hits EOF —
+        // not just stops ducking — which is what silenced the music entirely
+        // after the voiceover ended.
         filterComplex =
-          `[2:a]asplit=2[vokey][vomix];` +
-          `[1:a]volume=${duckedMusicVolume},afade=t=in:ss=0:d=${fadeDuration},afade=t=out:st=${fadeOutStart}:d=${fadeDuration}[bg];` +
+          `[2:a]apad=whole_dur=${duration}[vopad];` +
+          `[vopad]asplit=2[vokey][vomix];` +
+          `[1:a]volume=${volume},afade=t=in:ss=0:d=${fadeDuration},afade=t=out:st=${fadeOutStart}:d=${fadeDuration}[bg];` +
           `[bg][vokey]sidechaincompress=threshold=0.05:ratio=15:attack=10:release=300[bg_ducked];` +
-          `[vomix]volume=2.0,apad=whole_dur=${duration}[vo];` +
+          `[vomix]volume=2.0[vo];` +
           `[vo][bg_ducked]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,atrim=0:${duration}[a]`;
 
         cmd = `ffmpeg -y -i "${videoPath}" ${musicInput} -i "${vocalOnlyPath}" -filter_complex "${filterComplex}" -map 0:v -map "[a]" -c:v copy -c:a aac -shortest "${outputPath}"`;
