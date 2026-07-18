@@ -3091,10 +3091,12 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
    * Overlay the mood-matched reaction sticker (a pre-recorded, background-removed
    * clip stored at assets/stickers/<mood>.mov with a real alpha channel) in the
    * bottom-left corner — opposite the watermark badge, which sits bottom-right.
-   * The sticker's own audio is intentionally not mixed in (video-only overlay);
-   * `eof_action=pass` means it plays once and disappears rather than freezing
-   * on its last frame for the rest of the video. Returns the composited path,
-   * or null when no sticker asset exists yet for this mood.
+   * The sticker's own audio is intentionally not mixed in (video-only overlay).
+   * The sticker input is looped indefinitely (`-stream_loop -1`) and `shortest=1`
+   * on the overlay caps the output at the base video's length, so the reaction
+   * keeps restarting from frame 0 for as long as the video runs rather than
+   * freezing or disappearing after its own ~10s duration. Returns the
+   * composited path, or null when no sticker asset exists yet for this mood.
    */
   private async overlayReactionSticker(
     context: PipelineContext,
@@ -3111,7 +3113,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     }
 
     const outPath = path.join(context.tempDir, "video_stickered.mp4");
-    const cmd = `${config.binaries.ffmpeg} -y -i "${inputPath}" -i "${stickerPath}" -filter_complex "[0:v][1:v]overlay=40:H-h-40:eof_action=pass[out]" -map "[out]" -map 0:a? -c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p -c:a copy "${outPath}"`;
+    const cmd = `${config.binaries.ffmpeg} -y -i "${inputPath}" -stream_loop -1 -i "${stickerPath}" -filter_complex "[0:v][1:v]overlay=40:H-h-40:shortest=1[out]" -map "[out]" -map 0:a? -c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p -c:a copy "${outPath}"`;
     try {
       await new Promise<void>((resolve, reject) => {
         exec(cmd, (error) => (error ? reject(error) : resolve()));
