@@ -3092,11 +3092,24 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
    * clip stored at assets/stickers/<mood>.mov with a real alpha channel) in the
    * bottom-left corner — opposite the watermark badge, which sits bottom-right.
    * The sticker's own audio is intentionally not mixed in (video-only overlay).
-   * The sticker input is looped indefinitely (`-stream_loop -1`) and `shortest=1`
-   * on the overlay caps the output at the base video's length, so the reaction
-   * keeps restarting from frame 0 for as long as the video runs rather than
-   * freezing or disappearing after its own ~10s duration. Returns the
-   * composited path, or null when no sticker asset exists yet for this mood.
+   *
+   * Playback shape: the sticker's first play is the FULL ~10s clip (a "wind-up"
+   * from a neutral pose into the reaction). Every play after that only repeats
+   * the TAIL half — the 5s-10s "sustained reaction" segment — so the reaction
+   * doesn't jar the viewer by resetting to the neutral pose every ~10s. This is
+   * built by concatenating [full clip, once] + [5s-10s tail, looped forever]
+   * into a single sticker stream, then `shortest=1` on the outer overlay caps
+   * the result at the base video's own length, so it neither freezes nor
+   * disappears no matter how long the video runs.
+   *
+   * ffmpeg's `-stream_loop` does not loop correctly when combined with an
+   * `-ss/-t` trim on the same input, so the 5s-10s tail is first extracted
+   * into its own standalone temp file (a fast, frame-accurate `-c copy` cut —
+   * ProRes 4444 is all-intra, so every frame is a keyframe) and that separate
+   * file is the one that gets `-stream_loop -1`'d.
+   *
+   * Returns the composited path, or null when no sticker asset exists yet for
+   * this mood.
    */
   private async overlayReactionSticker(
     context: PipelineContext,
@@ -3113,12 +3126,35 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     }
 
     const outPath = path.join(context.tempDir, "video_stickered.mp4");
-    const cmd = `${config.binaries.ffmpeg} -y -i "${inputPath}" -stream_loop -1 -i "${stickerPath}" -filter_complex "[0:v][1:v]overlay=40:H-h-40:shortest=1[out]" -map "[out]" -map 0:a? -c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p -c:a copy "${outPath}"`;
+    const stickerTailPath = path.join(context.tempDir, "sticker_tail.mov");
+    const tailStart = 5;
+    const tailLength = 5;
+
     try {
+      // Pre-cut the "sustained reaction" tail (5s-10s) into its own file so it
+      // can be `-stream_loop`'d cleanly (see doc comment above for why).
+      const trimCmd = `${config.binaries.ffmpeg} -y -ss ${tailStart} -t ${tailLength} -i "${stickerPath}" -c copy -an "${stickerTailPath}"`;
+      await new Promise<void>((resolve, reject) => {
+        exec(trimCmd, (error) => (error ? reject(error) : resolve()));
+      });
+
+      // Input 1 = the full sticker, played once. Input 2 = the pre-cut tail,
+      // looped indefinitely. concat stitches them into one continuous sticker
+      // stream: [0-10s full][10-15s tail][15-20s tail][20-25s tail]...
+      const stickerInputs = `-i "${stickerPath}" -stream_loop -1 -i "${stickerTailPath}"`;
+      const stickerFilter =
+        `[1:v]setpts=PTS-STARTPTS[full];` +
+        `[2:v]setpts=PTS-STARTPTS[tail];` +
+        `[full][tail]concat=n=2:v=1:a=0[stickerloop];` +
+        `[0:v][stickerloop]overlay=40:H-h-40:shortest=1[out]`;
+      const cmd = `${config.binaries.ffmpeg} -y -i "${inputPath}" ${stickerInputs} -filter_complex "${stickerFilter}" -map "[out]" -map 0:a? -c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p -c:a copy "${outPath}"`;
       await new Promise<void>((resolve, reject) => {
         exec(cmd, (error) => (error ? reject(error) : resolve()));
       });
-      pipelineLogger.info(`Overlaid "${mood}" reaction sticker.`, "DirectUploader");
+      pipelineLogger.info(
+        `Overlaid "${mood}" reaction sticker (full wind-up once, looping tail thereafter).`,
+        "DirectUploader",
+      );
       return outPath;
     } catch (err) {
       pipelineLogger.warn(
@@ -3126,6 +3162,10 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         "DirectUploader",
       );
       return null;
+    } finally {
+      if (fs.existsSync(stickerTailPath)) {
+        fs.unlinkSync(stickerTailPath);
+      }
     }
   }
 
