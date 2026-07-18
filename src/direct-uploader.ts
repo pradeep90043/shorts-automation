@@ -5,7 +5,7 @@ import { exec, execSync } from "child_process";
 import { config, ChannelProfile } from "./config";
 import { VideoRenderer, calculateVideoCrop } from "./renderer";
 import { OcrService } from "./ocr";
-import { MusicService } from "./music";
+import { MusicService, normalizeMood } from "./music";
 import { YouTubeService, UploadResult } from "./youtube";
 import { InstagramPublisher, InstagramUploadResult } from "./instagram/publisher";
 import { TelegramService, escapeMarkdown } from "./telegram";
@@ -788,6 +788,7 @@ Use this to write a voiceover script that matches the content arc of the video. 
         (hasTranscriptWords || !!context.metadata?.voiceoverScript),
       cropTopPct: snapCrop(rec?.cropTopPct),
       cropBottomPct: snapCrop(rec?.cropBottomPct),
+      sticker: false, // creative choice — always starts OFF, never AI-recommended
     };
     context.creatorTextDetected =
       rec?.creatorTextDetected ??
@@ -1572,6 +1573,7 @@ ${this.theme.analysisRules}`;
           captions: false,
           cropTopPct: 0,
           cropBottomPct: 0,
+          sticker: false,
         }),
       };
     }
@@ -1674,6 +1676,7 @@ ${this.theme.analysisRules}`;
     else if (code === "oa") settings.originalAudio = !settings.originalAudio;
     else if (code === "mu") settings.music = !settings.music;
     else if (code === "cc") settings.captions = !settings.captions;
+    else if (code === "sk") settings.sticker = !settings.sticker;
     else if (/^ct(0|5|10|15|20|25)$/.test(code)) {
       settings.cropTopPct = parseInt(code.slice(2), 10);
     } else if (/^cb(0|5|10|15|20|25)$/.test(code)) {
@@ -2948,13 +2951,21 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
           ? context.selectedMusicTrack
           : undefined;
 
+      // 0 — Overlay the mood-matched reaction sticker (video-only pass, same
+      // -c:v copy constraint as captions below — must happen before any
+      // audio-mix step that copies the video stream unfiltered).
+      let mixInputPath = rawVideoPath;
+      if (settings.sticker) {
+        const stickeredPath = await this.overlayReactionSticker(context, mixInputPath);
+        if (stickeredPath) mixInputPath = stickeredPath;
+      }
+
       // 1 — Burn captions in a dedicated video-filter pass (the audio mixes all
       // use -c:v copy and cannot carry a filter). The voiceover+no-music hook
       // branch burns its own subtitles, so skip pre-burning for that case.
-      let mixInputPath = rawVideoPath;
       const captionsInHookBranch = useVoice && !musicTrack;
       if (settings.captions && !captionsInHookBranch) {
-        const captionedPath = await this.burnCaptions(context, rawVideoPath, useVoice);
+        const captionedPath = await this.burnCaptions(context, mixInputPath, useVoice);
         if (captionedPath) mixInputPath = captionedPath;
       }
 
@@ -3073,6 +3084,46 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         context,
       });
       this.resolveJob(id);
+    }
+  }
+
+  /**
+   * Overlay the mood-matched reaction sticker (a pre-recorded, background-removed
+   * clip stored at assets/stickers/<mood>.mov with a real alpha channel) in the
+   * bottom-left corner — opposite the watermark badge, which sits bottom-right.
+   * The sticker's own audio is intentionally not mixed in (video-only overlay);
+   * `eof_action=pass` means it plays once and disappears rather than freezing
+   * on its last frame for the rest of the video. Returns the composited path,
+   * or null when no sticker asset exists yet for this mood.
+   */
+  private async overlayReactionSticker(
+    context: PipelineContext,
+    inputPath: string,
+  ): Promise<string | null> {
+    const mood = normalizeMood(context.metadata?.mood);
+    const stickerPath = path.join(config.paths.assetsDir, "stickers", `${mood}.mov`);
+    if (!fs.existsSync(stickerPath)) {
+      pipelineLogger.info(
+        `Reaction sticker requested but none available for mood "${mood}" — skipping.`,
+        "DirectUploader",
+      );
+      return null;
+    }
+
+    const outPath = path.join(context.tempDir, "video_stickered.mp4");
+    const cmd = `${config.binaries.ffmpeg} -y -i "${inputPath}" -i "${stickerPath}" -filter_complex "[0:v][1:v]overlay=40:H-h-40:eof_action=pass[out]" -map "[out]" -map 0:a? -c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p -c:a copy "${outPath}"`;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        exec(cmd, (error) => (error ? reject(error) : resolve()));
+      });
+      pipelineLogger.info(`Overlaid "${mood}" reaction sticker.`, "DirectUploader");
+      return outPath;
+    } catch (err) {
+      pipelineLogger.warn(
+        `Reaction sticker overlay failed, continuing without it: ${err instanceof Error ? err.message : err}`,
+        "DirectUploader",
+      );
+      return null;
     }
   }
 

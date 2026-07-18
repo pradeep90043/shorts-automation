@@ -179,6 +179,9 @@ export class TelegramService implements ITelegramService {
           { text: `🎵 Music: ${onOff(s.music)}`, callback_data: `st_mu_${id}` },
           { text: `💬 Captions: ${onOff(s.captions)}`, callback_data: `st_cc_${id}` },
         ],
+        [
+          { text: `🎭 Reaction Sticker: ${onOff(s.sticker)}`, callback_data: `st_sk_${id}` },
+        ],
         cropRow("ct", s.cropTopPct, "⬆"),
         cropRow("cb", s.cropBottomPct, "⬇"),
         [
