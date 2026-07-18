@@ -158,11 +158,26 @@ export class TelegramService implements ITelegramService {
     );
     return res.message_id;
   }
+  private static readonly MOOD_EMOJI: Record<string, string> = {
+    funny: "😂",
+    sad: "😢",
+    horror: "👻",
+    emotional: "🥹",
+    romantic: "💕",
+    motivational: "💪",
+    serious: "😐",
+    technical: "🤓",
+    other: "🎬",
+  };
+
   /**
    * Inline keyboard for the pre-processing settings review.
-   * Toggle buttons reflect the current state; the selected crop step is marked.
+   * Toggle buttons reflect the current state; the selected crop step and the
+   * current mood are marked with "•". Tapping a mood button triggers a full
+   * regeneration (new title/description/voiceover script written for that
+   * mood), handled by DirectUploader — this keyboard only emits the tap.
    */
-  private settingsKeyboard(id: string, s: ReviewSettings) {
+  private settingsKeyboard(id: string, s: ReviewSettings, mood: string) {
     const onOff = (v: boolean) => (v ? "ON ✅" : "OFF");
     // Split each crop direction into two narrower rows of 4 — a single row of
     // 8 (0-35 in steps of 5) renders too cramped, especially under a photo
@@ -178,6 +193,16 @@ export class TelegramService implements ITelegramService {
         steps.slice(4).map(toButton),
       ];
     };
+    const moodNames = Object.keys(TelegramService.MOOD_EMOJI);
+    const moodButton = (name: string) => ({
+      text: `${name === mood ? "•" : ""}${TelegramService.MOOD_EMOJI[name]} ${name[0].toUpperCase()}${name.slice(1)}`,
+      callback_data: `st_md${name}_${id}`,
+    });
+    const moodRows = [
+      moodNames.slice(0, 3).map(moodButton),
+      moodNames.slice(3, 6).map(moodButton),
+      moodNames.slice(6, 9).map(moodButton),
+    ];
     return {
       inline_keyboard: [
         [
@@ -191,6 +216,7 @@ export class TelegramService implements ITelegramService {
           { text: `💬 Captions: ${onOff(s.captions)}`, callback_data: `st_cc_${id}` },
           { text: `🎭 Sticker: ${onOff(s.sticker)}`, callback_data: `st_sk_${id}` },
         ],
+        ...moodRows,
         ...cropRows("ct", s.cropTopPct, "⬆"),
         ...cropRows("cb", s.cropBottomPct, "⬇"),
         [
@@ -212,6 +238,7 @@ export class TelegramService implements ITelegramService {
     text: string,
     id: string,
     settings: ReviewSettings,
+    mood: string,
     replyToMessageId?: number,
     previewImagePath?: string,
   ): Promise<number> {
@@ -225,7 +252,7 @@ export class TelegramService implements ITelegramService {
           reply_parameters: replyToMessageId
             ? { message_id: replyToMessageId }
             : undefined,
-          reply_markup: this.settingsKeyboard(id, settings),
+          reply_markup: this.settingsKeyboard(id, settings, mood),
         } as any,
       );
       return res.message_id;
@@ -236,7 +263,7 @@ export class TelegramService implements ITelegramService {
       reply_parameters: replyToMessageId
         ? { message_id: replyToMessageId }
         : undefined,
-      reply_markup: this.settingsKeyboard(id, settings),
+      reply_markup: this.settingsKeyboard(id, settings, mood),
     } as any);
     return res.message_id;
   }
@@ -252,10 +279,11 @@ export class TelegramService implements ITelegramService {
     text: string,
     id: string,
     settings: ReviewSettings,
+    mood: string,
   ): Promise<void> {
     const extra = {
       parse_mode: "Markdown",
-      reply_markup: this.settingsKeyboard(id, settings),
+      reply_markup: this.settingsKeyboard(id, settings, mood),
     } as any;
     try {
       await this.bot.telegram.editMessageCaption(chatId, messageId, undefined, text, extra);
