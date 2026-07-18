@@ -213,6 +213,7 @@ export interface PipelineContext {
   useVoiceover?: boolean; // Whether to include AI voiceover (defaults to true if script exists)
   ttsAudioPath?: string; // Path to generated TTS audio
   ttsDuration?: number; // Duration of generated TTS audio
+  videoDurationSeconds?: number; // Source video's actual duration — used to size the voiceover script so narration+captions run the full video, not just a fixed ~10-15s
   transcript?: {
     text: string;
     words: Array<{ word: string; start: number; end: number }>;
