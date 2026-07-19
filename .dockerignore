@@ -4,3 +4,5 @@ logs
 output
 *.log
 .git
+assets/music
+assets/stickers
