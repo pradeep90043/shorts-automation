@@ -77,6 +77,7 @@ export class InstagramPublisher {
             'offset': '0',
             'file_size': fileStats.size.toString(),
             'Content-Type': 'application/octet-stream',
+            'Content-Length': fileStats.size.toString(),
           },
           body: fileBuffer
         });
