@@ -208,4 +208,16 @@ export class ChannelWatcher {
       );
     }
   }
+
+  public getStatusDetails() {
+    return {
+      channels: this.profile.watch.channels,
+      dailyCount: this.profile.watch.dailyCount,
+      scheduleTime: this.profile.watch.scheduleTime,
+      gapHours: this.profile.watch.gapHours,
+      adminChatId: this.profile.watch.adminChatId,
+      lastBatchDate: this.store.getLastBatchDate(),
+      queue: this.store.getQueue(),
+    };
+  }
 }

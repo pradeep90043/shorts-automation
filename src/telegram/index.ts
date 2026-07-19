@@ -48,7 +48,10 @@ export class TelegramService implements ITelegramService {
     messageId: number,
   ) => Promise<boolean>;
   private settingsReviewCallback?: (code: string, id: string) => void;
-  private watcher?: { runDailyBatch: (force?: boolean) => Promise<any[]> };
+  private watcher?: {
+    runDailyBatch: (force?: boolean) => Promise<any[]>;
+    getStatusDetails?: () => any;
+  };
 
   constructor(profile: ChannelProfile = config.profiles[0]) {
     if (!profile || !profile.telegramToken) {
@@ -118,6 +121,7 @@ export class TelegramService implements ITelegramService {
 
   public registerWatcher(watcher: {
     runDailyBatch: (force?: boolean) => Promise<any[]>;
+    getStatusDetails?: () => any;
   }): void {
     this.watcher = watcher;
   }
@@ -715,6 +719,50 @@ export class TelegramService implements ITelegramService {
         await ctx.reply(lines.join("\n"));
       } catch (err) {
         await ctx.reply(`❌ Cache warm-up failed: ${err instanceof Error ? err.message : err}`);
+      }
+    });
+
+    // Scheduler and queue status check command
+    this.bot.command(["watchstatus", "queue"], async (ctx) => {
+      if (!this.watcher) {
+        await ctx.reply("❌ Channel watch is not configured for this bot.");
+        return;
+      }
+
+      try {
+        const details = this.watcher.getStatusDetails?.();
+        if (!details) {
+          await ctx.reply("❌ Unable to retrieve watch details from scheduler.");
+          return;
+        }
+        const active = details.channels.length > 0 && details.adminChatId > 0;
+        
+        let statusMsg = `📋 *Scheduler Status: [${this.profile.brandName}]*\n`;
+        statusMsg += `• *Status:* ${active ? "🟢 Active" : "🔴 Disabled"}\n`;
+        statusMsg += `• *Schedule Time:* \`${details.scheduleTime}\` (Daily)\n`;
+        statusMsg += `• *Daily Count:* \`${details.dailyCount}\` reels\n`;
+        statusMsg += `• *Staggered Spacing:* \`${details.gapHours}h\` apart\n`;
+        statusMsg += `• *Admin Chat ID:* \`${details.adminChatId}\`\n`;
+        statusMsg += `• *Watched Channels:* ${details.channels.length > 0 ? details.channels.map((c: string) => `@${c}`).join(", ") : "None"}\n\n`;
+
+        statusMsg += `📅 *Today's Queue (${details.lastBatchDate || "None"})*\n`;
+        if (details.queue.length === 0) {
+          statusMsg += `_No reels queued/selected for today._\n`;
+        } else {
+          const lines = details.queue.map((q: any, i: number) => {
+            const status = q.fired ? "✅ Published" : "⏳ Pending";
+            const dateObj = new Date(q.scheduledAt);
+            const timeStr = dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            return `${i + 1}. *[@${q.channel}]* (\`${q.shortcode}\`)\n   └ ${status} @ ${timeStr}`;
+          }).join("\n");
+          statusMsg += lines;
+        }
+
+        statusMsg += `\n\n💡 _Use /runwatchnow to trigger batch selection immediately._`;
+
+        await ctx.reply(statusMsg, { parse_mode: "Markdown" });
+      } catch (err) {
+        await ctx.reply(`❌ Failed to retrieve watch status: ${err instanceof Error ? err.message : err}`);
       }
     });
 
