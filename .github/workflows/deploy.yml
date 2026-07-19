@@ -42,10 +42,9 @@ jobs:
           mkdir -p ~/.ssh
           echo "${VM_KEY}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -p 22 -H "${VM_HOST}" >> ~/.ssh/known_hosts
 
           # Ensure rsync is installed on the remote host (supports apt-get for Ubuntu and dnf for Oracle Linux)
-          ssh -i ~/.ssh/id_rsa -p 22 "${VM_USER}@${VM_HOST}" "
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_rsa -p 22 "${VM_USER}@${VM_HOST}" "
             if ! command -v rsync >/dev/null 2>&1; then
               echo 'rsync not found. Installing...'
               if command -v apt-get >/dev/null 2>&1; then
@@ -57,10 +56,10 @@ jobs:
           "
 
           # Create remote directory
-          ssh -i ~/.ssh/id_rsa -p 22 "${VM_USER}@${VM_HOST}" "mkdir -p ~/shorts-automation"
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_rsa -p 22 "${VM_USER}@${VM_HOST}" "mkdir -p ~/shorts-automation"
 
           # Sync project files incrementally (excludes node_modules, temp, logs, output, and git files)
-          rsync -avz --delete -e "ssh -i ~/.ssh/id_rsa -p 22" \
+          rsync -avz --delete -e "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_rsa -p 22" \
             --exclude 'node_modules' \
             --exclude 'temp' \
             --exclude 'logs' \
