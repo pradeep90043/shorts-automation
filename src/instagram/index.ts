@@ -393,7 +393,7 @@ async function downloadViaPuppeteer(
   destDir: string,
   framePath: string,
 ): Promise<DownloadReelResult> {
-  const match = url.match(/instagram\.com\/(?:p|reel|tv)\/([A-Za-z0-9_-]+)/);
+  const match = url.match(/\/instagram\.com\/(?:[A-Za-z0-9_.]+\/)?(?:p|reel|tv)\/([A-Za-z0-9_-]+)/);
   if (!match)
     throw new Error(`Cannot extract shortcode from Instagram URL: ${url}`);
   const shortcode = match[1];
