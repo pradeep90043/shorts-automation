@@ -743,7 +743,7 @@ export class TelegramService implements ITelegramService {
         statusMsg += `• *Daily Count:* \`${details.dailyCount}\` reels\n`;
         statusMsg += `• *Staggered Spacing:* \`${details.gapHours}h\` apart\n`;
         statusMsg += `• *Admin Chat ID:* \`${details.adminChatId}\`\n`;
-        statusMsg += `• *Watched Channels:* ${details.channels.length > 0 ? details.channels.map((c: string) => `@${c}`).join(", ") : "None"}\n\n`;
+        statusMsg += `• *Watched Channels:* ${details.channels.length > 0 ? details.channels.map((c: string) => `@${escapeMarkdown(c)}`).join(", ") : "None"}\n\n`;
 
         statusMsg += `📅 *Today's Queue (${details.lastBatchDate || "None"})*\n`;
         if (details.queue.length === 0) {
@@ -753,7 +753,7 @@ export class TelegramService implements ITelegramService {
             const status = q.fired ? "✅ Published" : "⏳ Pending";
             const dateObj = new Date(q.scheduledAt);
             const timeStr = dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            return `${i + 1}. *[@${q.channel}]* (\`${q.shortcode}\`)\n   └ ${status} @ ${timeStr}`;
+            return `${i + 1}. *[@${escapeMarkdown(q.channel)}]* (\`${escapeMarkdown(q.shortcode)}\`)\n   └ ${status} @ ${timeStr}`;
           }).join("\n");
           statusMsg += lines;
         }
