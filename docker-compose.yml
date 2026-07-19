@@ -15,6 +15,7 @@ services:
     volumes:
       - ./output:/app/output
       - ./assets/music:/app/assets/music
+      - ./assets/stickers:/app/assets/stickers
       - ./logs:/app/logs
       - ./cookies.txt:/app/cookies.txt
     # Port only needed during YouTube OAuth auth flow
