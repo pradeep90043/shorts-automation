@@ -28,6 +28,10 @@ export class ChannelWatcher {
       return; // feature not configured for this profile
     }
 
+    // Run missed batch selection immediately on startup if we are past the scheduled time
+    // and no batch has run today yet (helps recover from restarts, redeployments, or crashes)
+    this.checkAndRunMissedBatch();
+
     this.scheduleDailyBatch();
     setInterval(() => {
       this.processQueue().catch((err) => {
@@ -45,6 +49,39 @@ export class ChannelWatcher {
         `${this.profile.watch.scheduleTime}, ${this.profile.watch.gapHours}h apart`,
       "ChannelWatcher",
     );
+  }
+
+  private checkAndRunMissedBatch(): void {
+    const today = new Date().toISOString().slice(0, 10);
+    if (this.store.getLastBatchDate() === today) {
+      return; // already ran today
+    }
+
+    const [hh, mm] = this.profile.watch.scheduleTime.split(":").map(Number);
+    const now = new Date();
+    const scheduledToday = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+      hh || 0,
+      mm || 0,
+      0,
+      0,
+    );
+
+    if (now.getTime() >= scheduledToday.getTime()) {
+      pipelineLogger.info(
+        `[${this.profile.brandName}] Startup is after scheduled time (${this.profile.watch.scheduleTime}) and no batch ran today. Triggering missed daily batch selection...`,
+        "ChannelWatcher",
+      );
+      this.runDailyBatch().catch((err) => {
+        pipelineLogger.error(
+          `[${this.profile.brandName}] Missed daily batch execution failed`,
+          err,
+          "ChannelWatcher",
+        );
+      });
+    }
   }
 
   private scheduleDailyBatch(): void {
