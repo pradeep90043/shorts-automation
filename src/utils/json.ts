@@ -70,6 +70,15 @@ export function extractJsonArrayField<T = any>(
   }
 }
 
+function escapeInvalidBackslashes(str: string): string {
+  return str.replace(/\\(?:(["\\\/bfnrt])|u([0-9a-fA-F]{4})|(.))/g, (match, p1, p2, p3) => {
+    if (p1 !== undefined || p2 !== undefined) {
+      return match;
+    }
+    return '\\\\' + (p3 || '');
+  });
+}
+
 /**
  * Robustly extracts, cleans, and parses JSON objects or arrays returned by LLMs.
  * Handles common issues like trailing commas and unescaped double quotes in string values.
@@ -117,7 +126,7 @@ export function parseAiJson<T>(raw: string): T {
   // Remove trailing commas before closing braces or brackets
   s = s.replace(/,\s*([}\]])/g, "$1");
 
-  // Repair unescaped double quotes in string fields line-by-line
+  // Repair unescaped double quotes and backslashes in string fields line-by-line
   const lines = s.split("\n");
   const repairedLines = lines.map((line) => {
     // Match line pattern: "key": "value" with optional trailing comma
@@ -126,7 +135,16 @@ export function parseAiJson<T>(raw: string): T {
       const [, key, val, comma] = match;
       // Escape any unescaped double quotes inside the string value
       // (?<!\\)" matches " only if it is not preceded by \
-      const repairedVal = val.replace(/(?<!\\)"/g, '\\"');
+      let repairedVal = val.replace(/(?<!\\)"/g, '\\"');
+      repairedVal = escapeInvalidBackslashes(repairedVal);
+      // Strip trailing backslashes if odd (prevents escaping the closing quote)
+      const trailingBackslashesMatch = repairedVal.match(/\\+$/);
+      if (trailingBackslashesMatch) {
+        const count = trailingBackslashesMatch[0].length;
+        if (count % 2 !== 0) {
+          repairedVal = repairedVal.slice(0, -1);
+        }
+      }
       return `${key}: "${repairedVal}"${comma}`;
     }
     return line;

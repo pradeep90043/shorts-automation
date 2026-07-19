@@ -1399,10 +1399,10 @@ ${this.theme.analysisRules}`;
         const messageId = await this.telegram.sendRawVideo(
           chatId,
           videoToSend,
-          `*Title:* ${metadata.title}`,
+          `*Title:* ${escapeMarkdown(metadata.title)}`,
         );
 
-        let fullDescription = `*Description:*\n${metadata.description}`;
+        let fullDescription = `*Description:*\n${escapeMarkdown(metadata.description)}`;
         
         if (metadata.factCheckScore !== undefined) {
           fullDescription += `\n\n*Fact Check Score:* ${metadata.factCheckScore}/10`;
@@ -1868,8 +1868,8 @@ ${this.theme.analysisRules}`;
 
         const caption =
           `📋 *Review your Short* _(updated)_\n\n` +
-          `*Title:* ${metadata.title}\n\n` +
-          `*Description:* ${metadata.description.slice(0, 200)}…\n\n` +
+          `*Title:* ${escapeMarkdown(metadata.title)}\n\n` +
+          `*Description:* ${escapeMarkdown(metadata.description.slice(0, 200))}…\n\n` +
           (pending.musicCaptionLine || "") +
           `⏳ _Auto-publishes in 2 minutes if no action taken._`;
 
