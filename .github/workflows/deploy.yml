@@ -36,16 +36,43 @@ jobs:
         env:
           PRODUCTION_COOKIES: ${{ secrets.PRODUCTION_COOKIES }}
 
-      - name: Copy files to VM via SCP
-        uses: appleboy/scp-action@master
-        with:
-          host: ${{ secrets.VM_HOST }}
-          username: ${{ secrets.VM_USER }}
-          key: ${{ secrets.VM_KEY }}
-          port: 22
-          source: "cookies.txt,.env,dist/**,assets/**,Dockerfile,docker-compose.yml,.dockerignore,package.json,package-lock.json,tsconfig.json,eng.traineddata"
-          target: "~/shorts-automation"
-          overwrite: true
+      - name: Copy files to VM via Rsync
+        run: |
+          # Set up SSH key
+          mkdir -p ~/.ssh
+          echo "${VM_KEY}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -p 22 -H "${VM_HOST}" >> ~/.ssh/known_hosts
+
+          # Ensure rsync is installed on the remote host (supports apt-get for Ubuntu and dnf for Oracle Linux)
+          ssh -i ~/.ssh/id_rsa -p 22 "${VM_USER}@${VM_HOST}" "
+            if ! command -v rsync >/dev/null 2>&1; then
+              echo 'rsync not found. Installing...'
+              if command -v apt-get >/dev/null 2>&1; then
+                sudo apt-get update && sudo apt-get install -y rsync
+              elif command -v dnf >/dev/null 2>&1; then
+                sudo dnf install -y rsync
+              fi
+            fi
+          "
+
+          # Create remote directory
+          ssh -i ~/.ssh/id_rsa -p 22 "${VM_USER}@${VM_HOST}" "mkdir -p ~/shorts-automation"
+
+          # Sync project files incrementally (excludes node_modules, temp, logs, output, and git files)
+          rsync -avz --delete -e "ssh -i ~/.ssh/id_rsa -p 22" \
+            --exclude 'node_modules' \
+            --exclude 'temp' \
+            --exclude 'logs' \
+            --exclude 'output' \
+            --exclude '.git' \
+            --exclude '.claude' \
+            --exclude '.github' \
+            ./ "${VM_USER}@${VM_HOST}:~/shorts-automation/"
+        env:
+          VM_HOST: ${{ secrets.VM_HOST }}
+          VM_USER: ${{ secrets.VM_USER }}
+          VM_KEY: ${{ secrets.VM_KEY }}
 
       - name: Restart Docker Containers on VM
         uses: appleboy/ssh-action@master
