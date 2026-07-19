@@ -55,6 +55,17 @@ export async function listChannelReels(
     // Let the SPA hydrate and render the grid before scraping it.
     await new Promise((r) => setTimeout(r, 4000));
 
+    // Verify we are actually on the requested user's reels page and not redirected to login or main feed
+    const currentUrl = page.url().toLowerCase();
+    const expectedUrlPart = `instagram.com/${username.toLowerCase()}/reels`;
+    if (!currentUrl.includes(expectedUrlPart)) {
+      pipelineLogger.warn(
+        `[ChannelFeed] Puppeteer was redirected or failed to reach reels page for @${username}. Current URL: ${page.url()}`,
+        "ChannelFeed"
+      );
+      return [];
+    }
+
     const hrefs: string[] = await page.evaluate(() => {
       const doc = (globalThis as any).document;
       const anchors: any[] = Array.from(doc.querySelectorAll("a[href*='/reel/']"));
