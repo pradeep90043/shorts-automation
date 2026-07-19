@@ -26,6 +26,17 @@ export interface YoutubeConfig {
   channels: YoutubeChannel[]; // one entry per channel
 }
 
+// Recurring Instagram-channel-watch automation: pick a random batch of
+// not-yet-processed reels from a pool of watched accounts once a day and
+// auto-publish them spaced apart, with no manual URL pasting required.
+export interface WatchConfig {
+  channels: string[]; // Instagram usernames (no leading @), lowercase
+  dailyCount: number; // how many reels to pick per day, across all channels combined
+  scheduleTime: string; // "HH:MM" 24h, local time — when the daily batch is selected
+  gapHours: number; // spacing between each of the day's picks being published
+  adminChatId: number; // Telegram chat that receives the auto-published results; 0 = feature disabled
+}
+
 // A full brand/channel profile: one Telegram bot + its own YouTube/Instagram credentials.
 // The primary profile comes from the classic env vars (TELEGRAM_BOT_TOKEN, YOUTUBE_*, INSTAGRAM_*).
 // Extra profiles are auto-detected from prefixed vars, e.g. STORIYUM_TELEGRAM_BOT_TOKEN_LOCAL,
@@ -41,6 +52,7 @@ export interface ChannelProfile {
   instagram: {
     accounts: InstagramAccount[];
   };
+  watch: WatchConfig;
 }
 
 export interface AppConfig {
@@ -214,6 +226,28 @@ function loadPrefixedInstagram(
   return accounts;
 }
 
+// Shared by both the primary profile (unprefixed WATCH_*) and extra profiles
+// (<PREFIX>_WATCH_*). An empty channel list leaves the feature disabled.
+function loadWatchConfig(prefix?: string): WatchConfig {
+  const env = (key: string) =>
+    prefix ? process.env[`${prefix}_${key}`] : process.env[key];
+  const channels = [
+    ...new Set(
+      (env("WATCH_CHANNELS") || "")
+        .split(",")
+        .map((c) => c.trim().replace(/^@/, "").toLowerCase())
+        .filter(Boolean),
+    ),
+  ];
+  return {
+    channels,
+    dailyCount: parseInt(env("WATCH_DAILY_COUNT") || "5", 10),
+    scheduleTime: env("WATCH_SCHEDULE_TIME") || "09:00",
+    gapHours: parseFloat(env("WATCH_GAP_HOURS") || "2"),
+    adminChatId: parseInt(env("WATCH_ADMIN_CHAT_ID") || "0", 10),
+  };
+}
+
 // Detect extra channel prefixes from env vars like STORIYUM_TELEGRAM_BOT_TOKEN[_LOCAL|_PROD]
 function loadExtraProfiles(): ChannelProfile[] {
   const prefixes = new Set<string>();
@@ -243,6 +277,7 @@ function loadExtraProfiles(): ChannelProfile[] {
       telegramToken,
       youtube: loadPrefixedYoutube(prefix, brandName),
       instagram: { accounts: loadPrefixedInstagram(prefix, brandName) },
+      watch: loadWatchConfig(prefix),
     });
   }
   return profiles;
@@ -273,6 +308,7 @@ function loadPrimaryProfile(): ChannelProfile {
     instagram: {
       accounts: loadInstagramAccounts(),
     },
+    watch: loadWatchConfig(),
   };
 }
 

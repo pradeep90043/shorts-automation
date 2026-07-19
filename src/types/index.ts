@@ -34,6 +34,7 @@ export interface BrandingZone {
     | "watermark"
     | "handle"
     | "profile_name"
+    | "profile_picture"
     | "other"
     | "main_post_content"
     | "original_captions";
@@ -169,9 +170,10 @@ export interface PipelineContext {
     | "failed"
     | "manual_review";
   error?: string;
-  instagramSource?: boolean; // skip branding removal for Instagram-sourced frames
+  instagramSource?: boolean; // true for Instagram/TikTok reels — see usages, gates caption-override behavior only
   instagramSourceType?: "image" | "image_with_music" | "video";
   captionMetadata?: { title: string; description: string }; // user-provided title+description from Telegram caption
+  sourceCreatorUsername?: string; // the original poster's @handle (from the source URL/page), used to cache/reuse their watermark zone positions — see src/utils/creatorZones.ts
   userPrompt?: string; // custom re-generation prompt instruction from the user
   metadataIsFallback?: boolean; // AI metadata failed — hardcoded template metadata in use
   previousMetadata?: VideoMetadata; // metadata before re-generation

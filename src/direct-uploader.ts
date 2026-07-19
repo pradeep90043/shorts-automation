@@ -13,7 +13,8 @@ import { PipelineContext, VideoMetadata } from "./types";
 import { pipelineLogger } from "./utils/logger";
 import { FreeLlmApiClient } from "./ai/freellmapi";
 import { GeminiClient } from "./ai/gemini";
-import { parseAiJson } from "./utils/json";
+import { parseAiJson, extractJsonArrayField } from "./utils/json";
+import { creatorZoneStore } from "./utils/creatorZones";
 import { getFileHash } from "./utils/cache";
 import { JobDatabase } from "./utils/db";
 import { getCopyrightRisk, formatRisk } from "./audio/copyrightCheck";
@@ -47,6 +48,7 @@ interface UnifiedVisionResponse {
       | "watermark"
       | "handle"
       | "profile_name"
+      | "profile_picture"
       | "main_post_content"
       | "original_captions";
     box: { x: number; y: number; width: number; height: number };
@@ -279,9 +281,14 @@ export class DirectUploader {
       context.metadataIsFallback = true;
       context.metadata = this.fallbackMetadata();
       context.brandingDetection = { detected: false, zones: [] };
+      this.applyCreatorZoneCache(context);
       return;
     }
 
+    // Declared outside the try block (not just inside it) so the catch
+    // block below can still recover branding zones from whatever the AI
+    // returned, even when the rest of the response failed to parse.
+    let raw = "";
     try {
       context.metadataIsFallback = false;
       const imagePaths = Array.isArray(imagePath) ? imagePath : [imagePath];
@@ -299,13 +306,14 @@ Analyze this video frame/image and perform two tasks:
 
 TASK 1: Brand/Watermark/Content Detection
 Detect the exact coordinates of any branding, watermarks, profile pictures, usernames/handles, logos, or app overlays of other creators. Also, if this image shows a full Instagram page/embed layout, detect the boundaries of the main content media box. Detect the exact bounding box of any original captions or meme text written on the image. Locate them and return their bounding boxes in normalized coordinates relative to the image size (value between 0.0 and 1.0).
-Search for:
-- profile picture (e.g. circle image showing a person/logo in top-left or bottom-left)
-- profile name / username / handle (e.g. "@username", "username" in top-left or bottom-left)
-- watermarks or logos (e.g. Instagram logo, TikTok watermark, other channel logo)
-- actions panel (e.g. reels interaction panel on the right with like/comment/share icons)
-- main_post_content (e.g. if the image contains a full post layout, comments, or web view headers, detect the bounding box of the central post image/media box itself, excluding headers, comments, likes, and footer chrome)
-- original_captions (e.g. the main meme text/caption written on the top or center of the frame in white/black outlines)
+Search for, tagging each with the exact matching "type" value from the schema below:
+- type "profile_picture": the small circle image of the original creator's face/avatar, usually top-left or bottom-left
+- type "handle": the original creator's @username/profile name text, usually right next to their profile picture
+- type "profile_name": the original creator's display name text (distinct from their @handle), if shown separately
+- type "watermark" / "logo": platform or app watermarks/logos (Instagram logo, TikTok watermark, other channel's logo)
+- type "main_post_content" (e.g. if the image contains a full post layout, comments, or web view headers, detect the bounding box of the central post image/media box itself, excluding headers, comments, likes, and footer chrome)
+- type "original_captions" (e.g. the main meme text/caption written on the top or center of the frame in white/black outlines)
+Every trace of the original creator's identity — their profile picture, handle, and display name — MUST each get their own brandingZones entry so they can be fully covered; do not skip any of them or merge them into one box.
 
 If no such elements are present, return an empty array for brandingZones.
 
@@ -420,7 +428,7 @@ Return ONLY a raw JSON object matching this schema — no markdown, no explanati
   },
   "brandingZones": [
     {
-      "type": "logo" | "watermark" | "handle" | "profile_name" | "main_post_content" | "original_captions",
+      "type": "logo" | "watermark" | "handle" | "profile_name" | "profile_picture" | "main_post_content" | "original_captions",
       "box": {
         "x": number,
         "y": number,
@@ -514,7 +522,6 @@ Tags: ${context.previousMetadata.tags?.join(", ")}`;
 Use this to write a voiceover script that matches the content arc of the video. Do not reveal the ending before it happens on screen.\n`;
       }
 
-      let raw = "";
       let usedProvider = "FreeLLMAPI";
       let freeLlmApiFailure: any = null;
       if (this.freellmapi) {
@@ -708,7 +715,14 @@ Use this to write a voiceover script that matches the content arc of the video. 
                 `⚠️ *AI Quality Check Warning:*\n` +
                   `• *Readability:* ${data.qualityScore.readability}/100\n` +
                   `• *Watermark Risk:* ${data.qualityScore.watermarkRisk}/100\n` +
-                  `• *Recommendation:* _${escapeMarkdown(data.qualityScore.recommendation)}_`,
+                  // Not wrapped in _..._ : an escaped underscore (from an
+                  // AI-mentioned @handle) living inside an active italic
+                  // entity breaks Telegram's legacy Markdown parser entirely
+                  // (verified: "Can't find end of the entity..."). Every
+                  // other dynamic value in this file is embedded plain,
+                  // after a bold label, with no wrapping emphasis — match
+                  // that convention here too.
+                  `• *Recommendation:* ${escapeMarkdown(data.qualityScore.recommendation)}`,
                 messageId,
               )
               .catch((sendErr) => {
@@ -768,8 +782,65 @@ Use this to write a voiceover script that matches the content arc of the video. 
       }
 
       context.metadata = await this.generateTextMetadataFallback(false, context);
-      context.brandingDetection = { detected: false, zones: [] };
+      // The metadata/description text is what usually breaks JSON parsing
+      // (unescaped quotes in Hinglish scripts, stray code fences) — the
+      // branding zones are simple, well-formed objects, so recover them
+      // straight out of the raw response instead of losing the source
+      // creator's watermark/handle detection along with the broken JSON.
+      const recoveredZones = raw
+        ? extractJsonArrayField<UnifiedVisionResponse["brandingZones"][number]>(
+            raw,
+            "brandingZones",
+          )
+        : null;
+      if (recoveredZones && recoveredZones.length > 0) {
+        context.brandingDetection = {
+          detected: true,
+          zones: recoveredZones.map((item, index) => ({
+            id: `ai-branding-${index}`,
+            type: item.type,
+            boundingBox: item.box,
+            confidence: 0.9,
+            description: item.description,
+          })),
+        };
+        pipelineLogger.info(
+          `Recovered ${recoveredZones.length} branding zone(s) from an otherwise malformed AI response`,
+          "DirectUploader",
+        );
+      } else {
+        context.brandingDetection = { detected: false, zones: [] };
+      }
       this.applyRecommendedSettings(context, undefined);
+    }
+
+    this.applyCreatorZoneCache(context);
+  }
+
+  /**
+   * Repost accounts stamp their own watermark/handle/profile-picture overlay
+   * in the same fixed position on every reel they post. Once we've found it
+   * for a given creator, reuse that known position on their later reels
+   * instead of trusting fresh AI detection every time — this also covers us
+   * if a later call to the same creator's content has a vision miss.
+   */
+  private applyCreatorZoneCache(context: PipelineContext): void {
+    const username = context.sourceCreatorUsername;
+    if (!username) return;
+
+    const cached = creatorZoneStore.getZones(username);
+    if (cached && cached.length > 0) {
+      context.brandingDetection = { detected: true, zones: cached };
+      pipelineLogger.info(
+        `Applied ${cached.length} cached branding zone(s) for known creator @${username}`,
+        "DirectUploader",
+      );
+      return;
+    }
+
+    const freshZones = context.brandingDetection?.zones || [];
+    if (freshZones.length > 0) {
+      creatorZoneStore.saveZones(username, freshZones);
     }
   }
 

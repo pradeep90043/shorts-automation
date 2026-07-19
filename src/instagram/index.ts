@@ -5,7 +5,7 @@ import https from "https";
 import { pipelineLogger } from "../utils/logger";
 import { config } from "../config";
 
-const CHROME_PATH = config.binaries.chrome;
+export const CHROME_PATH = config.binaries.chrome;
 const YTDLP = config.binaries.ytdlp;
 const FFMPEG = config.binaries.ffmpeg;
 const FFPROBE = config.binaries.ffprobe;
@@ -13,7 +13,7 @@ const PYTHON3 = config.binaries.python3;
 
 // Resolve manual cookies.txt in the project root if it exists, otherwise fall back to temp file
 const PROJECT_COOKIES_PATH = path.resolve(__dirname, "../../cookies.txt");
-const COOKIES_FILE = "/tmp/instagram_cookies.txt";
+export const COOKIES_FILE = "/tmp/instagram_cookies.txt";
 
 // Match all Instagram content URL formats:
 // /reel/, /p/, /tv/, /stories/, share links with ?igsh=...
@@ -45,7 +45,7 @@ export function extractTikTokUrl(text: string): string | null {
  * Chrome encrypts cookies; --cookies-from-browser in yt-dlp doesn't decrypt
  * them properly on macOS, so we export via Python first.
  */
-async function exportCookies(): Promise<void> {
+export async function exportCookies(): Promise<void> {
   const script = `
 import browser_cookie3, time, sys
 try:
@@ -102,6 +102,7 @@ except Exception as e:
 export interface SourceCaption {
   title?: string;
   description?: string;
+  creatorUsername?: string; // the original poster's @handle, when the source reveals it
 }
 
 export interface DownloadReelResult {
@@ -131,7 +132,12 @@ async function downloadTikTokViaTikwm(
   const destPath = path.join(destDir, "reel_video.mp4");
   await downloadFileFromUrl(videoUrl, destPath);
   const caption = typeof json.data.title === "string" ? json.data.title.trim() : "";
-  return caption ? { description: caption } : undefined;
+  const creatorUsername =
+    typeof json.data.author?.unique_id === "string"
+      ? json.data.author.unique_id
+      : undefined;
+  if (!caption && !creatorUsername) return undefined;
+  return { description: caption || undefined, creatorUsername };
 }
 
 /**
@@ -153,10 +159,19 @@ function extractCaptionFromInfoJson(destDir: string): SourceCaption | undefined 
     const title = typeof info.title === "string" ? info.title.trim() : "";
     const description =
       typeof info.description === "string" ? info.description.trim() : "";
-    if (!title && !description) return undefined;
+    // `channel` is yt-dlp's readable @username slug for Instagram (e.g.
+    // "lazy_dsigner") — the same form ChannelWatcher already uses as its
+    // creator key. `uploader`/`uploader_id`/`channel_id` are the display
+    // name or a bare numeric ID and are last-resort only.
+    const creatorUsername =
+      [info.channel, info.uploader, info.uploader_id, info.channel_id].find(
+        (v) => typeof v === "string" && v.trim().length > 0,
+      ) || undefined;
+    if (!title && !description && !creatorUsername) return undefined;
     return {
       title: title || undefined,
       description: description || undefined,
+      creatorUsername,
     };
   } catch (err) {
     pipelineLogger.warn(
@@ -346,7 +361,7 @@ async function downloadFileFromUrl(
  * Extract video directly or screenshot an Instagram post using the public embed URL.
  * Works for images, carousels, and reels.
  */
-function parseNetscapeCookies(filePath: string): any[] {
+export function parseNetscapeCookies(filePath: string): any[] {
   if (!fs.existsSync(filePath)) return [];
   try {
     const content = fs.readFileSync(filePath, "utf-8");
@@ -529,23 +544,40 @@ async function downloadViaPuppeteer(
     // Best-effort: scrape the original post caption from the loaded page
     let sourceCaption: SourceCaption | undefined;
     try {
-      const captionText: string | null = await page.evaluate(() => {
-        const doc = (globalThis as any).document;
-        if (!doc) return null;
-        // Embed page exposes the caption in a .Caption element
-        const captionEl = doc.querySelector(".Caption");
-        if (captionEl && captionEl.textContent) return captionEl.textContent;
-        // Direct page: fall back to the og:title / description meta tags
-        const ogTitle = doc.querySelector('meta[property="og:title"]');
-        if (ogTitle?.getAttribute("content")) return ogTitle.getAttribute("content");
-        const metaDesc = doc.querySelector('meta[name="description"]');
-        return metaDesc ? metaDesc.getAttribute("content") : null;
-      });
-      const cleaned = captionText?.trim();
-      if (cleaned) {
-        sourceCaption = { description: cleaned };
+      const pageText: { caption: string | null; twitterTitle: string | null; ogUrl: string | null } =
+        await page.evaluate(() => {
+          const doc = (globalThis as any).document;
+          if (!doc) return { caption: null, twitterTitle: null, ogUrl: null };
+          const getMeta = (selector: string) =>
+            doc.querySelector(selector)?.getAttribute("content") || null;
+          // og:title is just "Display Name on Instagram: ..." on this page,
+          // but twitter:title keeps the "(@handle)" form, and og:url embeds
+          // the poster's username as its own path segment — both verified
+          // against a live scrape; og:title alone is not enough.
+          const twitterTitle = getMeta('meta[name="twitter:title"]');
+          const ogUrl = getMeta('meta[property="og:url"]');
+          const ogTitle = getMeta('meta[property="og:title"]');
+          // Embed page exposes the caption in a .Caption element
+          const captionEl = doc.querySelector(".Caption");
+          if (captionEl && captionEl.textContent) {
+            return { caption: captionEl.textContent, twitterTitle, ogUrl };
+          }
+          // Direct page: fall back to the og:title / description meta tags
+          if (ogTitle) return { caption: ogTitle, twitterTitle, ogUrl };
+          const metaDesc = getMeta('meta[name="description"]');
+          return { caption: metaDesc, twitterTitle, ogUrl };
+        });
+      const cleaned = pageText.caption?.trim();
+      const handleMatch = pageText.twitterTitle?.match(/\(@([a-zA-Z0-9_.]+)\)/);
+      const urlMatch = pageText.ogUrl?.match(
+        /instagram\.com\/([a-zA-Z0-9_.]+)\/(?:reel|reels|p|tv)\//,
+      );
+      const creatorUsername = handleMatch?.[1] || urlMatch?.[1];
+      if (cleaned || creatorUsername) {
+        sourceCaption = { description: cleaned || undefined, creatorUsername };
         pipelineLogger.info(
-          `Original post caption scraped via Puppeteer (${cleaned.length} chars)`,
+          `Original post caption scraped via Puppeteer (${(cleaned || "").length} chars)` +
+            (creatorUsername ? `, creator @${creatorUsername}` : ""),
           "Instagram",
         );
       }

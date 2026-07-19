@@ -13,6 +13,7 @@ import {
   isTikTokUrl,
   extractTikTokUrl,
 } from "../instagram";
+import { warmCreatorZonesFromOcr } from "../instagram/creatorZoneWarmer";
 
 const streamPipeline = promisify(pipeline);
 
@@ -47,6 +48,7 @@ export class TelegramService implements ITelegramService {
     messageId: number,
   ) => Promise<boolean>;
   private settingsReviewCallback?: (code: string, id: string) => void;
+  private watcher?: { runDailyBatch: (force?: boolean) => Promise<any[]> };
 
   constructor(profile: ChannelProfile = config.profiles[0]) {
     if (!profile || !profile.telegramToken) {
@@ -112,6 +114,12 @@ export class TelegramService implements ITelegramService {
     cb: (code: string, id: string) => void,
   ): void {
     this.settingsReviewCallback = cb;
+  }
+
+  public registerWatcher(watcher: {
+    runDailyBatch: (force?: boolean) => Promise<any[]>;
+  }): void {
+    this.watcher = watcher;
   }
 
   private reviewKeyboard(id: string) {
@@ -643,6 +651,73 @@ export class TelegramService implements ITelegramService {
       );
     });
 
+    // Test/automation shortcut: run a specific Instagram reel through the
+    // full pipeline with all enhancement toggles preset ON, skipping the
+    // interactive settings-review gate entirely — used to validate the
+    // pipeline output before building a fully automated ingestion flow.
+    this.bot.command("testreel", async (ctx) => {
+      const parts = ctx.message.text.trim().split(/\s+/);
+      if (parts.length < 2 || !isInstagramReelUrl(parts[1])) {
+        await ctx.reply(
+          "⚠️ Usage: `/testreel <instagram_reel_url>`",
+          { parse_mode: "Markdown" },
+        );
+        return;
+      }
+      this.runPresetReel(
+        extractInstagramUrl(parts[1])!,
+        ctx.chat.id,
+        ctx.message.message_id,
+        { id: ctx.from.id, username: ctx.from.username, first_name: ctx.from.first_name },
+      );
+    });
+
+    // Debug shortcut: force the channel-watch automation's daily batch
+    // selection right now, bypassing the once-per-day guard and the
+    // scheduled time, to verify the flow without waiting.
+    this.bot.command("runwatchnow", async (ctx) => {
+      if (!this.watcher) {
+        await ctx.reply("❌ Channel watch is not configured for this bot.");
+        return;
+      }
+      await ctx.reply("🔍 Running channel-watch batch selection now...");
+      try {
+        const queue = await this.watcher.runDailyBatch(true);
+        if (queue.length === 0) {
+          await ctx.reply("No unprocessed reels found across the configured channels.");
+          return;
+        }
+        const lines = queue
+          .map(
+            (q: any, i: number) =>
+              `${i + 1}. @${q.channel} (${q.shortcode}) → ${new Date(q.scheduledAt).toLocaleTimeString()}`,
+          )
+          .join("\n");
+        await ctx.reply(`✅ Queued ${queue.length} reel(s):\n${lines}`);
+      } catch (err) {
+        await ctx.reply(`❌ Batch selection failed: ${err instanceof Error ? err.message : err}`);
+      }
+    });
+
+    // Debug shortcut: populate the per-creator watermark-position cache
+    // (src/utils/creatorZones.ts) for every configured watch channel using
+    // local OCR only — no FreeLLMAPI/Gemini vision quota spent.
+    this.bot.command("warmcache", async (ctx) => {
+      await ctx.reply("🔍 Warming creator zone cache via local OCR (no AI quota used)...");
+      try {
+        const results = await warmCreatorZonesFromOcr();
+        const found = results.filter((r) => r.found);
+        const missed = results.filter((r) => !r.found);
+        const lines = [
+          `✅ ${found.length}/${results.length} channel(s) cached.`,
+          ...missed.map((r) => `❌ @${r.channel}: ${r.reason}`),
+        ];
+        await ctx.reply(lines.join("\n"));
+      } catch (err) {
+        await ctx.reply(`❌ Cache warm-up failed: ${err instanceof Error ? err.message : err}`);
+      }
+    });
+
     // Handle photos
     this.bot.on("photo", async (ctx) => {
       try {
@@ -921,11 +996,17 @@ export class TelegramService implements ITelegramService {
     chatId: number,
     messageId: number,
     from: { id: number; username?: string; first_name?: string },
+    presetSettings?: ReviewSettings,
+    // Ground truth from ChannelWatcher (it already knows exactly which
+    // watched account this reel came from) — takes priority over whatever
+    // we can scrape off the page ourselves.
+    knownCreatorUsername?: string,
   ): Promise<void> {
     let framePath: string;
     let instagramSourceType: "image" | "image_with_music" | "video";
     let videoPath: string | undefined;
     let sourceCaptionText: string | undefined;
+    let sourceCreatorUsername: string | undefined;
     try {
       const result = await downloadReelFrame(reelUrl, tempGenDir);
       framePath = result.framePath;
@@ -933,6 +1014,8 @@ export class TelegramService implements ITelegramService {
       videoPath = result.videoPath;
       sourceCaptionText =
         result.sourceCaption?.description || result.sourceCaption?.title;
+      sourceCreatorUsername =
+        knownCreatorUsername || result.sourceCaption?.creatorUsername;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       pipelineLogger.error("Instagram download failed", err, "Instagram");
@@ -966,7 +1049,15 @@ export class TelegramService implements ITelegramService {
       instagramSourceType,
       assetKind: AssetKind.Reel,
       captionMetadata: this.parseCaptionMetadata(sourceCaptionText),
+      sourceCreatorUsername,
     };
+
+    if (presetSettings) {
+      // Test/automation shortcut: skip the interactive settings-review gate
+      // entirely — the caller has already decided the final settings.
+      context.reviewSettings = presetSettings;
+      context.settingsReviewDone = true;
+    }
 
     let contentTypeDesc = "";
     if (instagramSourceType === "image") {
@@ -1005,6 +1096,60 @@ export class TelegramService implements ITelegramService {
         );
       });
     }
+  }
+
+  /**
+   * Test/automation shortcut: run a specific Instagram reel through the full
+   * pipeline with voiceover, music, captions, and sticker preset ON, skipping
+   * the interactive settings-review gate. `anchorMessageId` must be a real,
+   * existing message in `chatId` so Telegram can thread replies to it.
+   */
+  public runPresetReel(
+    reelUrl: string,
+    chatId: number,
+    anchorMessageId: number,
+    from: { id: number; username?: string; first_name?: string } = { id: 0 },
+    // The watched account this reel was pulled from (ChannelWatcher already
+    // knows it) — passed straight through as ground truth for creator-zone
+    // caching instead of re-deriving it from the page.
+    knownCreatorUsername?: string,
+  ): void {
+    const id = `gen-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const tempGenDir = path.join(config.paths.tempDir, id);
+    fs.mkdirSync(tempGenDir, { recursive: true });
+
+    const presetSettings: ReviewSettings = {
+      voiceover: true,
+      originalAudio: false,
+      captions: true,
+      cropTopPct: 0,
+      cropBottomPct: 0,
+      sticker: true,
+    };
+
+    this.sendMessage(
+      chatId,
+      "🧪 *Test flow* — voiceover, music, captions, and sticker preset ON. Skipping settings review. Downloading...",
+      anchorMessageId,
+    ).catch(() => {});
+
+    this.processInstagramReel(
+      reelUrl,
+      tempGenDir,
+      id,
+      chatId,
+      anchorMessageId,
+      from,
+      presetSettings,
+      knownCreatorUsername,
+    ).catch((err) => {
+      pipelineLogger.error(`Test-reel pipeline failed for ${id}`, err, "Telegram");
+      this.sendMessage(
+        chatId,
+        `❌ Test pipeline failed: ${err instanceof Error ? err.message : err}`,
+        anchorMessageId,
+      ).catch(() => {});
+    });
   }
 
   private parseCaptionMetadata(
