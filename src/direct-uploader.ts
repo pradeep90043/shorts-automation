@@ -1378,6 +1378,7 @@ ${this.theme.analysisRules}`;
         status: "completed",
         currentStep: "Short uploaded to all configured platforms successfully",
         youtubeUrl: results[0]?.url,
+        instagramUrl: instaResults[0]?.url,
         context: pending.context,
       });
 
@@ -2287,10 +2288,9 @@ ${this.theme.analysisRules}`;
       context.status = "rendering_video";
       const rawVideoPath = path.join(tempDir, "video_raw.mp4");
       if (isVideo && context.originalVideoPath) {
-        // User requested: do not override text (no blurring)
-        if (context.brandingDetection) {
-          context.brandingDetection.zones = [];
-        }
+        // Pass AI-detected branding zones (profile_picture, handle, profile_name, etc.)
+        // directly to the renderer so they get blurred/covered on the video frames.
+        // DO NOT clear context.brandingDetection.zones here — the renderer uses them.
         await this.renderer.processVideo(
           context.originalVideoPath,
           rawVideoPath,

@@ -747,13 +747,28 @@ export class TelegramService implements ITelegramService {
 
         statusMsg += `📅 *Today's Queue (${details.lastBatchDate || "None"})*\n`;
         if (details.queue.length === 0) {
-          statusMsg += `_No reels queued/selected for today._\n`;
+          statusMsg += `_No reels queued for today — not started._\n`;
         } else {
           const lines = details.queue.map((q: any, i: number) => {
-            const status = q.fired ? "✅ Published" : "⏳ Pending";
-            const dateObj = new Date(q.scheduledAt);
-            const timeStr = dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            return `${i + 1}. *[@${escapeMarkdown(q.channel)}]* (\`${escapeMarkdown(q.shortcode)}\`)\n   └ ${status} @ ${timeStr}`;
+            let status: string;
+            if (q.failed) {
+              status = `❌ Failed: ${q.failedReason || "Unknown error"}`;
+            } else if (q.published) {
+              // Show Published only when URLs are actually available
+              const urls: string[] = [];
+              if (q.publishedYoutubeUrl) urls.push(`[YT](${q.publishedYoutubeUrl})`);
+              if (q.publishedInstagramUrl) urls.push(`[IG](${q.publishedInstagramUrl})`);
+              status = `✅ Published${urls.length ? ` — ${urls.join(" • ")}` : ""}`;
+            } else if (q.fired) {
+              // Fired = pipeline triggered but result not yet confirmed
+              status = `🚀 Processing…`;
+            } else {
+              // Not yet triggered
+              const dateObj = new Date(q.scheduledAt);
+              const timeStr = dateObj.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+              status = `⏳ In Queue — publishes at ${timeStr}`;
+            }
+            return `${i + 1}. *[@${escapeMarkdown(q.channel)}]* (\`${escapeMarkdown(q.shortcode)}\`)\n   └ ${status}`;
           }).join("\n");
           statusMsg += lines;
         }
@@ -1161,7 +1176,7 @@ export class TelegramService implements ITelegramService {
     // knows it) — passed straight through as ground truth for creator-zone
     // caching instead of re-deriving it from the page.
     knownCreatorUsername?: string,
-  ): void {
+  ): string {
     const id = `gen-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
     const tempGenDir = path.join(config.paths.tempDir, id);
     fs.mkdirSync(tempGenDir, { recursive: true });
@@ -1198,6 +1213,8 @@ export class TelegramService implements ITelegramService {
         anchorMessageId,
       ).catch(() => {});
     });
+
+    return id;
   }
 
   private parseCaptionMetadata(

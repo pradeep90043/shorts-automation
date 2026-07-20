@@ -2,11 +2,16 @@
 """
 fetch_reels.py — list a user's recent Instagram Reels via the private mobile API.
 
-Uses only Python stdlib (urllib) so no pip installs are needed.
+Auth strategy (tried in order, first success wins):
+  1. browser-cookie3  → reads live sessionid directly from Chrome/Firefox on
+                        this machine (no manual export ever needed).
+  2. cookies.txt      → Netscape-format file passed as second CLI arg (fallback
+                        for headless/Docker environments where no browser exists).
+
 Outputs one JSON object per line: {"shortcode": "...", "url": "..."}
 
 Usage:
-    python3 fetch_reels.py <username> <path/to/cookies.txt> [max_count]
+    python3 fetch_reels.py <username> [path/to/cookies.txt] [max_count]
 """
 
 import sys
@@ -28,24 +33,64 @@ USER_AGENT = (
 
 # Persist user_id resolutions so we only hit /web_profile_info/ once per username.
 CACHE_FILE = "/app/logs/user_id_cache.json"
+# Fallback cache path when not running in Docker
+LOCAL_CACHE_FILE = os.path.join(os.path.dirname(__file__), "..", "logs", "user_id_cache.json")
 
 # ─────────────────────────────────────────────────────────────────────────────
 
 def load_id_cache() -> dict:
-    try:
-        with open(CACHE_FILE, "r") as fh:
-            return json.load(fh)
-    except Exception:
-        return {}
+    for path in [CACHE_FILE, LOCAL_CACHE_FILE]:
+        try:
+            with open(path, "r") as fh:
+                return json.load(fh)
+        except Exception:
+            pass
+    return {}
 
 
 def save_id_cache(cache: dict) -> None:
+    for path in [CACHE_FILE, LOCAL_CACHE_FILE]:
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as fh:
+                json.dump(cache, fh)
+            return
+        except Exception:
+            pass
+
+
+def load_cookies_from_browser() -> dict:
+    """
+    Try to load Instagram session cookies directly from the local browser DB.
+    Uses browser-cookie3 which reads Chrome/Firefox SQLite stores without
+    requiring any manual export — works as long as the user is logged in to
+    Instagram in their browser on this machine.
+
+    Returns {} if browser-cookie3 is not installed or reading fails.
+    """
     try:
-        os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
-        with open(CACHE_FILE, "w") as fh:
-            json.dump(cache, fh)
-    except Exception:
-        pass
+        import browser_cookie3  # type: ignore
+
+        # Try Chrome first, then Firefox
+        for loader, name in [
+            (browser_cookie3.chrome, "chrome"),
+            (browser_cookie3.firefox, "firefox"),
+        ]:
+            try:
+                jar = loader(domain_name=".instagram.com")
+                cookies: dict = {c.name: c.value for c in jar}
+                if cookies.get("sessionid"):
+                    print(f"INFO: Loaded Instagram session from {name} browser cookies.", file=sys.stderr)
+                    return cookies
+            except Exception as exc:
+                print(f"WARN: Could not load {name} cookies: {exc}", file=sys.stderr)
+
+        print("WARN: browser-cookie3 found no sessionid in Chrome or Firefox.", file=sys.stderr)
+        return {}
+    except ImportError:
+        print("WARN: browser-cookie3 not installed; skipping browser auth.", file=sys.stderr)
+        return {}
+
 
 def parse_netscape_cookies(path: str) -> dict:
     """Return a {name: value} dict from a Netscape-format cookies.txt file."""
@@ -60,8 +105,34 @@ def parse_netscape_cookies(path: str) -> dict:
                 if len(parts) >= 7:
                     cookies[parts[5]] = parts[6]
     except Exception as exc:
-        print(f"WARN: could not parse cookies: {exc}", file=sys.stderr)
+        print(f"WARN: could not parse cookies.txt: {exc}", file=sys.stderr)
     return cookies
+
+
+def resolve_cookies(cookies_path: str | None) -> dict:
+    """
+    Returns an authenticated cookies dict, trying:
+      1. Live browser cookies (Chrome → Firefox via browser-cookie3)
+      2. cookies.txt file passed as arg
+    """
+    # 1. Browser (always fresh — preferred)
+    browser_cookies = load_cookies_from_browser()
+    if browser_cookies.get("sessionid"):
+        return browser_cookies
+
+    # 2. cookies.txt fallback
+    if cookies_path and os.path.isfile(cookies_path):
+        file_cookies = parse_netscape_cookies(cookies_path)
+        if file_cookies.get("sessionid"):
+            print("INFO: Using cookies.txt for auth.", file=sys.stderr)
+            return file_cookies
+        else:
+            print("WARN: cookies.txt has no sessionid — may be expired.", file=sys.stderr)
+    else:
+        if cookies_path:
+            print(f"WARN: cookies.txt not found at '{cookies_path}'", file=sys.stderr)
+
+    return {}
 
 
 def build_request(url: str, cookies: dict) -> urllib.request.Request:
@@ -178,17 +249,23 @@ def get_reels_via_feed(user_id: str, cookies: dict, max_count: int) -> list[dict
 
 
 def main():
-    if len(sys.argv) < 3:
-        print("Usage: fetch_reels.py <username> <cookies.txt> [max_count]", file=sys.stderr)
+    if len(sys.argv) < 2:
+        print("Usage: fetch_reels.py <username> [cookies.txt] [max_count]", file=sys.stderr)
         sys.exit(1)
 
-    username  = sys.argv[1]
-    cookies_path = sys.argv[2]
-    max_count = int(sys.argv[3]) if len(sys.argv) > 3 else 20
+    username     = sys.argv[1]
+    cookies_path = sys.argv[2] if len(sys.argv) > 2 else None
+    max_count    = int(sys.argv[3]) if len(sys.argv) > 3 else 20
 
-    cookies = parse_netscape_cookies(cookies_path)
+    cookies = resolve_cookies(cookies_path)
+
     if not cookies.get("sessionid"):
-        print("ERROR: No sessionid found in cookies. Login may have expired.", file=sys.stderr)
+        print(
+            "ERROR: No sessionid available.\n"
+            "  • Make sure you are logged in to Instagram in Chrome or Firefox on this machine.\n"
+            "  • Or export cookies.txt with the 'Get cookies.txt LOCALLY' browser extension.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     cache = load_id_cache()

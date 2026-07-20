@@ -24,6 +24,7 @@ export interface JobEntry {
   caption?: string;
   metadata?: VideoMetadata;
   youtubeUrl?: string;
+  instagramUrl?: string;
   safeArea?: { x: number; y: number; width: number; height: number };
   qualityScore?: any;
   error?: string;
