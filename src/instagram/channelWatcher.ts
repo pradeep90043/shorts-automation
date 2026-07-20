@@ -1,6 +1,7 @@
 import { ChannelProfile } from "../config";
 import { TelegramService } from "../telegram";
 import { WatchStore, QueuedReel } from "../utils/watchStore";
+import { JobDatabase } from "../utils/db";
 import { listChannelReels } from "./channelFeed";
 import { pipelineLogger } from "../utils/logger";
 
@@ -14,12 +15,14 @@ import { pipelineLogger } from "../utils/logger";
  */
 export class ChannelWatcher {
   private store: WatchStore;
+  private db: JobDatabase;
 
   constructor(
     private profile: ChannelProfile,
     private telegram: TelegramService,
   ) {
     this.store = new WatchStore(profile.isDefault ? undefined : profile.key);
+    this.db = new JobDatabase(profile.isDefault ? undefined : profile.key);
   }
 
   public start(): void {
@@ -206,20 +209,43 @@ export class ChannelWatcher {
   private async processQueue(): Promise<void> {
     const now = Date.now();
     for (const item of this.store.getQueue()) {
-      if (item.fired) continue;
-      if (new Date(item.scheduledAt).getTime() > now) continue;
-      this.store.markFired(item.shortcode); // mark before triggering — never double-fire
-      pipelineLogger.info(
-        `[${this.profile.brandName}] Auto-publishing queued reel @${item.channel}/${item.shortcode}`,
-        "ChannelWatcher",
-      );
-      this.telegram.runPresetReel(
-        item.url,
-        this.profile.watch.adminChatId,
-        0,
-        undefined,
-        item.channel,
-      );
+      // Fire any due reels that haven't been fired yet
+      if (!item.fired) {
+        if (new Date(item.scheduledAt).getTime() > now) continue;
+        const jobId = this.telegram.runPresetReel(
+          item.url,
+          this.profile.watch.adminChatId,
+          0,
+          undefined,
+          item.channel,
+        );
+        this.store.markFired(item.shortcode, jobId); // mark before any await — never double-fire
+        pipelineLogger.info(
+          `[${this.profile.brandName}] Auto-publishing queued reel @${item.channel}/${item.shortcode} (jobId: ${jobId})`,
+          "ChannelWatcher",
+        );
+        continue;
+      }
+
+      // For fired reels that haven't been resolved yet, poll the JobDatabase
+      if (item.fired && !item.published && !item.failed && item.jobId) {
+        const job = this.db.getJob(item.jobId);
+        if (!job) continue; // job record not yet created
+
+        if (job.status === "completed") {
+          this.store.markPublished(item.shortcode, job.youtubeUrl, job.instagramUrl);
+          pipelineLogger.info(
+            `[${this.profile.brandName}] Reel @${item.channel}/${item.shortcode} marked published — YT: ${job.youtubeUrl || "N/A"} IG: ${job.instagramUrl || "N/A"}`,
+            "ChannelWatcher",
+          );
+        } else if (job.status === "failed") {
+          this.store.markFailed(item.shortcode, job.error || "Pipeline failed");
+          pipelineLogger.warn(
+            `[${this.profile.brandName}] Reel @${item.channel}/${item.shortcode} marked failed — ${job.error}`,
+            "ChannelWatcher",
+          );
+        }
+      }
     }
   }
 

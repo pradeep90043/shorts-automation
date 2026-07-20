@@ -11,6 +11,18 @@ export interface QueuedReel {
   channel: string;
   scheduledAt: string; // ISO — when this reel should be auto-published
   fired: boolean;
+  /** Job ID created by runPresetReel so we can poll JobDatabase for result */
+  jobId?: string;
+  /** Set to true once the pipeline job completed successfully */
+  published?: boolean;
+  /** YouTube URL of the published short (populated after job completes) */
+  publishedYoutubeUrl?: string;
+  /** Instagram URL of the published short (populated after job completes) */
+  publishedInstagramUrl?: string;
+  /** Set to true if the pipeline job failed */
+  failed?: boolean;
+  /** Human-readable failure reason */
+  failedReason?: string;
 }
 
 interface WatchState {
@@ -98,9 +110,45 @@ export class WatchStore {
     this.save();
   }
 
-  public markFired(shortcode: string): void {
+  public markFired(shortcode: string, jobId?: string): void {
     const entry = this.state.queue.find((q) => q.shortcode === shortcode);
-    if (entry) entry.fired = true;
+    if (entry) {
+      entry.fired = true;
+      if (jobId) entry.jobId = jobId;
+    }
+    this.save();
+  }
+
+  /**
+   * Called when the pipeline job for a queued reel completes successfully.
+   * Sets published=true and stores the platform URLs.
+   */
+  public markPublished(
+    shortcode: string,
+    youtubeUrl?: string,
+    instagramUrl?: string,
+  ): void {
+    const entry = this.state.queue.find((q) => q.shortcode === shortcode);
+    if (entry) {
+      entry.published = true;
+      entry.failed = false;
+      entry.failedReason = undefined;
+      if (youtubeUrl) entry.publishedYoutubeUrl = youtubeUrl;
+      if (instagramUrl) entry.publishedInstagramUrl = instagramUrl;
+    }
+    this.save();
+  }
+
+  /**
+   * Called when the pipeline job for a queued reel fails.
+   */
+  public markFailed(shortcode: string, reason?: string): void {
+    const entry = this.state.queue.find((q) => q.shortcode === shortcode);
+    if (entry) {
+      entry.failed = true;
+      entry.published = false;
+      entry.failedReason = reason || "Unknown error";
+    }
     this.save();
   }
 
