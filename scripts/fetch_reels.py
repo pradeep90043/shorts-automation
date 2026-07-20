@@ -15,6 +15,7 @@ import urllib.request
 import urllib.parse
 import urllib.error
 import time
+import os
 
 # ── Instagram mobile app identity ────────────────────────────────────────────
 APP_ID   = "936619743392459"
@@ -25,7 +26,26 @@ USER_AGENT = (
     "(iPhone14,3; iOS 17_5; en_US; en-US; scale=3.00; 1284x2778; 647227942)"
 )
 
+# Persist user_id resolutions so we only hit /web_profile_info/ once per username.
+CACHE_FILE = "/app/logs/user_id_cache.json"
+
 # ─────────────────────────────────────────────────────────────────────────────
+
+def load_id_cache() -> dict:
+    try:
+        with open(CACHE_FILE, "r") as fh:
+            return json.load(fh)
+    except Exception:
+        return {}
+
+
+def save_id_cache(cache: dict) -> None:
+    try:
+        os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
+        with open(CACHE_FILE, "w") as fh:
+            json.dump(cache, fh)
+    except Exception:
+        pass
 
 def parse_netscape_cookies(path: str) -> dict:
     """Return a {name: value} dict from a Netscape-format cookies.txt file."""
@@ -68,12 +88,19 @@ def fetch_json(req: urllib.request.Request, timeout: int = 15) -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
-def get_user_id(username: str, cookies: dict) -> str | None:
-    """Resolve a username → numeric user ID via the web profile info endpoint."""
+def get_user_id(username: str, cookies: dict, cache: dict) -> str | None:
+    """Resolve a username → numeric user ID. Uses a persistent cache to avoid
+    redundant API calls on subsequent runs."""
+    if username in cache:
+        return cache[username]
+
     url = f"https://www.instagram.com/api/v1/users/web_profile_info/?username={urllib.parse.quote(username)}"
     try:
         data = fetch_json(build_request(url, cookies))
-        return data["data"]["user"]["id"]
+        user_id: str = data["data"]["user"]["id"]
+        cache[username] = user_id
+        save_id_cache(cache)
+        return user_id
     except Exception as exc:
         print(f"WARN: could not resolve user_id for @{username}: {exc}", file=sys.stderr)
         return None
@@ -164,7 +191,8 @@ def main():
         print("ERROR: No sessionid found in cookies. Login may have expired.", file=sys.stderr)
         sys.exit(1)
 
-    user_id = get_user_id(username, cookies)
+    cache = load_id_cache()
+    user_id = get_user_id(username, cookies, cache)
     if not user_id:
         sys.exit(1)
 
