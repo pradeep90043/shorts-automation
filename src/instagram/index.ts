@@ -57,16 +57,13 @@ export function extractTikTokUrl(text: string): string | null {
  * them properly on macOS, so we export via Python first.
  */
 export async function exportCookies(): Promise<void> {
-  // If a manual cookies file exists, use it directly — skip Python browser export.
-  if (fs.existsSync(MANUAL_COOKIES_PATH)) {
-    pipelineLogger.info(
-      `Using cookies from: ${MANUAL_COOKIES_PATH}`,
-      "Instagram",
-    );
-    return;
-  }
+  // Determine which file to write fresh cookies into.
+  // Prefer MANUAL_COOKIES_PATH so yt-dlp always gets a fresh file;
+  // fall back to TEMP_COOKIES_FILE when the project file isn't writable.
+  const destFile = MANUAL_COOKIES_PATH ?? TEMP_COOKIES_FILE;
 
   // Try to export fresh cookies from Chrome via Python (macOS/Linux only).
+  // We always refresh — never skip — so stale cookies don't cause 401s.
   const script = `
 import browser_cookie3, time, sys
 try:
@@ -80,7 +77,7 @@ try:
         secure  = "TRUE" if c.secure else "FALSE"
         expires = str(int(c.expires)) if c.expires else str(int(time.time()) + 86400*365)
         lines.append(f"{c.domain}\\t{inc_sub}\\t{c.path}\\t{secure}\\t{expires}\\t{c.name}\\t{c.value}")
-    with open('${TEMP_COOKIES_FILE}', 'w') as f:
+    with open('${destFile}', 'w') as f:
         f.write('\\n'.join(lines))
     print(f"Exported {len(cookies)} cookies")
 except Exception as e:
@@ -89,12 +86,24 @@ except Exception as e:
 `;
   try {
     await runCommand(PYTHON3, ["-c", script], "cookie-export");
-    pipelineLogger.info("Instagram cookies exported from Chrome", "Instagram");
-  } catch (err) {
-    pipelineLogger.warn(
-      `No cookies available: ${err instanceof Error ? err.message : err}. Downloads may fail.`,
+    pipelineLogger.info(
+      `Instagram cookies refreshed from Chrome → ${destFile}`,
       "Instagram",
     );
+  } catch (err) {
+    // Chrome export failed (e.g. on VM where Chrome is not installed).
+    // Fall back to whatever is on disk — better than nothing.
+    if (fs.existsSync(MANUAL_COOKIES_PATH)) {
+      pipelineLogger.info(
+        `Using existing cookies file: ${MANUAL_COOKIES_PATH}`,
+        "Instagram",
+      );
+    } else {
+      pipelineLogger.warn(
+        `No cookies available: ${err instanceof Error ? err.message : err}. Downloads may fail.`,
+        "Instagram",
+      );
+    }
   }
 }
 
@@ -392,7 +401,9 @@ async function downloadViaPuppeteer(
   destDir: string,
   framePath: string,
 ): Promise<DownloadReelResult> {
-  const match = url.match(/\/instagram\.com\/(?:[A-Za-z0-9_.]+\/)?(?:p|reel|tv)\/([A-Za-z0-9_-]+)/);
+  // Note: leading \/ is intentionally omitted so this matches both
+  // https://instagram.com/reel/... AND https://www.instagram.com/reel/...
+  const match = url.match(/instagram\.com\/(?:[A-Za-z0-9_.]+\/)?(?:p|reel|tv)\/([A-Za-z0-9_-]+)/);
   if (!match)
     throw new Error(`Cannot extract shortcode from Instagram URL: ${url}`);
   const shortcode = match[1];
