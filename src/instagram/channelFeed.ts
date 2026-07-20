@@ -1,4 +1,5 @@
 import { execFile } from "child_process";
+import path from "path";
 import { config } from "../config";
 import { pipelineLogger } from "../utils/logger";
 import { COOKIES_FILE } from "./index";
@@ -8,51 +9,45 @@ export interface ChannelReelSummary {
   url: string;
 }
 
-const YTDLP = config.binaries.ytdlp;
+const PYTHON3  = config.binaries.python3;
+const FETCH_SCRIPT = path.resolve(__dirname, "../../scripts/fetch_reels.py");
 
 /**
- * List a channel's recent reels via yt-dlp --flat-playlist.
+ * List a channel's recent reels via Instagram's private mobile API.
  *
- * This replaces the previous Puppeteer scrape which was being blocked by
- * Instagram's bot-detection on server/datacenter IPs. yt-dlp handles cookies
- * natively, sends realistic browser headers, and is much more resilient to
- * rate-limiting.
+ * A dedicated Python helper (scripts/fetch_reels.py) authenticates using the
+ * session cookies and calls i.instagram.com/api/v1/clips/user/ — the same
+ * endpoint the Instagram mobile app uses.  This avoids both Puppeteer (blocked
+ * by Instagram on datacenter IPs) and yt-dlp's broken instagram:user extractor.
  *
- * Up to 20 entries from the /reels/ tab are returned. Pinned posts are
- * excluded naturally since yt-dlp returns items in reverse-chronological order
- * and we only take the most recent 20.
+ * Up to 20 reels are returned per channel.
  */
 export async function listChannelReels(
   username: string,
 ): Promise<ChannelReelSummary[]> {
-  const url = `https://www.instagram.com/${username}/reels/`;
-
   pipelineLogger.info(
-    `[ChannelFeed] Fetching reels for @${username} via yt-dlp...`,
+    `[ChannelFeed] Fetching reels for @${username} via Instagram mobile API...`,
     "ChannelFeed",
   );
 
   return new Promise((resolve) => {
-    const args = [
-      "--cookies", COOKIES_FILE,
-      "--flat-playlist",
-      "--no-warnings",
-      "--no-download",
-      "-j",                     // print one JSON object per entry to stdout
-      "--playlist-items", "1:20",
-      "--sleep-requests", "2",  // 2s between API requests to avoid 429
-      "--sleep-interval", "1",  // 1s between playlist items
-      url,
-    ];
+    const args = [FETCH_SCRIPT, username, COOKIES_FILE, "20"];
 
     execFile(
-      YTDLP,
+      PYTHON3,
       args,
-      { timeout: 60000, maxBuffer: 10 * 1024 * 1024 },
+      { timeout: 30000, maxBuffer: 5 * 1024 * 1024 },
       (err, stdout, stderr) => {
+        if (stderr.trim()) {
+          pipelineLogger.warn(
+            `[ChannelFeed] @${username}: ${stderr.trim().split("\n")[0]}`,
+            "ChannelFeed",
+          );
+        }
+
         if (err && !stdout.trim()) {
           pipelineLogger.warn(
-            `[ChannelFeed] yt-dlp failed for @${username}: ${err.message.split("\n")[0]}`,
+            `[ChannelFeed] fetch_reels.py failed for @${username}: ${err.message.split("\n")[0]}`,
             "ChannelFeed",
           );
           return resolve([]);
@@ -65,33 +60,16 @@ export async function listChannelReels(
           const trimmed = line.trim();
           if (!trimmed) continue;
           try {
-            const entry = JSON.parse(trimmed);
-
-            // yt-dlp returns the shortcode as `id` for Instagram reels.
-            // Fall back to extracting it from the url/webpage_url field.
-            const shortcode: string =
-              entry.id ||
-              (entry.webpage_url || entry.url || "").match(
-                /\/reel\/([A-Za-z0-9_-]+)/,
-              )?.[1] ||
-              "";
-
-            if (!shortcode || seen.has(shortcode)) continue;
-            seen.add(shortcode);
+            const entry = JSON.parse(trimmed) as { shortcode: string; url: string };
+            if (!entry.shortcode || seen.has(entry.shortcode)) continue;
+            seen.add(entry.shortcode);
             results.push({
-              shortcode,
-              url: `https://www.instagram.com/reel/${shortcode}/`,
+              shortcode: entry.shortcode,
+              url: `https://www.instagram.com/reel/${entry.shortcode}/`,
             });
           } catch {
-            // skip malformed / non-JSON lines (yt-dlp sometimes emits warnings)
+            // skip non-JSON lines (warnings etc.)
           }
-        }
-
-        if (results.length === 0 && stderr) {
-          pipelineLogger.warn(
-            `[ChannelFeed] No reels found for @${username}. yt-dlp stderr: ${stderr.slice(0, 200)}`,
-            "ChannelFeed",
-          );
         }
 
         pipelineLogger.info(

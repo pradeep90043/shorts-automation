@@ -37,6 +37,7 @@ RUN npm ci --omit=dev
 
 # Copy pre-compiled JavaScript dist and assets
 COPY dist/ ./dist/
+COPY scripts/ ./scripts/
 COPY assets/ ./assets/
 
 # Create writable dirs
