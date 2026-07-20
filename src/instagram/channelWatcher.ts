@@ -51,27 +51,45 @@ export class ChannelWatcher {
     );
   }
 
+  // scheduleTime (HH:MM) is always treated as IST (UTC+5:30) so the Oracle
+  // VM running in UTC fires at the correct wall-clock time in India.
+  private static readonly IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+
+  /** Current UTC ms shifted into IST. */
+  private nowIstMs(): number {
+    return Date.now() + ChannelWatcher.IST_OFFSET_MS;
+  }
+
+  /**
+   * UTC ms for today's schedule time, where "today" is the IST calendar date
+   * and HH:MM is the configured IST time.
+   */
+  private todayScheduleUtcMs(): number {
+    const [hh, mm] = this.profile.watch.scheduleTime.split(":").map(Number);
+    const nowIst = new Date(this.nowIstMs());
+    // Build HH:MM on today's IST date, then shift back to UTC
+    return (
+      Date.UTC(
+        nowIst.getUTCFullYear(),
+        nowIst.getUTCMonth(),
+        nowIst.getUTCDate(),
+        hh || 0,
+        mm || 0,
+        0,
+        0,
+      ) - ChannelWatcher.IST_OFFSET_MS
+    );
+  }
+
   private checkAndRunMissedBatch(): void {
     const today = new Date().toISOString().slice(0, 10);
     if (this.store.getLastBatchDate() === today) {
       return; // already ran today
     }
 
-    const [hh, mm] = this.profile.watch.scheduleTime.split(":").map(Number);
-    const now = new Date();
-    const scheduledToday = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate(),
-      hh || 0,
-      mm || 0,
-      0,
-      0,
-    );
-
-    if (now.getTime() >= scheduledToday.getTime()) {
+    if (Date.now() >= this.todayScheduleUtcMs()) {
       pipelineLogger.info(
-        `[${this.profile.brandName}] Startup is after scheduled time (${this.profile.watch.scheduleTime}) and no batch ran today. Triggering missed daily batch selection...`,
+        `[${this.profile.brandName}] Startup is after scheduled IST time (${this.profile.watch.scheduleTime} IST) and no batch ran today. Triggering missed daily batch selection...`,
         "ChannelWatcher",
       );
       this.runDailyBatch().catch((err) => {
@@ -101,19 +119,13 @@ export class ChannelWatcher {
   }
 
   private msUntilNextScheduleTime(): number {
-    const [hh, mm] = this.profile.watch.scheduleTime.split(":").map(Number);
-    const now = new Date();
-    const next = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate(),
-      hh || 0,
-      mm || 0,
-      0,
-      0,
-    );
-    if (next.getTime() <= now.getTime()) next.setDate(next.getDate() + 1);
-    return next.getTime() - now.getTime();
+    const nowMs = Date.now();
+    const scheduledMs = this.todayScheduleUtcMs();
+    if (scheduledMs <= nowMs) {
+      // Already past today's IST schedule — fire tomorrow
+      return scheduledMs + 24 * 60 * 60 * 1000 - nowMs;
+    }
+    return scheduledMs - nowMs;
   }
 
   /**
