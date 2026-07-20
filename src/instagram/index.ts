@@ -1,5 +1,6 @@
 import { spawn } from "child_process";
 import fs from "fs";
+import os from "os";
 import path from "path";
 import https from "https";
 import { pipelineLogger } from "../utils/logger";
@@ -11,9 +12,19 @@ const FFMPEG = config.binaries.ffmpeg;
 const FFPROBE = config.binaries.ffprobe;
 const PYTHON3 = config.binaries.python3;
 
-// Resolve manual cookies.txt in the project root if it exists, otherwise fall back to temp file
-const PROJECT_COOKIES_PATH = path.resolve(__dirname, "../../cookies.txt");
-export const COOKIES_FILE = "/tmp/instagram_cookies.txt";
+// If a cookies file is explicitly provided, use it directly.
+// Otherwise fall back to project root cookies.txt, then a temp path.
+const MANUAL_COOKIES_PATH =
+  process.env.INSTAGRAM_COOKIES_PATH ||
+  path.resolve(__dirname, "../../cookies.txt");
+const TEMP_COOKIES_FILE = process.platform === "win32"
+  ? path.join(os.tmpdir(), "instagram_cookies.txt")
+  : "/tmp/instagram_cookies.txt";
+// COOKIES_FILE is what actually gets passed to yt-dlp.
+// Prefer the manual file directly when it exists — no copy needed.
+export const COOKIES_FILE = fs.existsSync(MANUAL_COOKIES_PATH)
+  ? MANUAL_COOKIES_PATH
+  : TEMP_COOKIES_FILE;
 
 // Match all Instagram content URL formats:
 // /reel/, /p/, /tv/, /stories/, share links with ?igsh=...
@@ -46,6 +57,16 @@ export function extractTikTokUrl(text: string): string | null {
  * them properly on macOS, so we export via Python first.
  */
 export async function exportCookies(): Promise<void> {
+  // If a manual cookies file exists, use it directly — skip Python browser export.
+  if (fs.existsSync(MANUAL_COOKIES_PATH)) {
+    pipelineLogger.info(
+      `Using cookies from: ${MANUAL_COOKIES_PATH}`,
+      "Instagram",
+    );
+    return;
+  }
+
+  // Try to export fresh cookies from Chrome via Python (macOS/Linux only).
   const script = `
 import browser_cookie3, time, sys
 try:
@@ -59,7 +80,7 @@ try:
         secure  = "TRUE" if c.secure else "FALSE"
         expires = str(int(c.expires)) if c.expires else str(int(time.time()) + 86400*365)
         lines.append(f"{c.domain}\\t{inc_sub}\\t{c.path}\\t{secure}\\t{expires}\\t{c.name}\\t{c.value}")
-    with open('${COOKIES_FILE}', 'w') as f:
+    with open('${TEMP_COOKIES_FILE}', 'w') as f:
         f.write('\\n'.join(lines))
     print(f"Exported {len(cookies)} cookies")
 except Exception as e:
@@ -69,31 +90,9 @@ except Exception as e:
   try {
     await runCommand(PYTHON3, ["-c", script], "cookie-export");
     pipelineLogger.info("Instagram cookies exported from Chrome", "Instagram");
-    return;
   } catch (err) {
     pipelineLogger.warn(
-      `Failed to export Instagram cookies from browser: ${err instanceof Error ? err.message : err}. Checking for manual cookies.`,
-      "Instagram",
-    );
-  }
-
-  // Fallback to manual cookies.txt in project root if browser export failed
-  if (fs.existsSync(PROJECT_COOKIES_PATH)) {
-    pipelineLogger.info(
-      "Falling back to manual cookies.txt from project root",
-      "Instagram",
-    );
-    try {
-      fs.copyFileSync(PROJECT_COOKIES_PATH, COOKIES_FILE);
-    } catch (copyErr) {
-      pipelineLogger.error(
-        `Failed to copy manual cookies: ${copyErr instanceof Error ? copyErr.message : copyErr}`,
-        "Instagram",
-      );
-    }
-  } else {
-    pipelineLogger.warn(
-      "No manual cookies.txt found in project root. Proceeding without cookies.",
+      `No cookies available: ${err instanceof Error ? err.message : err}. Downloads may fail.`,
       "Instagram",
     );
   }
@@ -402,17 +401,22 @@ async function downloadViaPuppeteer(
   const puppeteerModule = await new Function("return import('puppeteer-core')")();
   const puppeteer = puppeteerModule.default;
 
+  const chromeArgs = [
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-dev-shm-usage",
+    "--disable-gpu",
+    "--disable-software-rasterizer",
+    // On Windows, nodemon creates a Job Object that blocks Chrome from creating
+    // nested Job Objects for its renderer processes; --no-zygote + --single-process
+    // avoids that by keeping everything in one process.
+    ...(process.platform === "win32" ? ["--no-zygote", "--single-process"] : []),
+  ];
   const browser = await puppeteer.launch({
     executablePath: CHROME_PATH,
     headless: true,
     timeout: 90000,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-      "--disable-software-rasterizer",
-    ],
+    args: chromeArgs,
   });
 
   try {

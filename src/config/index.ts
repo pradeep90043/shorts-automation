@@ -371,7 +371,11 @@ export const config: AppConfig = {
     python3: process.env.PYTHON_PATH || "python3",
     chrome:
       process.env.PUPPETEER_EXECUTABLE_PATH ||
-      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      (process.platform === "win32"
+        ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+        : process.platform === "darwin"
+          ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+          : "/usr/bin/google-chrome"),
     fpcalc: process.env.FPCALC_PATH || "fpcalc",
   },
   copyright: {
