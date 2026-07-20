@@ -159,6 +159,8 @@ export class ChannelWatcher {
           "ChannelWatcher",
         );
       }
+      // Pause between channels to avoid Instagram 429 rate-limiting
+      await new Promise((r) => setTimeout(r, 5000));
     }
 
     // Fisher-Yates shuffle so picks are spread across all channels, not
