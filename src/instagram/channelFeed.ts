@@ -40,6 +40,8 @@ export async function listChannelReels(
       "--no-download",
       "-j",                     // print one JSON object per entry to stdout
       "--playlist-items", "1:20",
+      "--sleep-requests", "2",  // 2s between API requests to avoid 429
+      "--sleep-interval", "1",  // 1s between playlist items
       url,
     ];
 
