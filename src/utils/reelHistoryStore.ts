@@ -1,4 +1,5 @@
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { config } from "../config";
 import { pipelineLogger } from "./logger";
@@ -27,10 +28,10 @@ export class ReelHistoryStore {
   private records = new Map<string, ReelRecord>();
 
   constructor(dbKey?: string) {
-    const logDir = config.paths.logDir || path.resolve(__dirname, "../../logs");
-    if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+    const dataDir = config.paths.dataDir || path.join(os.homedir(), ".shorts-automation");
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
     this.filePath = path.join(
-      logDir,
+      dataDir,
       dbKey ? `reel_history_${dbKey}.json` : "reel_history.json",
     );
     this.load();

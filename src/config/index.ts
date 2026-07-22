@@ -1,4 +1,5 @@
 import dotenv from "dotenv";
+import os from "os";
 import path from "path";
 import fs from "fs";
 import { ContentTheme, CONTENT_THEMES } from "./themes";
@@ -80,6 +81,8 @@ export interface AppConfig {
     tempDir: string;
     outputDir: string;
     logDir: string;
+    /** Persistent data dir outside the project — survives fresh clones/deployments. */
+    dataDir: string;
   };
   rendering: {
     videoDurationSeconds: number;
@@ -353,6 +356,9 @@ export const config: AppConfig = {
     logDir: process.env.LOG_DIR
       ? path.resolve(rootDir, process.env.LOG_DIR)
       : path.resolve(rootDir, "logs"),
+    dataDir: process.env.DATA_DIR
+      ? path.resolve(process.env.DATA_DIR)
+      : path.join(os.homedir(), ".shorts-automation"),
   },
   rendering: {
     videoDurationSeconds: parseInt(
