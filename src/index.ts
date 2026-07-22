@@ -47,6 +47,8 @@ async function bootstrap() {
     process.exit(1);
   }
 
+  const activeServices: TelegramService[] = [];
+
   // 3. Initialize one Telegram bot + uploader pipeline per channel profile
   for (const profile of config.profiles) {
     pipelineLogger.info(
@@ -57,6 +59,7 @@ async function bootstrap() {
     let telegramService: TelegramService;
     try {
       telegramService = new TelegramService(profile);
+      activeServices.push(telegramService);
     } catch (err) {
       pipelineLogger.error(
         `[${profile.brandName}] Failed to start Telegram Bot service. Check its bot token in .env.`,
@@ -107,6 +110,36 @@ async function bootstrap() {
     `System is fully initialized and operational. ${config.profiles.length} bot(s) ready to process screenshots!`,
     "Bootstrap",
   );
+
+  // Set up graceful shutdown handlers to cleanly close polling connections
+  let isShuttingDown = false;
+  const gracefulShutdown = async (signal: string) => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    pipelineLogger.info(
+      `Received ${signal}. Shutting down gracefully...`,
+      "Bootstrap",
+    );
+
+    for (const service of activeServices) {
+      try {
+        await service.stop();
+      } catch (err) {
+        pipelineLogger.error(
+          `Failed to stop Telegram bot service gracefully`,
+          err,
+          "Bootstrap",
+        );
+      }
+    }
+
+    pipelineLogger.info("All services stopped. Exiting process.", "Bootstrap");
+    process.exit(0);
+  };
+
+  process.once("SIGINT", () => gracefulShutdown("SIGINT"));
+  process.once("SIGTERM", () => gracefulShutdown("SIGTERM"));
+  process.once("SIGUSR2", () => gracefulShutdown("SIGUSR2"));
 }
 
 // Run bootstrap

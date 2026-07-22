@@ -46,8 +46,9 @@ export async function listChannelReels(
         }
 
         if (err && !stdout.trim()) {
+          const errMsg = stderr ? stderr.trim() : err.message.split("\n")[0];
           pipelineLogger.warn(
-            `[ChannelFeed] fetch_reels.py failed for @${username}: ${err.message.split("\n")[0]}`,
+            `[ChannelFeed] fetch_reels.py failed for @${username}: ${errMsg}`,
             "ChannelFeed",
           );
           return resolve([]);

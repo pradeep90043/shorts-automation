@@ -429,15 +429,33 @@ export class TelegramService implements ITelegramService {
   }
 
   public async start(): Promise<void> {
-    this.bot.launch();
+    // launch() starts the long-poll loop in the background. Awaiting it hangs
+    // indefinitely when Telegraf retries on a 409 conflict (e.g. production bot
+    // running with the same token). Fire-and-forget so bootstrap can proceed.
+    this.bot.launch().catch((err) => {
+      // Suppress the "aborted" error that fires when stop() is called during
+      // a graceful shutdown while launch() is still retrying.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.includes("abort") && !msg.includes("stop")) {
+        pipelineLogger.error(
+          `[${this.profile.brandName}] Telegram bot launch error`,
+          err,
+          "Telegram",
+        );
+      }
+    });
     pipelineLogger.info(
       `Telegram Bot [${this.profile.brandName}] successfully started and listening for messages.`,
       "Telegram",
     );
+  }
 
-    // Enable graceful stop
-    process.once("SIGINT", () => this.bot.stop("SIGINT"));
-    process.once("SIGTERM", () => this.bot.stop("SIGTERM"));
+  public async stop(): Promise<void> {
+    pipelineLogger.info(
+      `Stopping Telegram Bot [${this.profile.brandName}]...`,
+      "Telegram",
+    );
+    await this.bot.stop();
   }
 
   public async downloadFile(fileId: string, destPath: string): Promise<void> {

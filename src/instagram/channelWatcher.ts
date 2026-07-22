@@ -1,6 +1,7 @@
 import { ChannelProfile } from "../config";
 import { TelegramService } from "../telegram";
 import { WatchStore, QueuedReel } from "../utils/watchStore";
+import { ReelHistoryStore } from "../utils/reelHistoryStore";
 import { JobDatabase } from "../utils/db";
 import { listChannelReels } from "./channelFeed";
 import { pipelineLogger } from "../utils/logger";
@@ -15,14 +16,22 @@ import { pipelineLogger } from "../utils/logger";
  */
 export class ChannelWatcher {
   private store: WatchStore;
+  private history: ReelHistoryStore;
   private db: JobDatabase;
 
   constructor(
     private profile: ChannelProfile,
     private telegram: TelegramService,
   ) {
-    this.store = new WatchStore(profile.isDefault ? undefined : profile.key);
-    this.db = new JobDatabase(profile.isDefault ? undefined : profile.key);
+    const dbKey = profile.isDefault ? undefined : profile.key;
+    this.store = new WatchStore(dbKey);
+    this.history = new ReelHistoryStore(dbKey);
+    this.db = new JobDatabase(dbKey);
+
+    // One-time migration: import legacy processedShortcodes from watch_state.json
+    // into the new permanent ReelHistoryStore, then drop them from watch_state.
+    const legacy = this.store.drainLegacyShortcodes();
+    if (legacy.length > 0) this.history.migrate(legacy);
   }
 
   public start(): void {
@@ -151,7 +160,7 @@ export class ChannelWatcher {
       try {
         const reels = await listChannelReels(channel);
         for (const r of reels) {
-          if (!this.store.hasProcessed(r.shortcode)) {
+          if (!this.history.has(r.shortcode)) {
             pool.push({ ...r, channel });
           }
         }
@@ -193,7 +202,9 @@ export class ChannelWatcher {
     }));
 
     // Reserve immediately so a crash/retry can never re-pick the same reel.
-    picked.forEach((p) => this.store.markProcessed(p.shortcode));
+    // Written to the permanent ReelHistoryStore (survives deployments) so that
+    // even a fresh watch_state.json cannot cause the same reel to be re-picked.
+    picked.forEach((p) => this.history.add(p.shortcode, p.channel));
     this.store.setQueue(queue);
     this.store.setLastBatchDate(today);
 
@@ -234,12 +245,14 @@ export class ChannelWatcher {
 
         if (job.status === "completed") {
           this.store.markPublished(item.shortcode, job.youtubeUrl, job.instagramUrl);
+          this.history.markPublished(item.shortcode, job.youtubeUrl, job.instagramUrl);
           pipelineLogger.info(
             `[${this.profile.brandName}] Reel @${item.channel}/${item.shortcode} marked published — YT: ${job.youtubeUrl || "N/A"} IG: ${job.instagramUrl || "N/A"}`,
             "ChannelWatcher",
           );
         } else if (job.status === "failed") {
           this.store.markFailed(item.shortcode, job.error || "Pipeline failed");
+          this.history.markFailed(item.shortcode, job.error || "Pipeline failed");
           pipelineLogger.warn(
             `[${this.profile.brandName}] Reel @${item.channel}/${item.shortcode} marked failed — ${job.error}`,
             "ChannelWatcher",
