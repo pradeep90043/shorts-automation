@@ -108,17 +108,22 @@ export class ChannelWatcher {
     }
 
     if (Date.now() >= this.todayScheduleUtcMs()) {
+      // Stagger profiles so they never hammer the Instagram API simultaneously.
+      // isDefault = first profile (index 0) → no delay; secondary profiles → 5 min offset.
+      const staggerMs = this.profile.isDefault ? 0 : 5 * 60 * 1000;
       pipelineLogger.info(
-        `[${this.profile.brandName}] Startup is after scheduled IST time (${this.profile.watch.scheduleTime} IST) — ${batchRanToday ? "queue is empty, retrying batch" : "no batch ran today"}. Triggering batch selection...`,
+        `[${this.profile.brandName}] Startup is after scheduled IST time (${this.profile.watch.scheduleTime} IST) — ${batchRanToday ? "queue is empty, retrying batch" : "no batch ran today"}. Triggering batch selection in ${staggerMs / 1000}s...`,
         "ChannelWatcher",
       );
-      this.runDailyBatch(batchRanToday).catch((err) => {
-        pipelineLogger.error(
-          `[${this.profile.brandName}] Missed daily batch execution failed`,
-          err,
-          "ChannelWatcher",
-        );
-      });
+      setTimeout(() => {
+        this.runDailyBatch(batchRanToday).catch((err) => {
+          pipelineLogger.error(
+            `[${this.profile.brandName}] Missed daily batch execution failed`,
+            err,
+            "ChannelWatcher",
+          );
+        });
+      }, staggerMs);
     }
   }
 
@@ -180,7 +185,7 @@ export class ChannelWatcher {
         );
       }
       // Pause between channels to avoid Instagram 429 rate-limiting
-      await new Promise((r) => setTimeout(r, 5000));
+      await new Promise((r) => setTimeout(r, 15000));
     }
 
     // Fisher-Yates shuffle so picks are spread across all channels, not
