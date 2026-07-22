@@ -195,7 +195,10 @@ export class ChannelWatcher {
     }
 
     const gapMs = this.profile.watch.gapHours * 60 * 60 * 1000;
-    const startTime = Date.now();
+    // Anchor to today's configured schedule time so that if the server
+    // recovers late, all reels due before now are immediately overdue and
+    // processQueue fires them one-by-one to catch up.
+    const startTime = this.todayScheduleUtcMs();
     const queue: QueuedReel[] = picked.map((p, i) => ({
       shortcode: p.shortcode,
       url: p.url,
