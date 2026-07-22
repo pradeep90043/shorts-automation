@@ -6,6 +6,7 @@ import { ensureAssetsExist } from "./utils/assets";
 import { cleanupOldMedia } from "./utils/cleanup";
 import { pipelineLogger } from "./utils/logger";
 import { acquireSingleInstanceLock } from "./utils/singleInstanceLock";
+import { closeDb } from "./utils/mongoClient";
 
 async function bootstrap() {
   pipelineLogger.info(
@@ -103,7 +104,7 @@ async function bootstrap() {
     // scheduled time.
     const watcher = new ChannelWatcher(profile, telegramService);
     telegramService.registerWatcher(watcher);
-    watcher.start();
+    await watcher.start();
   }
 
   pipelineLogger.info(
@@ -133,6 +134,7 @@ async function bootstrap() {
       }
     }
 
+    await closeDb();
     pipelineLogger.info("All services stopped. Exiting process.", "Bootstrap");
     process.exit(0);
   };
