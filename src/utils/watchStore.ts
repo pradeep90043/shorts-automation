@@ -1,4 +1,5 @@
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { config } from "../config";
 import { pipelineLogger } from "./logger";
@@ -49,10 +50,10 @@ export class WatchStore {
   private state: WatchState = { ...EMPTY_STATE, queue: [] };
 
   constructor(dbKey?: string) {
-    const logDir = config.paths.logDir || path.resolve(__dirname, "../../logs");
-    if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+    const dataDir = config.paths.dataDir || path.join(os.homedir(), ".shorts-automation");
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
     this.filePath = path.join(
-      logDir,
+      dataDir,
       dbKey ? `watch_state_${dbKey}.json` : "watch_state.json",
     );
     this.load();

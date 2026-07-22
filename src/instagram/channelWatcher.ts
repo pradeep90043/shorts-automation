@@ -219,10 +219,14 @@ export class ChannelWatcher {
 
   private async processQueue(): Promise<void> {
     const now = Date.now();
+    // Fire at most one due reel per tick so that overdue reels (e.g. after a
+    // recovery from downtime) publish one-by-one rather than all at once.
+    let firedThisTick = false;
+
     for (const item of this.store.getQueue()) {
-      // Fire any due reels that haven't been fired yet
+      // Fire the next due reel that hasn't been fired yet (one per tick)
       if (!item.fired) {
-        if (new Date(item.scheduledAt).getTime() > now) continue;
+        if (firedThisTick || new Date(item.scheduledAt).getTime() > now) continue;
         const jobId = this.telegram.runPresetReel(
           item.url,
           this.profile.watch.adminChatId,
@@ -231,6 +235,7 @@ export class ChannelWatcher {
           item.channel,
         );
         this.store.markFired(item.shortcode, jobId); // mark before any await — never double-fire
+        firedThisTick = true;
         pipelineLogger.info(
           `[${this.profile.brandName}] Auto-publishing queued reel @${item.channel}/${item.shortcode} (jobId: ${jobId})`,
           "ChannelWatcher",
