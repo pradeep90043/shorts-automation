@@ -109,18 +109,40 @@ def parse_netscape_cookies(path: str) -> dict:
     return cookies
 
 
+def load_cookies_from_env() -> dict:
+    """
+    Read sessionid (and optional csrftoken) from environment variables.
+    Set INSTAGRAM_SESSION_ID in .env — lasts ~90 days, no manual export needed.
+    """
+    session_id = os.environ.get("INSTAGRAM_SESSION_ID", "").strip()
+    if not session_id:
+        return {}
+    cookies: dict = {"sessionid": session_id}
+    csrf = os.environ.get("INSTAGRAM_CSRF_TOKEN", "").strip()
+    if csrf:
+        cookies["csrftoken"] = csrf
+    print("INFO: Using INSTAGRAM_SESSION_ID from environment.", file=sys.stderr)
+    return cookies
+
+
 def resolve_cookies(cookies_path: str | None) -> dict:
     """
-    Returns an authenticated cookies dict, trying:
-      1. Live browser cookies (Chrome → Firefox via browser-cookie3)
-      2. cookies.txt file passed as arg
+    Returns an authenticated cookies dict, trying in order:
+      1. INSTAGRAM_SESSION_ID env var  — set once in .env, lasts ~90 days
+      2. Live browser cookies           — Chrome/Firefox via browser-cookie3
+      3. cookies.txt file               — manual Netscape export fallback
     """
-    # 1. Browser (always fresh — preferred)
+    # 1. Env var (preferred — works everywhere, no browser needed)
+    env_cookies = load_cookies_from_env()
+    if env_cookies.get("sessionid"):
+        return env_cookies
+
+    # 2. Browser cookies (auto, no export needed when browser is logged in)
     browser_cookies = load_cookies_from_browser()
     if browser_cookies.get("sessionid"):
         return browser_cookies
 
-    # 2. cookies.txt fallback
+    # 3. cookies.txt fallback
     if cookies_path and os.path.isfile(cookies_path):
         file_cookies = parse_netscape_cookies(cookies_path)
         if file_cookies.get("sessionid"):
