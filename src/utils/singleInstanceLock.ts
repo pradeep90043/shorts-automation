@@ -60,12 +60,4 @@ export function acquireSingleInstanceLock(): void {
   // Best-effort cleanup on every exit path so a clean shutdown never leaves
   // a stale lock behind.
   process.on("exit", releaseLock);
-  process.on("SIGINT", () => {
-    releaseLock();
-    process.exit(0);
-  });
-  process.on("SIGTERM", () => {
-    releaseLock();
-    process.exit(0);
-  });
 }

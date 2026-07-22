@@ -3,8 +3,6 @@ import path from "path";
 import { config } from "../config";
 import { pipelineLogger } from "./logger";
 
-const MAX_PROCESSED_SHORTCODES = 1000;
-
 export interface QueuedReel {
   shortcode: string;
   url: string;
@@ -26,28 +24,29 @@ export interface QueuedReel {
 }
 
 interface WatchState {
-  processedShortcodes: string[]; // ring buffer, newest appended at the end
-  queue: QueuedReel[]; // current/most-recent daily batch
-  lastBatchDate: string; // "YYYY-MM-DD" (local) — guards against picking twice in one day
+  // Legacy field — still read on first load so migrate() can import it into
+  // ReelHistoryStore, then dropped from subsequent saves.
+  processedShortcodes?: string[];
+  queue: QueuedReel[];
+  lastBatchDate: string;
 }
 
 const EMPTY_STATE: WatchState = {
-  processedShortcodes: [],
   queue: [],
   lastBatchDate: "",
 };
 
 /**
- * Persists which Instagram reels the channel-watch automation has already
- * picked (so it never republishes the same reel) and the current day's
- * staggered publish queue (so a server restart mid-day resumes correctly).
- * Follows the same atomic-write pattern as JobDatabase (src/utils/db.ts):
- * unique per-write temp filename + rename, to avoid the JSON corruption this
- * project previously hit from concurrent writers sharing one temp path.
+ * Persists the current day's staggered publish queue and the last-batch-date
+ * guard so a server restart mid-day resumes from exactly where it left off.
+ *
+ * Permanent published-reel history (which reels have ever been picked) is now
+ * stored in ReelHistoryStore (reel_history.json) — a separate, unbounded file
+ * that survives deployments and watch_state resets without losing history.
  */
 export class WatchStore {
   private filePath: string;
-  private state: WatchState = { ...EMPTY_STATE, processedShortcodes: [], queue: [] };
+  private state: WatchState = { ...EMPTY_STATE, queue: [] };
 
   constructor(dbKey?: string) {
     const logDir = config.paths.logDir || path.resolve(__dirname, "../../logs");
@@ -72,33 +71,36 @@ export class WatchStore {
         `Failed to parse watch state file: ${err instanceof Error ? err.message : err}. Reinitializing.`,
         "WatchStore",
       );
-      this.state = { processedShortcodes: [], queue: [], lastBatchDate: "" };
+      this.state = { queue: [], lastBatchDate: "" };
     }
   }
 
   private save(): void {
     try {
+      // Omit the legacy processedShortcodes from the saved file — they now
+      // live in ReelHistoryStore.  Once written, watch_state.json contains
+      // only queue + lastBatchDate.
+      const { processedShortcodes: _, ...rest } = this.state;
       const tempPath = `${this.filePath}.${process.pid}.${Date.now()}.tmp`;
-      fs.writeFileSync(tempPath, JSON.stringify(this.state, null, 2), "utf8");
+      fs.writeFileSync(tempPath, JSON.stringify(rest, null, 2), "utf8");
       fs.renameSync(tempPath, this.filePath);
     } catch (err) {
       pipelineLogger.error("Failed to write watch state file", err, "WatchStore");
     }
   }
 
-  public hasProcessed(shortcode: string): boolean {
-    return this.state.processedShortcodes.includes(shortcode);
-  }
-
-  public markProcessed(shortcode: string): void {
-    if (this.state.processedShortcodes.includes(shortcode)) return;
-    this.state.processedShortcodes.push(shortcode);
-    if (this.state.processedShortcodes.length > MAX_PROCESSED_SHORTCODES) {
-      this.state.processedShortcodes = this.state.processedShortcodes.slice(
-        -MAX_PROCESSED_SHORTCODES,
-      );
+  /**
+   * Returns the legacy processedShortcodes array loaded from an old-format
+   * watch_state.json so ChannelWatcher can migrate them into ReelHistoryStore.
+   * Returns [] if the file was already in the new format (no processedShortcodes).
+   */
+  public drainLegacyShortcodes(): string[] {
+    const codes = this.state.processedShortcodes ?? [];
+    if (codes.length > 0) {
+      // Remove from state so subsequent saves omit it cleanly.
+      delete this.state.processedShortcodes;
     }
-    this.save();
+    return codes;
   }
 
   public getQueue(): QueuedReel[] {
@@ -119,10 +121,6 @@ export class WatchStore {
     this.save();
   }
 
-  /**
-   * Called when the pipeline job for a queued reel completes successfully.
-   * Sets published=true and stores the platform URLs.
-   */
   public markPublished(
     shortcode: string,
     youtubeUrl?: string,
@@ -139,9 +137,6 @@ export class WatchStore {
     this.save();
   }
 
-  /**
-   * Called when the pipeline job for a queued reel fails.
-   */
   public markFailed(shortcode: string, reason?: string): void {
     const entry = this.state.queue.find((q) => q.shortcode === shortcode);
     if (entry) {
