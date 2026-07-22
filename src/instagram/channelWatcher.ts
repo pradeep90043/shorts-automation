@@ -98,16 +98,21 @@ export class ChannelWatcher {
 
   private checkAndRunMissedBatch(): void {
     const today = new Date().toISOString().slice(0, 10);
-    if (this.store.getLastBatchDate() === today) {
-      return; // already ran today
+    const batchRanToday = this.store.getLastBatchDate() === today;
+    const queueIsEmpty = this.store.getQueue().length === 0;
+
+    // Skip only if batch ran today AND queue has reels — an empty queue means
+    // the previous run fetched nothing (e.g. Instagram 429) and we should retry.
+    if (batchRanToday && !queueIsEmpty) {
+      return;
     }
 
     if (Date.now() >= this.todayScheduleUtcMs()) {
       pipelineLogger.info(
-        `[${this.profile.brandName}] Startup is after scheduled IST time (${this.profile.watch.scheduleTime} IST) and no batch ran today. Triggering missed daily batch selection...`,
+        `[${this.profile.brandName}] Startup is after scheduled IST time (${this.profile.watch.scheduleTime} IST) — ${batchRanToday ? "queue is empty, retrying batch" : "no batch ran today"}. Triggering batch selection...`,
         "ChannelWatcher",
       );
-      this.runDailyBatch().catch((err) => {
+      this.runDailyBatch(batchRanToday).catch((err) => {
         pipelineLogger.error(
           `[${this.profile.brandName}] Missed daily batch execution failed`,
           err,
