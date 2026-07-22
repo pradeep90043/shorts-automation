@@ -1,4 +1,4 @@
-import { getDb } from "./mongoClient";
+import { getPool } from "./pgClient";
 import { pipelineLogger } from "./logger";
 
 export interface QueuedReel {
@@ -15,40 +15,38 @@ export interface QueuedReel {
   failedReason?: string;
 }
 
-interface WatchStateDoc {
-  profileKey: string;
-  // Legacy field — still read on first load so migrate() can import it into
-  // ReelHistoryStore, then dropped from subsequent saves.
-  processedShortcodes?: string[];
+interface WatchStateRow {
+  profile_key: string;
   queue: QueuedReel[];
-  lastBatchDate: string;
+  last_batch_date: string;
 }
-
-const COLLECTION = "watch_state";
 
 /**
  * Persists the current day's staggered publish queue and the last-batch-date
- * guard to MongoDB so a server restart mid-day resumes exactly where it left off.
+ * guard to Supabase (PostgreSQL) so a server restart mid-day resumes exactly
+ * where it left off.
  *
  * Reads are served from in-memory state (fast, sync) populated once at startup
- * via load(). All writes persist immediately to MongoDB Atlas.
+ * via load(). All writes persist immediately to Supabase.
  */
 export class WatchStore {
   private profileKey: string;
-  private state: WatchStateDoc;
+  private queue: QueuedReel[] = [];
+  private lastBatchDate = "";
 
   constructor(dbKey?: string) {
     this.profileKey = dbKey ?? "default";
-    this.state = { profileKey: this.profileKey, queue: [], lastBatchDate: "" };
   }
 
   public async load(): Promise<void> {
-    const db = await getDb();
-    const doc = await db
-      .collection<WatchStateDoc>(COLLECTION)
-      .findOne({ profileKey: this.profileKey });
-    if (doc) {
-      this.state = doc as WatchStateDoc;
+    const pool = await getPool();
+    const { rows } = await pool.query<WatchStateRow>(
+      `SELECT queue, last_batch_date FROM watch_state WHERE profile_key = $1`,
+      [this.profileKey],
+    );
+    if (rows.length > 0) {
+      this.queue = rows[0].queue ?? [];
+      this.lastBatchDate = rows[0].last_batch_date ?? "";
     } else {
       await this.save();
     }
@@ -56,42 +54,36 @@ export class WatchStore {
 
   private async save(): Promise<void> {
     try {
-      const db = await getDb();
-      const { processedShortcodes: _, ...rest } = this.state;
-      await db.collection<WatchStateDoc>(COLLECTION).updateOne(
-        { profileKey: this.profileKey },
-        { $set: rest },
-        { upsert: true },
+      const pool = await getPool();
+      await pool.query(
+        `INSERT INTO watch_state (profile_key, queue, last_batch_date)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (profile_key) DO UPDATE
+           SET queue = EXCLUDED.queue,
+               last_batch_date = EXCLUDED.last_batch_date`,
+        [this.profileKey, JSON.stringify(this.queue), this.lastBatchDate],
       );
     } catch (err) {
-      pipelineLogger.error("Failed to write watch state to MongoDB", err, "WatchStore");
+      pipelineLogger.error("Failed to write watch state to Supabase", err, "WatchStore");
     }
   }
 
-  /**
-   * Returns the legacy processedShortcodes array loaded from an old-format
-   * document so ChannelWatcher can migrate them into ReelHistoryStore.
-   * Returns [] if already in the new format.
-   */
+  /** Legacy migration support — no-op since old JSON files are no longer used. */
   public drainLegacyShortcodes(): string[] {
-    const codes = this.state.processedShortcodes ?? [];
-    if (codes.length > 0) {
-      delete this.state.processedShortcodes;
-    }
-    return codes;
+    return [];
   }
 
   public getQueue(): QueuedReel[] {
-    return this.state.queue;
+    return this.queue;
   }
 
   public async setQueue(queue: QueuedReel[]): Promise<void> {
-    this.state.queue = queue;
+    this.queue = queue;
     await this.save();
   }
 
   public async markFired(shortcode: string, jobId?: string): Promise<void> {
-    const entry = this.state.queue.find((q) => q.shortcode === shortcode);
+    const entry = this.queue.find((q) => q.shortcode === shortcode);
     if (entry) {
       entry.fired = true;
       if (jobId) entry.jobId = jobId;
@@ -104,7 +96,7 @@ export class WatchStore {
     youtubeUrl?: string,
     instagramUrl?: string,
   ): Promise<void> {
-    const entry = this.state.queue.find((q) => q.shortcode === shortcode);
+    const entry = this.queue.find((q) => q.shortcode === shortcode);
     if (entry) {
       entry.published = true;
       entry.failed = false;
@@ -116,7 +108,7 @@ export class WatchStore {
   }
 
   public async markFailed(shortcode: string, reason?: string): Promise<void> {
-    const entry = this.state.queue.find((q) => q.shortcode === shortcode);
+    const entry = this.queue.find((q) => q.shortcode === shortcode);
     if (entry) {
       entry.failed = true;
       entry.published = false;
@@ -126,11 +118,11 @@ export class WatchStore {
   }
 
   public getLastBatchDate(): string {
-    return this.state.lastBatchDate;
+    return this.lastBatchDate;
   }
 
   public async setLastBatchDate(date: string): Promise<void> {
-    this.state.lastBatchDate = date;
+    this.lastBatchDate = date;
     await this.save();
   }
 }

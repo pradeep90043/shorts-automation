@@ -6,7 +6,7 @@ import { ensureAssetsExist } from "./utils/assets";
 import { cleanupOldMedia } from "./utils/cleanup";
 import { pipelineLogger } from "./utils/logger";
 import { acquireSingleInstanceLock } from "./utils/singleInstanceLock";
-import { closeDb } from "./utils/mongoClient";
+import { initSchema, closePg } from "./utils/pgClient";
 
 async function bootstrap() {
   pipelineLogger.info(
@@ -20,6 +20,9 @@ async function bootstrap() {
 
   // 1. Validate environment configuration
   validateConfig();
+
+  // 1b. Connect to Supabase and ensure tables exist
+  await initSchema();
 
   // 2. Ensure branding and default audio assets are present
   try {
@@ -134,7 +137,7 @@ async function bootstrap() {
       }
     }
 
-    await closeDb();
+    await closePg();
     pipelineLogger.info("All services stopped. Exiting process.", "Bootstrap");
     process.exit(0);
   };
