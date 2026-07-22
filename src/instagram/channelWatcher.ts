@@ -27,18 +27,21 @@ export class ChannelWatcher {
     this.store = new WatchStore(dbKey);
     this.history = new ReelHistoryStore(dbKey);
     this.db = new JobDatabase(dbKey);
-
-    // One-time migration: import legacy processedShortcodes from watch_state.json
-    // into the new permanent ReelHistoryStore, then drop them from watch_state.
-    const legacy = this.store.drainLegacyShortcodes();
-    if (legacy.length > 0) this.history.migrate(legacy);
   }
 
-  public start(): void {
+  public async start(): Promise<void> {
     const { channels, adminChatId } = this.profile.watch;
     if (channels.length === 0 || !adminChatId) {
       return; // feature not configured for this profile
     }
+
+    // Load persisted state from MongoDB before doing anything else
+    await this.store.load();
+    await this.history.load();
+
+    // One-time migration: import legacy processedShortcodes into ReelHistoryStore
+    const legacy = this.store.drainLegacyShortcodes();
+    if (legacy.length > 0) await this.history.migrate(legacy);
 
     // Run missed batch selection immediately on startup if we are past the scheduled time
     // and no batch has run today yet (helps recover from restarts, redeployments, or crashes)
@@ -202,11 +205,9 @@ export class ChannelWatcher {
     }));
 
     // Reserve immediately so a crash/retry can never re-pick the same reel.
-    // Written to the permanent ReelHistoryStore (survives deployments) so that
-    // even a fresh watch_state.json cannot cause the same reel to be re-picked.
-    picked.forEach((p) => this.history.add(p.shortcode, p.channel));
-    this.store.setQueue(queue);
-    this.store.setLastBatchDate(today);
+    await Promise.all(picked.map((p) => this.history.add(p.shortcode, p.channel)));
+    await this.store.setQueue(queue);
+    await this.store.setLastBatchDate(today);
 
     const channelCount = new Set(picked.map((p) => p.channel)).size;
     pipelineLogger.info(
@@ -234,7 +235,7 @@ export class ChannelWatcher {
           undefined,
           item.channel,
         );
-        this.store.markFired(item.shortcode, jobId); // mark before any await — never double-fire
+        await this.store.markFired(item.shortcode, jobId); // persist before anything else — never double-fire
         firedThisTick = true;
         pipelineLogger.info(
           `[${this.profile.brandName}] Auto-publishing queued reel @${item.channel}/${item.shortcode} (jobId: ${jobId})`,
@@ -249,15 +250,15 @@ export class ChannelWatcher {
         if (!job) continue; // job record not yet created
 
         if (job.status === "completed") {
-          this.store.markPublished(item.shortcode, job.youtubeUrl, job.instagramUrl);
-          this.history.markPublished(item.shortcode, job.youtubeUrl, job.instagramUrl);
+          await this.store.markPublished(item.shortcode, job.youtubeUrl, job.instagramUrl);
+          await this.history.markPublished(item.shortcode, job.youtubeUrl, job.instagramUrl);
           pipelineLogger.info(
             `[${this.profile.brandName}] Reel @${item.channel}/${item.shortcode} marked published — YT: ${job.youtubeUrl || "N/A"} IG: ${job.instagramUrl || "N/A"}`,
             "ChannelWatcher",
           );
         } else if (job.status === "failed") {
-          this.store.markFailed(item.shortcode, job.error || "Pipeline failed");
-          this.history.markFailed(item.shortcode, job.error || "Pipeline failed");
+          await this.store.markFailed(item.shortcode, job.error || "Pipeline failed");
+          await this.history.markFailed(item.shortcode, job.error || "Pipeline failed");
           pipelineLogger.warn(
             `[${this.profile.brandName}] Reel @${item.channel}/${item.shortcode} marked failed — ${job.error}`,
             "ChannelWatcher",

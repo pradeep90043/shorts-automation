@@ -1,7 +1,4 @@
-import fs from "fs";
-import os from "os";
-import path from "path";
-import { config } from "../config";
+import { getDb } from "./mongoClient";
 import { pipelineLogger } from "./logger";
 
 export interface ReelRecord {
@@ -14,62 +11,43 @@ export interface ReelRecord {
   failedReason?: string;
 }
 
+interface ReelDoc extends ReelRecord {
+  shortcode: string;
+  profileKey: string;
+}
+
+const COLLECTION = "reel_history";
+
 /**
  * Permanent, append-only store for every reel the channel-watcher has ever
- * picked.  Lives in a separate file from the daily queue state so it survives
- * server restarts, fresh deployments, and watch_state resets without losing
- * the record of what has already been published.
+ * picked. Backed by MongoDB Atlas so history survives across any number of
+ * server restarts, fresh clones, or re-deployments.
  *
- * Unlike the old processedShortcodes ring buffer (capped at 1000), this store
- * grows without bound and tracks full publish / fail metadata per reel.
+ * Reads are served from an in-memory Map (fast, sync) populated once at
+ * startup via load(). All writes persist immediately to MongoDB.
  */
 export class ReelHistoryStore {
-  private filePath: string;
+  private profileKey: string;
   private records = new Map<string, ReelRecord>();
 
   constructor(dbKey?: string) {
-    const dataDir = config.paths.dataDir || path.join(os.homedir(), ".shorts-automation");
-    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-    this.filePath = path.join(
-      dataDir,
-      dbKey ? `reel_history_${dbKey}.json` : "reel_history.json",
+    this.profileKey = dbKey ?? "default";
+  }
+
+  public async load(): Promise<void> {
+    const db = await getDb();
+    const docs = await db
+      .collection<ReelDoc>(COLLECTION)
+      .find({ profileKey: this.profileKey })
+      .toArray();
+    for (const doc of docs) {
+      const { shortcode, profileKey: _pk, ...record } = doc as ReelDoc & { _id: unknown };
+      this.records.set(shortcode, record as ReelRecord);
+    }
+    pipelineLogger.info(
+      `Loaded ${this.records.size} reel history record(s) [${this.profileKey}]`,
+      "ReelHistoryStore",
     );
-    this.load();
-  }
-
-  private load(): void {
-    try {
-      if (fs.existsSync(this.filePath)) {
-        const raw = fs.readFileSync(this.filePath, "utf8");
-        const parsed = JSON.parse(raw) as Record<string, ReelRecord>;
-        for (const [shortcode, record] of Object.entries(parsed)) {
-          this.records.set(shortcode, record);
-        }
-        pipelineLogger.info(
-          `Loaded ${this.records.size} reel history record(s)`,
-          "ReelHistoryStore",
-        );
-      } else {
-        this.save();
-      }
-    } catch (err) {
-      pipelineLogger.warn(
-        `Failed to parse reel history file: ${err instanceof Error ? err.message : err}. Reinitializing.`,
-        "ReelHistoryStore",
-      );
-    }
-  }
-
-  private save(): void {
-    try {
-      const obj: Record<string, ReelRecord> = {};
-      for (const [k, v] of this.records.entries()) obj[k] = v;
-      const tempPath = `${this.filePath}.${process.pid}.${Date.now()}.tmp`;
-      fs.writeFileSync(tempPath, JSON.stringify(obj, null, 2), "utf8");
-      fs.renameSync(tempPath, this.filePath);
-    } catch (err) {
-      pipelineLogger.error("Failed to write reel history file", err, "ReelHistoryStore");
-    }
   }
 
   /** True if this shortcode has ever been picked (regardless of publish outcome). */
@@ -78,20 +56,23 @@ export class ReelHistoryStore {
   }
 
   /** Record a newly-picked reel before it enters the publish queue. */
-  public add(shortcode: string, channel: string): void {
+  public async add(shortcode: string, channel: string): Promise<void> {
     if (this.records.has(shortcode)) return;
-    this.records.set(shortcode, {
-      channel,
-      pickedAt: new Date().toISOString(),
-    });
-    this.save();
+    const record: ReelRecord = { channel, pickedAt: new Date().toISOString() };
+    this.records.set(shortcode, record);
+    const db = await getDb();
+    await db.collection<ReelDoc>(COLLECTION).updateOne(
+      { shortcode, profileKey: this.profileKey },
+      { $setOnInsert: { shortcode, profileKey: this.profileKey, ...record } },
+      { upsert: true },
+    );
   }
 
-  public markPublished(
+  public async markPublished(
     shortcode: string,
     youtubeUrl?: string,
     instagramUrl?: string,
-  ): void {
+  ): Promise<void> {
     const rec = this.records.get(shortcode);
     if (!rec) return;
     rec.publishedAt = new Date().toISOString();
@@ -99,15 +80,23 @@ export class ReelHistoryStore {
     rec.failedReason = undefined;
     if (youtubeUrl) rec.youtubeUrl = youtubeUrl;
     if (instagramUrl) rec.instagramUrl = instagramUrl;
-    this.save();
+    const db = await getDb();
+    await db.collection<ReelDoc>(COLLECTION).updateOne(
+      { shortcode, profileKey: this.profileKey },
+      { $set: { publishedAt: rec.publishedAt, failed: false, failedReason: undefined, youtubeUrl, instagramUrl } },
+    );
   }
 
-  public markFailed(shortcode: string, reason?: string): void {
+  public async markFailed(shortcode: string, reason?: string): Promise<void> {
     const rec = this.records.get(shortcode);
     if (!rec) return;
     rec.failed = true;
     rec.failedReason = reason;
-    this.save();
+    const db = await getDb();
+    await db.collection<ReelDoc>(COLLECTION).updateOne(
+      { shortcode, profileKey: this.profileKey },
+      { $set: { failed: true, failedReason: reason ?? "Unknown error" } },
+    );
   }
 
   public size(): number {
@@ -115,25 +104,27 @@ export class ReelHistoryStore {
   }
 
   /**
-   * One-time migration: import legacy processedShortcodes from the old
-   * watch_state.json (array of strings, no metadata).  Safe to call on every
+   * One-time migration: import legacy processedShortcodes from old
+   * watch_state.json (array of strings, no metadata). Safe to call every
    * startup — entries that already exist are skipped.
    */
-  public migrate(shortcodes: string[]): void {
+  public async migrate(shortcodes: string[]): Promise<void> {
+    const db = await getDb();
     let added = 0;
     for (const s of shortcodes) {
-      if (!this.records.has(s)) {
-        this.records.set(s, {
-          channel: "unknown",
-          pickedAt: new Date(0).toISOString(),
-        });
-        added++;
-      }
+      if (this.records.has(s)) continue;
+      const record: ReelRecord = { channel: "unknown", pickedAt: new Date(0).toISOString() };
+      this.records.set(s, record);
+      await db.collection<ReelDoc>(COLLECTION).updateOne(
+        { shortcode: s, profileKey: this.profileKey },
+        { $setOnInsert: { shortcode: s, profileKey: this.profileKey, ...record } },
+        { upsert: true },
+      );
+      added++;
     }
     if (added > 0) {
-      this.save();
       pipelineLogger.info(
-        `Migrated ${added} legacy shortcode(s) into reel history`,
+        `Migrated ${added} legacy shortcode(s) into reel history [${this.profileKey}]`,
         "ReelHistoryStore",
       );
     }
