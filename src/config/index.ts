@@ -36,6 +36,11 @@ export interface WatchConfig {
   scheduleTime: string; // "HH:MM" 24h, local time — when the daily batch is selected
   gapHours: number; // spacing between each of the day's picks being published
   adminChatId: number; // Telegram chat that receives the auto-published results; 0 = feature disabled
+  // Niche + viral search (optional — defaults to 'channels' mode for backward compatibility)
+  searchMode: "channels" | "hashtags" | "both"; // default: 'channels'
+  nicheHashtags?: string[]; // override auto-generated hashtags from niche/mood mapping
+  moodFilter?: string[]; // preferred moods as a hint to the AI metadata prompt
+  viralThreshold: number; // 0-100 minimum viral score to include (default: 50, fail-open)
 }
 
 // A full brand/channel profile: one Telegram bot + its own YouTube/Instagram credentials.
@@ -242,12 +247,36 @@ function loadWatchConfig(prefix?: string): WatchConfig {
         .filter(Boolean),
     ),
   ];
+  const searchModeRaw = (env("WATCH_SEARCH_MODE") || "channels").toLowerCase();
+  const searchMode = (["channels", "hashtags", "both"].includes(searchModeRaw)
+    ? searchModeRaw
+    : "channels") as WatchConfig["searchMode"];
+
+  const nicheHashtagsRaw = env("WATCH_NICHE_HASHTAGS") || "";
+  const nicheHashtags = nicheHashtagsRaw
+    ? nicheHashtagsRaw.split(",").map((t) => t.trim().replace(/^#/, "")).filter(Boolean)
+    : undefined;
+
+  const moodFilterRaw = env("WATCH_MOOD_FILTER") || "";
+  const moodFilter = moodFilterRaw
+    ? moodFilterRaw.split(",").map((m) => m.trim().toLowerCase()).filter(Boolean)
+    : undefined;
+
+  const viralThreshold = Math.min(
+    100,
+    Math.max(0, parseInt(env("WATCH_VIRAL_THRESHOLD") || "50", 10)),
+  );
+
   return {
     channels,
     dailyCount: parseInt(env("WATCH_DAILY_COUNT") || "5", 10),
     scheduleTime: env("WATCH_SCHEDULE_TIME") || "09:00",
     gapHours: parseFloat(env("WATCH_GAP_HOURS") || "2"),
     adminChatId: parseInt(env("WATCH_ADMIN_CHAT_ID") || "0", 10),
+    searchMode,
+    nicheHashtags,
+    moodFilter,
+    viralThreshold,
   };
 }
 
