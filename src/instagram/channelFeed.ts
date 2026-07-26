@@ -9,6 +9,21 @@ export interface ChannelReelSummary {
   url: string;
 }
 
+export interface ScoredReelSummary extends ChannelReelSummary {
+  playCount: number;
+  likeCount: number;
+  commentCount: number;
+  creatorUsername?: string;
+  sourceHashtag: string;
+}
+
+export class InstagramRateLimitError extends Error {
+  constructor(context: string) {
+    super(`Instagram rate limited (${context})`);
+    this.name = "InstagramRateLimitError";
+  }
+}
+
 const PYTHON3  = config.binaries.python3;
 const FETCH_SCRIPT = path.resolve(__dirname, "../../scripts/fetch_reels.py");
 
@@ -75,6 +90,108 @@ export async function listChannelReels(
 
         pipelineLogger.info(
           `Listed ${results.length} reel(s) from @${username}`,
+          "ChannelFeed",
+        );
+        resolve(results);
+      },
+    );
+  });
+}
+
+/**
+ * Fetch top reels for multiple hashtags in a SINGLE Python process invocation.
+ * All hashtags are passed as --tags a,b,c so instagrapi logs in once, fetches
+ * all tags with polite inter-tag delays, then exits — no repeated re-logins.
+ * Throws InstagramRateLimitError when the script exits with code 2 / RATE_LIMITED.
+ */
+export async function searchAllHashtagReels(
+  hashtags: string[],
+  limitPerTag = 20,
+): Promise<ScoredReelSummary[]> {
+  const tags = hashtags.map((t) => t.replace(/^#/, "")).filter(Boolean);
+  if (tags.length === 0) return [];
+
+  pipelineLogger.info(
+    `[ChannelFeed] Searching ${tags.length} hashtag(s) in one call: #${tags.join(", #")}`,
+    "ChannelFeed",
+  );
+
+  // Generous timeout: one login + N tags × ~5s delay + fetch time
+  const timeoutMs = 30000 + tags.length * 8000;
+
+  return new Promise((resolve, reject) => {
+    const args = [
+      FETCH_SCRIPT,
+      "--mode", "hashtag",
+      "--tags", tags.join(","),
+      "--limit", String(limitPerTag),
+    ];
+
+    execFile(
+      PYTHON3,
+      args,
+      { timeout: timeoutMs, maxBuffer: 10 * 1024 * 1024 },
+      (err, stdout, stderr) => {
+        const stderrTrimmed = stderr.trim();
+        if (stderrTrimmed) {
+          // Log all stderr lines (INFO/WARN from Python) as one log entry
+          const lines = stderrTrimmed.split("\n");
+          for (const line of lines) {
+            if (line.startsWith("RATE_LIMITED")) {
+              return reject(new InstagramRateLimitError(tags.join(",")));
+            }
+            if (line.startsWith("WARN") || line.startsWith("ERROR")) {
+              pipelineLogger.warn(`[ChannelFeed] ${line}`, "ChannelFeed");
+            }
+          }
+        }
+
+        if (err && (err as NodeJS.ErrnoException).code === 2) {
+          return reject(new InstagramRateLimitError(tags.join(",")));
+        }
+
+        if (err && !stdout.trim()) {
+          pipelineLogger.warn(
+            `[ChannelFeed] fetch_reels.py hashtag failed: ${err.message.split("\n")[0]}`,
+            "ChannelFeed",
+          );
+          return resolve([]);
+        }
+
+        const results: ScoredReelSummary[] = [];
+        const seen = new Set<string>();
+
+        for (const line of stdout.split("\n")) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          try {
+            const entry = JSON.parse(trimmed) as {
+              shortcode: string;
+              url?: string;
+              like_count?: number;
+              play_count?: number;
+              comment_count?: number;
+              owner_username?: string;
+              source_hashtag?: string;
+            };
+            if (!entry.shortcode || seen.has(entry.shortcode)) continue;
+            seen.add(entry.shortcode);
+            results.push({
+              shortcode: entry.shortcode,
+              url: `https://www.instagram.com/reel/${entry.shortcode}/`,
+              playCount: entry.play_count || 0,
+              likeCount: entry.like_count || 0,
+              commentCount: entry.comment_count || 0,
+              creatorUsername: entry.owner_username || undefined,
+              sourceHashtag: entry.source_hashtag || tags[0],
+            });
+          } catch {
+            // skip non-JSON lines
+          }
+        }
+
+        pipelineLogger.info(
+          `[ChannelFeed] Found ${results.length} reel(s) across ${tags.length} hashtag(s)`,
           "ChannelFeed",
         );
         resolve(results);
