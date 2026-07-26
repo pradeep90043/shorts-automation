@@ -19,7 +19,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     wget \
     python3 \
+    python3-pip \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+RUN pip3 install --break-system-packages instagrapi
 
 # Install yt-dlp
 RUN wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp && \

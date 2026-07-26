@@ -19,8 +19,9 @@ dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 const CLIENT_ID     = process.env.YOUTUBE_CLIENT_ID     || '';
 const CLIENT_SECRET = process.env.YOUTUBE_CLIENT_SECRET || '';
-const REDIRECT_URI  = 'http://localhost:3000/oauth2callback';
 const CHANNEL_NUM   = process.argv[2] || '1';
+const PORT          = parseInt(process.argv[3] || '3001', 10);
+const REDIRECT_URI  = `http://localhost:${PORT}/oauth2callback`;
 
 if (!CLIENT_ID || !CLIENT_SECRET) {
   console.error('\n❌  YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET must be set in .env\n');
@@ -45,7 +46,7 @@ console.log('\n1. Make sure you are logged into the correct YouTube channel in y
 console.log('   (Use an incognito window if needed to pick the right account.)\n');
 console.log('2. Open this URL:\n');
 console.log(`   ${authUrl}\n`);
-console.log('3. Grant access — the page will redirect to localhost:3000.');
+console.log(`3. Grant access — the page will redirect to localhost:${PORT}.`);
 console.log('   This script will capture the code automatically.\n');
 
 // Local server to catch the OAuth callback
@@ -84,6 +85,6 @@ const server = http.createServer(async (req, res) => {
   process.exit(0);
 });
 
-server.listen(3000, () => {
-  console.log('Waiting for OAuth callback on http://localhost:3000 …\n');
+server.listen(PORT, () => {
+  console.log(`Waiting for OAuth callback on http://localhost:${PORT} …\n`);
 });

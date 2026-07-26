@@ -740,6 +740,14 @@ async function downloadViaPuppeteer(
       .catch(() => {});
     const embedFrame = await page.$(embedFrameSelector);
 
+    // Before screenshotting, check if Instagram is showing a broken-link error page.
+    // If the post was deleted or the URL is invalid, abort now rather than processing
+    // a screenshot of an error message into a published video.
+    const pageText = await page.evaluate('document.body ? document.body.innerText : ""').catch(() => "") as string;
+    if (/link to this (photo|video) may be broken|post may have been removed|page isn't available/i.test(pageText)) {
+      throw new Error("Instagram post unavailable: the link is broken or the post was removed");
+    }
+
     if (embedFrame) {
       pipelineLogger.info(
         "Cropping to .EmbedFrame element directly in Puppeteer",

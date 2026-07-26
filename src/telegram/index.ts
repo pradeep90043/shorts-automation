@@ -50,6 +50,7 @@ export class TelegramService implements ITelegramService {
   private settingsReviewCallback?: (code: string, id: string) => void;
   private watcher?: {
     runDailyBatch: (force?: boolean) => Promise<any[]>;
+    forceStart: () => Promise<void>;
     getStatusDetails?: () => any;
   };
 
@@ -121,6 +122,7 @@ export class TelegramService implements ITelegramService {
 
   public registerWatcher(watcher: {
     runDailyBatch: (force?: boolean) => Promise<any[]>;
+    forceStart: () => Promise<void>;
     getStatusDetails?: () => any;
   }): void {
     this.watcher = watcher;
@@ -702,22 +704,27 @@ export class TelegramService implements ITelegramService {
         await ctx.reply("❌ Channel watch is not configured for this bot.");
         return;
       }
-      await ctx.reply("🔍 Running channel-watch batch selection now...");
+      await ctx.reply("🔄 Force-starting scheduler: clearing rate limits, rebuilding batch, and triggering first fetch now...");
       try {
-        const queue = await this.watcher.runDailyBatch(true);
-        if (queue.length === 0) {
-          await ctx.reply("No unprocessed reels found across the configured channels.");
+        await this.watcher.forceStart();
+        const details = this.watcher.getStatusDetails?.();
+        const slot = details?.currentSlot ?? 0;
+        const total = details?.channelSequence?.length ?? 0;
+        const queue: any[] = details?.queue ?? [];
+        const fired = queue.filter((q: any) => q.fired);
+        if (total === 0) {
+          await ctx.reply("⚠️ Batch prepared but no channel sequence was built — check WATCH_CHANNELS config.");
           return;
         }
-        const lines = queue
-          .map(
-            (q: any, i: number) =>
-              `${i + 1}. @${q.channel} (${q.shortcode}) → ${new Date(q.scheduledAt).toLocaleTimeString()}`,
-          )
-          .join("\n");
-        await ctx.reply(`✅ Queued ${queue.length} reel(s):\n${lines}`);
+        const lines = [
+          `✅ Scheduler force-started. Sequence: ${total} slot(s), currently on slot ${slot + 1}.`,
+          fired.length > 0
+            ? `🚀 First reel already firing: @${fired[0].channel}/${fired[0].shortcode}`
+            : "⏳ First reel fetch triggered — check logs for progress.",
+        ];
+        await ctx.reply(lines.join("\n"));
       } catch (err) {
-        await ctx.reply(`❌ Batch selection failed: ${err instanceof Error ? err.message : err}`);
+        await ctx.reply(`❌ Force-start failed: ${err instanceof Error ? err.message : err}`);
       }
     });
 
@@ -776,6 +783,7 @@ export class TelegramService implements ITelegramService {
               const urls: string[] = [];
               if (q.publishedYoutubeUrl) urls.push(`[YT](${q.publishedYoutubeUrl})`);
               if (q.publishedInstagramUrl) urls.push(`[IG](${q.publishedInstagramUrl})`);
+              if (q.publishedFacebookUrl) urls.push(`[FB](${q.publishedFacebookUrl})`);
               status = `✅ Published${urls.length ? ` — ${urls.join(" • ")}` : ""}`;
             } else if (q.fired) {
               // Fired = pipeline triggered but result not yet confirmed
@@ -1118,6 +1126,9 @@ export class TelegramService implements ITelegramService {
       fileId: reelUrl,
     };
 
+    const shortcodeMatch = reelUrl.match(/instagram\.com\/(?:[A-Za-z0-9_.]+\/)?(?:p|reel|tv)\/([A-Za-z0-9_-]+)/);
+    const shortcode = shortcodeMatch ? shortcodeMatch[1] : undefined;
+
     const context: PipelineContext = {
       id,
       tempDir: tempGenDir,
@@ -1131,6 +1142,8 @@ export class TelegramService implements ITelegramService {
       assetKind: AssetKind.Reel,
       captionMetadata: this.parseCaptionMetadata(sourceCaptionText),
       sourceCreatorUsername,
+      channel: sourceCreatorUsername,
+      shortcode,
     };
 
     if (presetSettings) {

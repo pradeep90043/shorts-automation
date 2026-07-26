@@ -92,7 +92,10 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+const parsedRedirect = url.parse(redirectUri);
+const port = parsedRedirect.port ? parseInt(parsedRedirect.port, 10) : 3000;
+
 // Port matches redirect URI
-server.listen(3000, () => {
-  console.log('Local callback server is listening on port 3000...\n');
+server.listen(port, () => {
+  console.log(`Local callback server is listening on port ${port}...\n`);
 });

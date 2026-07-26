@@ -19,6 +19,9 @@ export class ChannelWatcher {
   private store: WatchStore;
   private history: ReelHistoryStore;
   private db: JobDatabase;
+  private rateLimitedUntil: number | null = null;
+  private isForcedRun = false;
+  private static readonly RATE_LIMIT_COOLDOWN_MS = 30 * 60 * 1000; // 30 min
 
   constructor(
     private profile: ChannelProfile,
@@ -109,11 +112,10 @@ export class ChannelWatcher {
   private checkAndRunMissedBatch(): void {
     const today = new Date().toISOString().slice(0, 10);
     const batchRanToday = this.store.getLastBatchDate() === today;
-    const queueIsEmpty = this.store.getQueue().length === 0;
+    const sequenceReady = this.store.getChannelSequence().length > 0;
 
-    // Skip only if batch ran today AND queue has reels — an empty queue means
-    // the previous run fetched nothing (e.g. Instagram 429) and we should retry.
-    if (batchRanToday && !queueIsEmpty) {
+    // If batch ran today and a channel sequence is set, processQueue handles the rest.
+    if (batchRanToday && sequenceReady) {
       return;
     }
 
@@ -164,9 +166,11 @@ export class ChannelWatcher {
   }
 
   /**
-   * Selects and enqueues one day's batch. `force` bypasses the
-   * once-per-calendar-day guard — used by the manual /runwatchnow debug
-   * command to verify the flow without waiting for the scheduled time.
+   * Builds the day's channel sequence without calling Instagram at all.
+   * Reels are fetched lazily in processQueue, one channel at a time, so that
+   * Instagram API calls are spread across the day and never trigger 429s.
+   *
+   * `force` bypasses the once-per-calendar-day guard — used by /runwatchnow.
    */
   public async runDailyBatch(force = false): Promise<QueuedReel[]> {
     const today = new Date().toISOString().slice(0, 10);
@@ -299,57 +303,224 @@ export class ChannelWatcher {
         `spaced ${this.profile.watch.gapHours}h apart.`,
       "ChannelWatcher",
     );
-    return queue;
+    return [];
   }
 
   private async processQueue(): Promise<void> {
     const now = Date.now();
-    // Fire at most one due reel per tick so that overdue reels (e.g. after a
-    // recovery from downtime) publish one-by-one rather than all at once.
-    let firedThisTick = false;
+    const queue = this.store.getQueue();
+    const sequence = this.store.getChannelSequence();
 
-    for (const item of this.store.getQueue()) {
-      // Fire the next due reel that hasn't been fired yet (one per tick)
-      if (!item.fired) {
-        if (firedThisTick || new Date(item.scheduledAt).getTime() > now) continue;
+    // Step 1: poll any in-flight reel (fired but not yet resolved).
+    const inFlight = queue.find((item) => item.fired && !item.published && !item.failed && item.jobId);
+    if (inFlight) {
+      const job = this.db.getJob(inFlight.jobId!);
+      if (!job) return;
+
+      if (job.status === "completed") {
+        await this.store.markPublished(inFlight.shortcode, job.youtubeUrl, job.instagramUrl, job.facebookUrl);
+        await this.history.markPublished(
+          inFlight.shortcode,
+          job.youtubeUrl,
+          job.instagramUrl,
+          job.facebookUrl,
+          job.youtubeVideoId,
+          job.instagramMediaId,
+          job.facebookVideoId
+        );
+        pipelineLogger.info(
+          `[${this.profile.brandName}] Reel @${inFlight.channel}/${inFlight.shortcode} marked published — YT: ${job.youtubeUrl || "N/A"} IG: ${job.instagramUrl || "N/A"} FB: ${job.facebookUrl || "N/A"}`,
+          "ChannelWatcher",
+        );
+      } else if (job.status === "failed") {
+        await this.store.markFailed(inFlight.shortcode, job.error || "Pipeline failed");
+        await this.history.markFailed(inFlight.shortcode, job.error || "Pipeline failed");
+        pipelineLogger.warn(
+          `[${this.profile.brandName}] Reel @${inFlight.channel}/${inFlight.shortcode} marked failed — ${job.error}`,
+          "ChannelWatcher",
+        );
+      }
+      return; // never start the next fetch or run the next reel while one is in-flight
+    }
+
+    // Step 2: check if there is a pending, unfired reel in the queue whose scheduled time has arrived.
+    const readyToFire = queue.find((item) => !item.fired && now >= new Date(item.scheduledAt).getTime());
+    if (readyToFire) {
+      if (readyToFire.url) {
         const jobId = this.telegram.runPresetReel(
-          item.url,
+          readyToFire.url,
           this.profile.watch.adminChatId,
           0,
           undefined,
-          item.channel,
+          readyToFire.channel,
         );
-        await this.store.markFired(item.shortcode, jobId); // persist before anything else — never double-fire
-        firedThisTick = true;
+        await this.store.markFired(readyToFire.shortcode, jobId);
         pipelineLogger.info(
-          `[${this.profile.brandName}] Auto-publishing queued reel @${item.channel}/${item.shortcode} (jobId: ${jobId})`,
+          `[${this.profile.brandName}] Auto-publishing reel @${readyToFire.channel}/${readyToFire.shortcode} (jobId: ${jobId})`,
           "ChannelWatcher",
         );
-        continue;
+      } else {
+        // Placeholder/skipped item (e.g. from failed fetch)
+        await this.store.markFired(readyToFire.shortcode, "skipped-job");
+        await this.store.markFailed(readyToFire.shortcode, readyToFire.failedReason || "Skipped slot");
+        pipelineLogger.info(
+          `[${this.profile.brandName}] Bypassing skipped slot @${readyToFire.channel}/${readyToFire.shortcode}`,
+          "ChannelWatcher",
+        );
+      }
+      return;
+    }
+
+    // Step 3: Fetch the next channel's reels (Queue Ingestion Phase).
+    if (sequence.length > 0 && queue.length < sequence.length) {
+      // Instagram rate limit cooldown: don't hammer the API after a 429.
+      if (this.rateLimitedUntil !== null && now < this.rateLimitedUntil) {
+        const waitMin = Math.ceil((this.rateLimitedUntil - now) / 60000);
+        pipelineLogger.info(
+          `[${this.profile.brandName}] Instagram rate limited — retrying queue ingestion in ${waitMin}m`,
+          "ChannelWatcher",
+        );
+        return;
+      }
+      this.rateLimitedUntil = null;
+
+      // Check if we should fetch now (3-minute gap)
+      let canFetch = false;
+      if (queue.length === 0) {
+        // Start populating as soon as we reach the scheduled time
+        if (this.isForcedRun || now >= this.todayScheduleUtcMs()) {
+          canFetch = true;
+        }
+      } else {
+        const lastItem = queue[queue.length - 1];
+        const lastAddedAt = lastItem.addedAt ? new Date(lastItem.addedAt).getTime() : new Date(lastItem.scheduledAt).getTime();
+        if (now - lastAddedAt >= 3 * 60 * 1000) {
+          canFetch = true;
+        }
       }
 
-      // For fired reels that haven't been resolved yet, poll the JobDatabase
-      if (item.fired && !item.published && !item.failed && item.jobId) {
-        const job = this.db.getJob(item.jobId);
-        if (!job) continue; // job record not yet created
+      if (canFetch) {
+        const channel = sequence[queue.length];
+        pipelineLogger.info(
+          `[${this.profile.brandName}] Ingestion slot ${queue.length + 1}/${sequence.length}: fetching reels from @${channel}...`,
+          "ChannelWatcher",
+        );
 
-        if (job.status === "completed") {
-          await this.store.markPublished(item.shortcode, job.youtubeUrl, job.instagramUrl);
-          await this.history.markPublished(item.shortcode, job.youtubeUrl, job.instagramUrl);
-          pipelineLogger.info(
-            `[${this.profile.brandName}] Reel @${item.channel}/${item.shortcode} marked published — YT: ${job.youtubeUrl || "N/A"} IG: ${job.instagramUrl || "N/A"}`,
+        let reels: Awaited<ReturnType<typeof listChannelReels>>;
+        try {
+          reels = await listChannelReels(channel);
+        } catch (err) {
+          if (err instanceof InstagramRateLimitError) {
+            this.rateLimitedUntil = now + ChannelWatcher.RATE_LIMIT_COOLDOWN_MS;
+            pipelineLogger.warn(
+              `[${this.profile.brandName}] Instagram rate limited (429) — holding ingestion slot ${queue.length + 1} (@${channel}), retrying in 30 minutes`,
+              "ChannelWatcher",
+            );
+            return;
+          }
+          pipelineLogger.error(
+            `[${this.profile.brandName}] Failed to fetch reels from @${channel} during ingestion — skipping slot ${queue.length + 1}`,
+            err,
             "ChannelWatcher",
           );
-        } else if (job.status === "failed") {
-          await this.store.markFailed(item.shortcode, job.error || "Pipeline failed");
-          await this.history.markFailed(item.shortcode, job.error || "Pipeline failed");
+
+          const skippedAtStr = new Date(
+            queue.length === 0
+              ? (this.isForcedRun ? now : this.todayScheduleUtcMs())
+              : new Date(queue[queue.length - 1].scheduledAt).getTime() + this.profile.watch.gapHours * 60 * 60 * 1000
+          ).toISOString();
+
+          await this.store.setQueue([...queue, {
+            shortcode: `failed-fetch-${Date.now()}`,
+            url: "",
+            channel,
+            scheduledAt: skippedAtStr,
+            fired: true,
+            published: false,
+            failed: true,
+            failedReason: `Failed to fetch reels: ${err instanceof Error ? err.message : String(err)}`,
+            addedAt: new Date().toISOString()
+          }]);
+          await this.store.advanceSlot();
+          return;
+        }
+
+        const unseen = reels.filter((r) => !this.history.has(r.shortcode));
+        if (unseen.length === 0) {
           pipelineLogger.warn(
-            `[${this.profile.brandName}] Reel @${item.channel}/${item.shortcode} marked failed — ${job.error}`,
+            `[${this.profile.brandName}] No unseen reels from @${channel} during ingestion — skipping slot ${queue.length + 1}/${sequence.length}`,
             "ChannelWatcher",
           );
+
+          const skippedAtStr = new Date(
+            queue.length === 0
+              ? (this.isForcedRun ? now : this.todayScheduleUtcMs())
+              : new Date(queue[queue.length - 1].scheduledAt).getTime() + this.profile.watch.gapHours * 60 * 60 * 1000
+          ).toISOString();
+
+          await this.store.setQueue([...queue, {
+            shortcode: `no-unseen-${Date.now()}`,
+            url: "",
+            channel,
+            scheduledAt: skippedAtStr,
+            fired: true,
+            published: false,
+            failed: true,
+            failedReason: "No unseen reels found",
+            addedAt: new Date().toISOString()
+          }]);
+          await this.store.advanceSlot();
+          return;
+        }
+
+        const pick = unseen[Math.floor(Math.random() * unseen.length)];
+        const scheduledTime = queue.length === 0
+          ? (this.isForcedRun ? now : this.todayScheduleUtcMs())
+          : new Date(queue[queue.length - 1].scheduledAt).getTime() + this.profile.watch.gapHours * 60 * 60 * 1000;
+        const scheduledAtStr = new Date(scheduledTime).toISOString();
+
+        // Reserve in history and commit to queue before firing — crash-safe.
+        await this.history.add(pick.shortcode, channel);
+        await this.store.setQueue([...queue, {
+          shortcode: pick.shortcode,
+          url: pick.url,
+          channel,
+          scheduledAt: scheduledAtStr,
+          fired: false,
+          addedAt: new Date().toISOString()
+        }]);
+        await this.store.advanceSlot();
+
+        pipelineLogger.info(
+          `[${this.profile.brandName}] Ingested reel @${channel}/${pick.shortcode} into queue (scheduled for ${new Date(scheduledTime).toLocaleTimeString()})`,
+          "ChannelWatcher",
+        );
+        
+        // Reset forced flag after starting ingestion
+        if (queue.length === 0) {
+          this.isForcedRun = false;
         }
       }
     }
+  }
+
+  /**
+   * Force-start the scheduler: clear any rate-limit cooldown, rebuild the
+   * day's batch sequence (bypassing the once-per-day guard), and immediately
+   * trigger the first processQueue tick rather than waiting up to 60 seconds.
+   * Used by the /runwatchnow Telegram command.
+   */
+  public async forceStart(): Promise<void> {
+    this.rateLimitedUntil = null; // clear any 429 cooldown
+    this.isForcedRun = true;
+    await this.runDailyBatch(true);
+    await this.processQueue().catch((err) => {
+      pipelineLogger.error(
+        `[${this.profile.brandName}] forceStart processQueue failed`,
+        err,
+        "ChannelWatcher",
+      );
+    });
   }
 
   public getStatusDetails() {
@@ -360,6 +531,8 @@ export class ChannelWatcher {
       gapHours: this.profile.watch.gapHours,
       adminChatId: this.profile.watch.adminChatId,
       lastBatchDate: this.store.getLastBatchDate(),
+      channelSequence: this.store.getChannelSequence(),
+      currentSlot: this.store.getCurrentSlot(),
       queue: this.store.getQueue(),
     };
   }

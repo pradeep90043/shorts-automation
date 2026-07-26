@@ -45,23 +45,30 @@ export async function listChannelReels(
     "ChannelFeed",
   );
 
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const args = [FETCH_SCRIPT, username, COOKIES_FILE, "20"];
 
     execFile(
       PYTHON3,
       args,
-      { timeout: 30000, maxBuffer: 5 * 1024 * 1024 },
+      { timeout: 60000, maxBuffer: 5 * 1024 * 1024 },
       (err, stdout, stderr) => {
-        if (stderr.trim()) {
+        const stderrText = stderr.trim();
+        if (stderrText) {
           pipelineLogger.warn(
-            `[ChannelFeed] @${username}: ${stderr.trim().split("\n")[0]}`,
+            `[ChannelFeed] @${username}: ${stderrText.split("\n")[0]}`,
             "ChannelFeed",
           );
         }
 
+        // Propagate 429 as a distinct error so the caller can back off
+        // without burning the current slot.
+        if (stderrText.includes("RATE_LIMITED")) {
+          return reject(new InstagramRateLimitError(username));
+        }
+
         if (err && !stdout.trim()) {
-          const errMsg = stderr ? stderr.trim() : err.message.split("\n")[0];
+          const errMsg = stderrText || err.message.split("\n")[0];
           pipelineLogger.warn(
             `[ChannelFeed] fetch_reels.py failed for @${username}: ${errMsg}`,
             "ChannelFeed",
@@ -146,7 +153,7 @@ export async function searchAllHashtagReels(
           }
         }
 
-        if (err && (err as NodeJS.ErrnoException).code === 2) {
+        if (err && (err as NodeJS.ErrnoException & { code?: number }).code === 2) {
           return reject(new InstagramRateLimitError(tags.join(",")));
         }
 

@@ -91,7 +91,14 @@ async function bootstrap() {
 
     // Start listening for incoming events
     try {
-      await telegramService.start();
+      if (!profile.isWatchOnly) {
+        await telegramService.start();
+      } else {
+        pipelineLogger.info(
+          `[${profile.brandName}] Bot is in WATCH-ONLY mode — skipping Telegram polling listener`,
+          "Bootstrap",
+        );
+      }
     } catch (err) {
       pipelineLogger.error(
         `[${profile.brandName}] Failed to start Telegram polling listener`,
@@ -152,3 +159,5 @@ bootstrap().catch((err) => {
   console.error("Fatal crash during bootstrap:", err);
   process.exit(1);
 });
+// Nodemon trigger change (exclusive mood filters)
+

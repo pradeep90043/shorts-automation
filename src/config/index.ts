@@ -43,6 +43,11 @@ export interface WatchConfig {
   viralThreshold: number; // 0-100 minimum viral score to include (default: 50, fail-open)
 }
 
+export interface FacebookConfig {
+  pageId: string;
+  accessToken: string;
+}
+
 // A full brand/channel profile: one Telegram bot + its own YouTube/Instagram credentials.
 // The primary profile comes from the classic env vars (TELEGRAM_BOT_TOKEN, YOUTUBE_*, INSTAGRAM_*).
 // Extra profiles are auto-detected from prefixed vars, e.g. STORIYUM_TELEGRAM_BOT_TOKEN_LOCAL,
@@ -54,10 +59,12 @@ export interface ChannelProfile {
   theme: ContentTheme; // niche-specific prompt fragments (NICHE / <PREFIX>_NICHE env)
   isDefault: boolean;
   telegramToken: string;
+  isWatchOnly?: boolean;
   youtube: YoutubeConfig;
   instagram: {
     accounts: InstagramAccount[];
   };
+  facebook?: FacebookConfig;
   watch: WatchConfig;
 }
 
@@ -239,9 +246,10 @@ function loadPrefixedInstagram(
 function loadWatchConfig(prefix?: string): WatchConfig {
   const env = (key: string) =>
     prefix ? process.env[`${prefix}_${key}`] : process.env[key];
+  const channelsStr = env("WATCH_CHANNELS") || (prefix ? process.env[`${prefix}_INSTAGRAM_CHANNELS`] : "") || "";
   const channels = [
     ...new Set(
-      (env("WATCH_CHANNELS") || "")
+      channelsStr
         .split(",")
         .map((c) => c.trim().replace(/^@/, "").toLowerCase())
         .filter(Boolean),
@@ -284,22 +292,43 @@ function loadWatchConfig(prefix?: string): WatchConfig {
 function loadExtraProfiles(): ChannelProfile[] {
   const prefixes = new Set<string>();
   for (const key of Object.keys(process.env)) {
-    const m = key.match(/^([A-Z0-9]+)_TELEGRAM_BOT_TOKEN(?:_LOCAL|_PROD)?$/);
-    if (m) prefixes.add(m[1]);
+    const m = key.match(/^([A-Z0-9_]+)_(?:TELEGRAM_BOT_TOKEN|INSTAGRAM_CHANNELS|YOUTUBE_REFRESH_TOKEN)(?:_LOCAL|_PROD)?$/);
+    if (m) {
+      prefixes.add(m[1].toUpperCase());
+    }
   }
 
   const profiles: ChannelProfile[] = [];
   for (const prefix of prefixes) {
     const env = (key: string) => process.env[`${prefix}_${key}`];
-    const telegramToken =
+    let telegramToken =
       env(`TELEGRAM_BOT_TOKEN_${BOT_ENV}`) ||
       env("TELEGRAM_BOT_TOKEN") ||
       env("TELEGRAM_BOT_TOKEN_LOCAL") ||
       env("TELEGRAM_BOT_TOKEN_PROD") ||
       "";
+    
+    let isWatchOnly = false;
+    if (!telegramToken) {
+      // Fallback to CodeOrCap telegram token and mark as watchOnly
+      telegramToken =
+        process.env[`TELEGRAM_BOT_TOKEN_${BOT_ENV}`] ||
+        process.env.TELEGRAM_BOT_TOKEN ||
+        process.env.TELEGRAM_BOT_TOKEN_PROD ||
+        process.env.TELEGRAM_BOT_TOKEN_LOCAL ||
+        "";
+      isWatchOnly = true;
+    }
     if (!telegramToken) continue;
 
     const brandName = env("BRAND_NAME") || titleCase(prefix);
+    
+    let fbPageId = env("FACEBOOK_PAGE_ID") || "";
+    let fbAccessToken = env("FACEBOOK_ACCESS_TOKEN") || env("INSTAGRAM_ACCESS_TOKEN") || "";
+    if (prefix === "STORIYUM") {
+      if (!fbPageId) fbPageId = "1244228672098266";
+    }
+
     profiles.push({
       key: prefix.toLowerCase(),
       brandName,
@@ -307,8 +336,10 @@ function loadExtraProfiles(): ChannelProfile[] {
       theme: resolveTheme(env("NICHE"), brandName),
       isDefault: false,
       telegramToken,
+      isWatchOnly,
       youtube: loadPrefixedYoutube(prefix, brandName),
       instagram: { accounts: loadPrefixedInstagram(prefix, brandName) },
+      facebook: fbPageId && fbAccessToken ? { pageId: fbPageId, accessToken: fbAccessToken } : undefined,
       watch: loadWatchConfig(prefix),
     });
   }
@@ -316,6 +347,9 @@ function loadExtraProfiles(): ChannelProfile[] {
 }
 
 function loadPrimaryProfile(): ChannelProfile {
+  const fbPageId = process.env.FACEBOOK_PAGE_ID || "1155595804312771";
+  const fbAccessToken = process.env.FACEBOOK_ACCESS_TOKEN || process.env.INSTAGRAM_ACCESS_TOKEN || "";
+
   return {
     key: "codeorcap",
     brandName: process.env.BRAND_NAME || "CodeOrCap",
@@ -340,6 +374,7 @@ function loadPrimaryProfile(): ChannelProfile {
     instagram: {
       accounts: loadInstagramAccounts(),
     },
+    facebook: fbPageId && fbAccessToken ? { pageId: fbPageId, accessToken: fbAccessToken } : undefined,
     watch: loadWatchConfig(),
   };
 }

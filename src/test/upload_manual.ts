@@ -1,36 +1,58 @@
+import path from "path";
+import fs from "fs";
+import dotenv from "dotenv";
+
+// Load .env from project root (works for both local and prod env files)
+const envFile = process.env.ENV_FILE || ".env";
+dotenv.config({ path: path.resolve(__dirname, "../../", envFile) });
+
 import { YouTubeService } from "../youtube";
-import { InstagramPublisher } from "../instagram/publisher";
-import { AiService } from "../ai";
+import { config } from "../config";
 
 async function main() {
-  const videoPath = "/Users/apple/Downloads/clean_video.mp4";
-  
-  console.log("Generating metadata...");
-  const ai = new AiService();
-  
-  // The user requested: "this video is regarding event loop pf node js"
-  const ocrText = "Node.js Event Loop explained step by step with code examples";
-  const imageContext = "Node.js programming tutorial video";
-  
-  const metadata = await ai.generateMetadata(ocrText, imageContext);
-  metadata.title = "Node.js Event Loop Explained ⏳🤯";
-  metadata.description = "Understanding the Node.js event loop doesn't have to be hard! In this video, we break down exactly how Node handles asynchronous operations behind the scenes. 🚀 #nodejs #javascript #webdevelopment #programming #coding";
-  metadata.tags = ["nodejs", "javascript", "webdevelopment", "programming", "coding", "eventloop", "backend"];
+  const videoPath = process.argv[2];
+  if (!videoPath) {
+    console.error("Usage: ts-node src/test/upload_manual.ts <path-to-video.mp4>");
+    process.exit(1);
+  }
+  if (!fs.existsSync(videoPath)) {
+    console.error(`File not found: ${videoPath}`);
+    process.exit(1);
+  }
 
-  console.log("Using Metadata:", metadata);
+  console.log(`\nVideo:  ${videoPath}`);
+  console.log(`Size:   ${(fs.statSync(videoPath).size / 1024 / 1024).toFixed(1)} MB`);
+  console.log(`YT App: clientId=${config.youtube.clientId ? "✓" : "MISSING"}`);
+  console.log(`Channels configured: ${config.youtube.channels.length}`);
+  config.youtube.channels.forEach((ch) =>
+    console.log(`  - ${ch.name}: refreshToken=${ch.refreshToken ? "✓" : "MISSING"}`),
+  );
 
+  if (!config.youtube.clientId || config.youtube.channels.length === 0) {
+    console.error("\nYouTube credentials not loaded — check your .env file.");
+    process.exit(1);
+  }
+
+  const metadata = {
+    title: "Test Upload — Short Video",
+    description: "Test upload from upload_manual.ts",
+    tags: ["test", "shorts"],
+  };
+
+  console.log("\nStarting YouTube upload...");
   const youtube = new YouTubeService();
-  const instagram = new InstagramPublisher();
+  const results = await youtube.uploadToAllChannels(videoPath, metadata);
 
-  console.log("Uploading to YouTube...");
-  const ytResults = await youtube.uploadToAllChannels(videoPath, metadata);
-  console.log("YouTube results:", ytResults);
+  if (results.length === 0) {
+    console.error("\nUpload failed — check logs above for the error.");
+    process.exit(1);
+  }
 
-  console.log("Uploading to Instagram...");
-  const igResults = await instagram.uploadToAllAccounts(videoPath, metadata);
-  console.log("Instagram results:", igResults);
-  
-  console.log("All done!");
+  console.log("\nSuccess!");
+  results.forEach((r) => console.log(`  ${r.channelName}: ${r.url}`));
 }
 
-main().catch(console.error);
+main().catch((err) => {
+  console.error("Fatal:", err);
+  process.exit(1);
+});
