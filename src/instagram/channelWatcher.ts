@@ -4,6 +4,7 @@ import { WatchStore, QueuedReel } from "../utils/watchStore";
 import { ReelHistoryStore } from "../utils/reelHistoryStore";
 import { JobDatabase } from "../utils/db";
 import { listChannelReels } from "./channelFeed";
+import { buildHashtagsForNiche, searchViralReels, ScoredReel, InstagramRateLimitError } from "./nicheSearcher";
 import { pipelineLogger } from "../utils/logger";
 
 /**
@@ -29,9 +30,13 @@ export class ChannelWatcher {
     this.db = new JobDatabase(dbKey);
   }
 
+  // Pool of pre-scored reels from hashtag search, populated each daily batch.
+  private hashtagReelPool: ScoredReel[] = [];
+
   public async start(): Promise<void> {
-    const { channels, adminChatId } = this.profile.watch;
-    if (channels.length === 0 || !adminChatId) {
+    const { channels, adminChatId, searchMode } = this.profile.watch;
+    const isHashtagMode = searchMode === "hashtags" || searchMode === "both";
+    if ((channels.length === 0 && !isHashtagMode) || !adminChatId) {
       return; // feature not configured for this profile
     }
 
@@ -58,10 +63,15 @@ export class ChannelWatcher {
       });
     }, 60 * 1000);
 
+    const modeDesc = searchMode === "hashtags"
+      ? `hashtag search (threshold=${this.profile.watch.viralThreshold})`
+      : searchMode === "both"
+      ? `channels + hashtag search (threshold=${this.profile.watch.viralThreshold})`
+      : `${channels.length} channel(s) (${channels.join(", ")})`;
     pipelineLogger.info(
-      `[${this.profile.brandName}] Channel watch started — ${channels.length} channel(s) ` +
-        `(${channels.join(", ")}), ${this.profile.watch.dailyCount}/day at ` +
-        `${this.profile.watch.scheduleTime}, ${this.profile.watch.gapHours}h apart`,
+      `[${this.profile.brandName}] Channel watch started — ${modeDesc}, ` +
+        `${this.profile.watch.dailyCount}/day at ${this.profile.watch.scheduleTime}, ` +
+        `${this.profile.watch.gapHours}h apart`,
       "ChannelWatcher",
     );
   }
@@ -168,46 +178,103 @@ export class ChannelWatcher {
       return [];
     }
 
-    const pool: Array<{ shortcode: string; url: string; channel: string }> = [];
-    for (const channel of this.profile.watch.channels) {
+    const { searchMode, channels, dailyCount, nicheHashtags, viralThreshold } = this.profile.watch;
+
+    // ── Hashtag search (hashtags | both mode) ───────────────────────────────
+    this.hashtagReelPool = [];
+    if (searchMode === "hashtags" || searchMode === "both") {
+      const hashtags = buildHashtagsForNiche(this.profile.theme, undefined, nicheHashtags);
+      pipelineLogger.info(
+        `[${this.profile.brandName}] Searching hashtags: #${hashtags.join(", #")} (threshold=${viralThreshold})`,
+        "ChannelWatcher",
+      );
       try {
-        const reels = await listChannelReels(channel);
-        for (const r of reels) {
-          if (!this.history.has(r.shortcode)) {
-            pool.push({ ...r, channel });
-          }
-        }
-      } catch (err) {
-        pipelineLogger.error(
-          `[${this.profile.brandName}] Failed to list reels for @${channel}`,
-          err,
+        this.hashtagReelPool = await searchViralReels(
+          hashtags,
+          viralThreshold,
+          20,
+          this.history,
+        );
+        pipelineLogger.info(
+          `[${this.profile.brandName}] Hashtag search returned ${this.hashtagReelPool.length} viral reel(s)`,
           "ChannelWatcher",
         );
+      } catch (err) {
+        if (err instanceof InstagramRateLimitError) {
+          pipelineLogger.warn(
+            `[${this.profile.brandName}] Hashtag search rate-limited — falling back to channel mode`,
+            "ChannelWatcher",
+          );
+        } else {
+          pipelineLogger.error(
+            `[${this.profile.brandName}] Hashtag search failed`,
+            err,
+            "ChannelWatcher",
+          );
+        }
+        // Pool stays empty; channel-mode fallback below fills the queue
       }
-      // Pause between channels to avoid Instagram 429 rate-limiting
-      await new Promise((r) => setTimeout(r, 15000));
     }
 
-    // Fisher-Yates shuffle so picks are spread across all channels, not
-    // biased toward whichever channel happened to be listed first.
-    for (let i = pool.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [pool[i], pool[j]] = [pool[j], pool[i]];
-    }
-    const picked = pool.slice(0, this.profile.watch.dailyCount);
+    // ── Channel-list pool (channels | both mode, or hashtag fallback) ───────
+    const pool: Array<{ shortcode: string; url: string; channel: string }> = [];
+    if (searchMode === "channels" || searchMode === "both" || this.hashtagReelPool.length === 0) {
+      for (const channel of channels) {
+        try {
+          const reels = await listChannelReels(channel);
+          for (const r of reels) {
+            if (!this.history.has(r.shortcode)) {
+              pool.push({ ...r, channel });
+            }
+          }
+        } catch (err) {
+          pipelineLogger.error(
+            `[${this.profile.brandName}] Failed to list reels for @${channel}`,
+            err,
+            "ChannelWatcher",
+          );
+        }
+        await new Promise((r) => setTimeout(r, 15000));
+      }
 
-    if (picked.length < this.profile.watch.dailyCount) {
+      // Fisher-Yates shuffle
+      for (let i = pool.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [pool[i], pool[j]] = [pool[j], pool[i]];
+      }
+    }
+
+    // ── Merge pools into final picks ─────────────────────────────────────────
+    // In 'both' mode: fill first with hashtag pool (scored/viral), then supplement
+    // with channel pool up to dailyCount.
+    const allPicks: Array<{ shortcode: string; url: string; channel: string }> = [];
+    const seenShortcodes = new Set<string>();
+
+    for (const r of this.hashtagReelPool) {
+      if (allPicks.length >= dailyCount) break;
+      if (!seenShortcodes.has(r.shortcode)) {
+        seenShortcodes.add(r.shortcode);
+        allPicks.push({ shortcode: r.shortcode, url: r.url, channel: r.creatorUsername || r.channel });
+      }
+    }
+    for (const r of pool) {
+      if (allPicks.length >= dailyCount) break;
+      if (!seenShortcodes.has(r.shortcode)) {
+        seenShortcodes.add(r.shortcode);
+        allPicks.push(r);
+      }
+    }
+
+    const picked = allPicks.slice(0, dailyCount);
+
+    if (picked.length < dailyCount) {
       pipelineLogger.warn(
-        `[${this.profile.brandName}] Only found ${picked.length}/${this.profile.watch.dailyCount} ` +
-          `unprocessed reel(s) across ${this.profile.watch.channels.length} channel(s) today.`,
+        `[${this.profile.brandName}] Only found ${picked.length}/${dailyCount} unprocessed reel(s) today.`,
         "ChannelWatcher",
       );
     }
 
     const gapMs = this.profile.watch.gapHours * 60 * 60 * 1000;
-    // Anchor to today's configured schedule time so that if the server
-    // recovers late, all reels due before now are immediately overdue and
-    // processQueue fires them one-by-one to catch up.
     const startTime = this.todayScheduleUtcMs();
     const queue: QueuedReel[] = picked.map((p, i) => ({
       shortcode: p.shortcode,
@@ -222,10 +289,14 @@ export class ChannelWatcher {
     await this.store.setQueue(queue);
     await this.store.setLastBatchDate(today);
 
-    const channelCount = new Set(picked.map((p) => p.channel)).size;
+    const sourceDesc = searchMode === "hashtags"
+      ? "hashtag search"
+      : searchMode === "both"
+      ? `hashtag search + channels`
+      : `${new Set(picked.map((p) => p.channel)).size} channel(s)`;
     pipelineLogger.info(
-      `[${this.profile.brandName}] Daily batch selected: ${queue.length} reel(s) across ` +
-        `${channelCount} channel(s), spaced ${this.profile.watch.gapHours}h apart.`,
+      `[${this.profile.brandName}] Daily batch selected: ${queue.length} reel(s) from ${sourceDesc}, ` +
+        `spaced ${this.profile.watch.gapHours}h apart.`,
       "ChannelWatcher",
     );
     return queue;
