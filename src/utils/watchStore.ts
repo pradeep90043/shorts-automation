@@ -11,14 +11,18 @@ export interface QueuedReel {
   published?: boolean;
   publishedYoutubeUrl?: string;
   publishedInstagramUrl?: string;
+  publishedFacebookUrl?: string;
   failed?: boolean;
   failedReason?: string;
+  addedAt?: string;
 }
 
 interface WatchStateRow {
   profile_key: string;
   queue: QueuedReel[];
   last_batch_date: string;
+  channel_sequence: string[];
+  current_slot: number;
 }
 
 /**
@@ -33,6 +37,8 @@ export class WatchStore {
   private profileKey: string;
   private queue: QueuedReel[] = [];
   private lastBatchDate = "";
+  private channelSequence: string[] = [];
+  private currentSlot = 0;
 
   constructor(dbKey?: string) {
     this.profileKey = dbKey ?? "default";
@@ -41,12 +47,14 @@ export class WatchStore {
   public async load(): Promise<void> {
     const pool = await getPool();
     const { rows } = await pool.query<WatchStateRow>(
-      `SELECT queue, last_batch_date FROM watch_state WHERE profile_key = $1`,
+      `SELECT queue, last_batch_date, channel_sequence, current_slot FROM watch_state WHERE profile_key = $1`,
       [this.profileKey],
     );
     if (rows.length > 0) {
       this.queue = rows[0].queue ?? [];
       this.lastBatchDate = rows[0].last_batch_date ?? "";
+      this.channelSequence = rows[0].channel_sequence ?? [];
+      this.currentSlot = rows[0].current_slot ?? 0;
     } else {
       await this.save();
     }
@@ -56,12 +64,14 @@ export class WatchStore {
     try {
       const pool = await getPool();
       await pool.query(
-        `INSERT INTO watch_state (profile_key, queue, last_batch_date)
-         VALUES ($1, $2, $3)
+        `INSERT INTO watch_state (profile_key, queue, last_batch_date, channel_sequence, current_slot)
+         VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT (profile_key) DO UPDATE
-           SET queue = EXCLUDED.queue,
-               last_batch_date = EXCLUDED.last_batch_date`,
-        [this.profileKey, JSON.stringify(this.queue), this.lastBatchDate],
+           SET queue            = EXCLUDED.queue,
+               last_batch_date  = EXCLUDED.last_batch_date,
+               channel_sequence = EXCLUDED.channel_sequence,
+               current_slot     = EXCLUDED.current_slot`,
+        [this.profileKey, JSON.stringify(this.queue), this.lastBatchDate, JSON.stringify(this.channelSequence), this.currentSlot],
       );
     } catch (err) {
       pipelineLogger.error("Failed to write watch state to Supabase", err, "WatchStore");
@@ -95,6 +105,7 @@ export class WatchStore {
     shortcode: string,
     youtubeUrl?: string,
     instagramUrl?: string,
+    facebookUrl?: string,
   ): Promise<void> {
     const entry = this.queue.find((q) => q.shortcode === shortcode);
     if (entry) {
@@ -103,6 +114,7 @@ export class WatchStore {
       entry.failedReason = undefined;
       if (youtubeUrl) entry.publishedYoutubeUrl = youtubeUrl;
       if (instagramUrl) entry.publishedInstagramUrl = instagramUrl;
+      if (facebookUrl) entry.publishedFacebookUrl = facebookUrl;
     }
     await this.save();
   }
@@ -114,6 +126,25 @@ export class WatchStore {
       entry.published = false;
       entry.failedReason = reason || "Unknown error";
     }
+    await this.save();
+  }
+
+  public getChannelSequence(): string[] {
+    return this.channelSequence;
+  }
+
+  public async setChannelSequence(channels: string[]): Promise<void> {
+    this.channelSequence = channels;
+    this.currentSlot = 0;
+    await this.save();
+  }
+
+  public getCurrentSlot(): number {
+    return this.currentSlot;
+  }
+
+  public async advanceSlot(): Promise<void> {
+    this.currentSlot++;
     await this.save();
   }
 

@@ -172,6 +172,8 @@ export interface PipelineContext {
   error?: string;
   instagramSource?: boolean; // true for Instagram/TikTok reels — see usages, gates caption-override behavior only
   instagramSourceType?: "image" | "image_with_music" | "video";
+  channel?: string; // the watched/source Instagram channel username
+  shortcode?: string; // the shortcode of the Instagram reel
   captionMetadata?: { title: string; description: string }; // user-provided title+description from Telegram caption
   sourceCreatorUsername?: string; // the original poster's @handle (from the source URL/page), used to cache/reuse their watermark zone positions — see src/utils/creatorZones.ts
   userPrompt?: string; // custom re-generation prompt instruction from the user

@@ -25,6 +25,10 @@ export interface JobEntry {
   metadata?: VideoMetadata;
   youtubeUrl?: string;
   instagramUrl?: string;
+  facebookUrl?: string;
+  youtubeVideoId?: string;
+  instagramMediaId?: string;
+  facebookVideoId?: string;
   safeArea?: { x: number; y: number; width: number; height: number };
   qualityScore?: any;
   error?: string;
@@ -101,6 +105,7 @@ export class JobDatabase {
     id: string,
     initialData: Omit<JobEntry, "id" | "createdAt" | "updatedAt">,
   ): JobEntry {
+    this.loadFromFile();
     const now = new Date().toISOString();
     const entry: JobEntry = {
       id,
@@ -118,6 +123,7 @@ export class JobDatabase {
     id: string,
     updates: Partial<Omit<JobEntry, "id" | "createdAt">>,
   ): JobEntry | null {
+    this.loadFromFile();
     const job = this.jobs.get(id);
     if (!job) return null;
 
@@ -145,10 +151,12 @@ export class JobDatabase {
   }
 
   public getJob(id: string): JobEntry | null {
+    this.loadFromFile();
     return this.jobs.get(id) || null;
   }
 
   public listActiveJobs(): JobEntry[] {
+    this.loadFromFile();
     return Array.from(this.jobs.values()).filter(
       (job) => job.status !== "completed" && job.status !== "failed",
     );

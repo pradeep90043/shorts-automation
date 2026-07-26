@@ -7,6 +7,10 @@ export interface ReelRecord {
   publishedAt?: string;
   youtubeUrl?: string;
   instagramUrl?: string;
+  facebookUrl?: string;
+  youtubeVideoId?: string;
+  instagramMediaId?: string;
+  facebookVideoId?: string;
   failed?: boolean;
   failedReason?: string;
 }
@@ -31,7 +35,7 @@ export class ReelHistoryStore {
     const pool = await getPool();
     const { rows } = await pool.query(
       `SELECT shortcode, channel, picked_at, published_at, youtube_url,
-              instagram_url, failed, failed_reason
+              instagram_url, facebook_url, youtube_video_id, instagram_media_id, facebook_video_id, failed, failed_reason
        FROM reel_history WHERE profile_key = $1`,
       [this.profileKey],
     );
@@ -42,6 +46,10 @@ export class ReelHistoryStore {
         publishedAt: row.published_at ?? undefined,
         youtubeUrl: row.youtube_url ?? undefined,
         instagramUrl: row.instagram_url ?? undefined,
+        facebookUrl: row.facebook_url ?? undefined,
+        youtubeVideoId: row.youtube_video_id ?? undefined,
+        instagramMediaId: row.instagram_media_id ?? undefined,
+        facebookVideoId: row.facebook_video_id ?? undefined,
         failed: row.failed ?? undefined,
         failedReason: row.failed_reason ?? undefined,
       });
@@ -74,6 +82,10 @@ export class ReelHistoryStore {
     shortcode: string,
     youtubeUrl?: string,
     instagramUrl?: string,
+    facebookUrl?: string,
+    youtubeVideoId?: string,
+    instagramMediaId?: string,
+    facebookVideoId?: string,
   ): Promise<void> {
     const rec = this.records.get(shortcode);
     if (!rec) return;
@@ -83,13 +95,28 @@ export class ReelHistoryStore {
     rec.failedReason = undefined;
     if (youtubeUrl) rec.youtubeUrl = youtubeUrl;
     if (instagramUrl) rec.instagramUrl = instagramUrl;
+    if (facebookUrl) rec.facebookUrl = facebookUrl;
+    if (youtubeVideoId) rec.youtubeVideoId = youtubeVideoId;
+    if (instagramMediaId) rec.instagramMediaId = instagramMediaId;
+    if (facebookVideoId) rec.facebookVideoId = facebookVideoId;
     const pool = await getPool();
     await pool.query(
       `UPDATE reel_history
-       SET published_at = $1, youtube_url = $2, instagram_url = $3,
+       SET published_at = $1, youtube_url = $2, instagram_url = $3, facebook_url = $4,
+           youtube_video_id = $5, instagram_media_id = $6, facebook_video_id = $7,
            failed = false, failed_reason = NULL
-       WHERE shortcode = $4 AND profile_key = $5`,
-      [publishedAt, youtubeUrl ?? null, instagramUrl ?? null, shortcode, this.profileKey],
+       WHERE shortcode = $8 AND profile_key = $9`,
+      [
+        publishedAt,
+        youtubeUrl ?? null,
+        instagramUrl ?? null,
+        facebookUrl ?? null,
+        youtubeVideoId ?? null,
+        instagramMediaId ?? null,
+        facebookVideoId ?? null,
+        shortcode,
+        this.profileKey,
+      ],
     );
   }
 

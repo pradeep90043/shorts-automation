@@ -8,6 +8,7 @@ import { OcrService } from "./ocr";
 import { MusicService, normalizeMood } from "./music";
 import { YouTubeService, UploadResult } from "./youtube";
 import { InstagramPublisher, InstagramUploadResult } from "./instagram/publisher";
+import { FacebookPublisher, FacebookUploadResult } from "./facebook/publisher";
 import { TelegramService, escapeMarkdown } from "./telegram";
 import { PipelineContext, VideoMetadata } from "./types";
 import { pipelineLogger } from "./utils/logger";
@@ -118,6 +119,7 @@ export class DirectUploader {
   private music: MusicService;
   private youtube: YouTubeService;
   private instagram: InstagramPublisher;
+  private facebook: FacebookPublisher;
   private telegram: TelegramService;
   private db: JobDatabase;
   private profile: ChannelProfile;
@@ -186,6 +188,10 @@ export class DirectUploader {
     this.music = new MusicService();
     this.youtube = new YouTubeService(this.profile.youtube);
     this.instagram = new InstagramPublisher(this.profile.instagram.accounts);
+    this.facebook = new FacebookPublisher(
+      this.profile.brandName,
+      this.profile.facebook,
+    );
     // Each channel profile keeps its own job db file (legacy name for the default profile)
     this.db = new JobDatabase(
       this.profile.isDefault ? undefined : this.profile.key,
@@ -876,7 +882,7 @@ Use this to write a voiceover script that matches the content arc of the video. 
         (hasTranscriptWords || !!context.metadata?.voiceoverScript),
       cropTopPct: snapCrop(rec?.cropTopPct),
       cropBottomPct: snapCrop(rec?.cropBottomPct),
-      sticker: false, // creative choice — always starts OFF, never AI-recommended
+      sticker: true, // always ON by default for all profiles
     };
     context.creatorTextDetected =
       rec?.creatorTextDetected ??
@@ -1277,6 +1283,10 @@ ${this.theme.analysisRules}`;
     }
   }
 
+  private getRenderer(_context: PipelineContext): VideoRenderer {
+    return this.renderer;
+  }
+
   // ── Upload to all channels ─────────────────────────────────────────────────
 
   private async uploadAndReport(pending: PendingUpload): Promise<void> {
@@ -1309,7 +1319,7 @@ ${this.theme.analysisRules}`;
 
     await this.telegram.sendMessage(
       chatId,
-      `🚀 *Uploading to ${this.profile.youtube.channels.length} YouTube channel(s) and ${this.profile.instagram.accounts.length} Instagram account(s)…*`,
+      `🚀 *Uploading to ${this.profile.youtube.channels.length} YouTube channel(s), ${this.profile.instagram.accounts.length} Instagram account(s), and Facebook Page…*`,
       messageId,
     );
 
@@ -1324,6 +1334,11 @@ ${this.theme.analysisRules}`;
         metadata,
       );
 
+      const fbResult: FacebookUploadResult | null = await this.facebook.uploadReel(
+        finalVideoPath,
+        metadata,
+      );
+
       const channelLines = results
         .map((r) => `• *YouTube (${escapeMarkdown(r.channelName)}):* ${escapeMarkdown(r.url)}`)
         .join("\n");
@@ -1332,10 +1347,15 @@ ${this.theme.analysisRules}`;
         .map((r) => `• *Instagram (${escapeMarkdown(r.accountName)}):* ${escapeMarkdown(r.url)}`)
         .join("\n");
 
+      const fbLines = fbResult
+        ? `• *Facebook (${escapeMarkdown(fbResult.pageName)}):* ${escapeMarkdown(fbResult.url)}`
+        : "";
+
       // Per-channel failures return null and are filtered out — surface them
       // instead of implying every platform succeeded.
       const expectedYt = this.profile.youtube.channels.length;
       const expectedIg = this.profile.instagram.accounts.length;
+      const expectedFb = this.profile.facebook ? 1 : 0;
       const failLines: string[] = [];
       if (expectedYt > 0 && results.length < expectedYt) {
         failLines.push(
@@ -1345,6 +1365,11 @@ ${this.theme.analysisRules}`;
       if (expectedIg > 0 && instaResults.length < expectedIg) {
         failLines.push(
           `⚠️ *Instagram upload FAILED on ${expectedIg - instaResults.length} of ${expectedIg} account(s)* — check logs`,
+        );
+      }
+      if (expectedFb > 0 && !fbResult) {
+        failLines.push(
+          `⚠️ *Facebook upload FAILED* — check logs`,
         );
       }
       const failBlock = failLines.length ? failLines.join("\n") + "\n\n" : "";
@@ -1357,9 +1382,10 @@ ${this.theme.analysisRules}`;
         `${headline}\n\n` +
         failBlock +
         `*Title:* ${escapeMarkdown(metadata.title)}\n\n` +
-        `${channelLines}\n` +
-        `${instaLines}\n\n` +
-        `*ID:* ${escapeMarkdown(id)}`;
+        (channelLines ? `${channelLines}\n` : "") +
+        (instaLines ? `${instaLines}\n` : "") +
+        (fbLines ? `${fbLines}\n` : "") +
+        `\n*ID:* ${escapeMarkdown(id)}`;
 
       const successMessageId = await this.telegram.sendSuccessMessageWithRevoke(
         chatId,
@@ -1379,6 +1405,10 @@ ${this.theme.analysisRules}`;
         currentStep: "Short uploaded to all configured platforms successfully",
         youtubeUrl: results[0]?.url,
         instagramUrl: instaResults[0]?.url,
+        facebookUrl: fbResult?.url,
+        youtubeVideoId: results[0]?.videoId,
+        instagramMediaId: instaResults[0]?.mediaId,
+        facebookVideoId: fbResult?.videoId,
         context: pending.context,
       });
 
@@ -2253,9 +2283,87 @@ ${this.theme.analysisRules}`;
         );
       }
 
+      // ── Mood filtering logic per profile ─────────────────────────────────
+      const mood = normalizeMood(context.metadata?.mood);
+      const isCodeOrCap = this.profile.key.toLowerCase() === "codeorcap";
+      const isPromptGag = this.profile.key.toLowerCase() === "prompt_gag";
+
+      if (isCodeOrCap && mood === "funny") {
+        pipelineLogger.info(
+          `[CodeOrCap] Bypassing funny reel (${id}) — will not publish`,
+          "DirectUploader",
+        );
+        const adminChatId = context.telegramMeta?.chatId || this.profile.watch.adminChatId || 0;
+        if (adminChatId) {
+          await this.telegram.sendMessage(
+            adminChatId,
+            `ℹ️ *Bypassed:* Reel \`@${context.channel || "unknown"}/${context.shortcode || "unknown"}\` has mood *funny* which is skipped on CodeOrCap.`,
+          ).catch((e) => pipelineLogger.error("Failed to send bypass message", e, "DirectUploader"));
+        }
+        this.db.updateJob(id, {
+          status: "failed",
+          currentStep: "Bypassed: funny reels are skipped on CodeOrCap",
+          context,
+        });
+        this.resolveJob(id);
+        return;
+      }
+
+      if (isPromptGag && mood !== "funny") {
+        pipelineLogger.info(
+          `[PromptGag] Bypassing non-funny reel (${id}, mood: ${mood}) — will not publish`,
+          "DirectUploader",
+        );
+        const adminChatId = context.telegramMeta?.chatId || this.profile.watch.adminChatId || 0;
+        if (adminChatId) {
+          await this.telegram.sendMessage(
+            adminChatId,
+            `ℹ️ *Bypassed:* Reel \`@${context.channel || "unknown"}/${context.shortcode || "unknown"}\` has mood *${mood}* which is skipped on PromptGag.`,
+          ).catch((e) => pipelineLogger.error("Failed to send bypass message", e, "DirectUploader"));
+        }
+        this.db.updateJob(id, {
+          status: "failed",
+          currentStep: `Bypassed: mood ${mood} is skipped on PromptGag`,
+          context,
+        });
+        this.resolveJob(id);
+        return;
+      }
+
       // ── PRE-PROCESSING SETTINGS REVIEW GATE ──────────────────────────────
       // AI has analyzed the media; let the user confirm/override the processing
       // settings (or let the 60s timer proceed with the AI recommendation).
+
+      // Apply preset overrides for PromptGag
+      if (isPromptGag) {
+        pipelineLogger.info(
+          "PromptGag profile detected — applying preset overrides: music off (originalAudio: true), captions off, voiceover off, sticker on",
+          "DirectUploader"
+        );
+        if (!context.reviewSettings) {
+          context.reviewSettings = {
+            voiceover: false,
+            originalAudio: true,
+            captions: false,
+            cropTopPct: 0,
+            cropBottomPct: 0,
+            sticker: true,
+          };
+        } else {
+          context.reviewSettings.voiceover = false;
+          context.reviewSettings.originalAudio = true;
+          context.reviewSettings.captions = false;
+          context.reviewSettings.sticker = true;
+        }
+
+        if (context.aiRecommendedSettings) {
+          context.aiRecommendedSettings.voiceover = false;
+          context.aiRecommendedSettings.originalAudio = true;
+          context.aiRecommendedSettings.captions = false;
+          context.aiRecommendedSettings.sticker = true;
+        }
+      }
+
       const gateDecision = await this.holdForSettingsReview(context);
       if (gateDecision === "cancel") {
         return;
@@ -2291,7 +2399,8 @@ ${this.theme.analysisRules}`;
         // Pass AI-detected branding zones (profile_picture, handle, profile_name, etc.)
         // directly to the renderer so they get blurred/covered on the video frames.
         // DO NOT clear context.brandingDetection.zones here — the renderer uses them.
-        await this.renderer.processVideo(
+        const renderer = this.getRenderer(context);
+        await renderer.processVideo(
           context.originalVideoPath,
           rawVideoPath,
           context,
@@ -2610,7 +2719,8 @@ ${this.theme.analysisRules}`;
           }
         }
 
-        await this.renderer.renderImageToVideo(
+        const renderer = this.getRenderer(context);
+        await renderer.renderImageToVideo(
           originalImagePath,
           rawVideoPath,
           {
@@ -3276,15 +3386,29 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     inputPath: string,
   ): Promise<string | null> {
     const mood = normalizeMood(context.metadata?.mood);
-    // Each channel profile has its own reaction-sticker performer — never
-    // cross-mix, e.g. CodeOrCap's man and Storiyum's woman.
-    const stickerPath = path.join(
+    const stickerDir = path.join(
       config.paths.assetsDir,
       "stickers",
       this.profile.key.toLowerCase(),
-      `${mood}.mov`,
     );
-    if (!fs.existsSync(stickerPath)) {
+
+    let stickerPath = "";
+    const isPromptGag = this.profile.key.toLowerCase() === "prompt_gag";
+
+    if (isPromptGag) {
+      if (fs.existsSync(stickerDir)) {
+        const files = fs.readdirSync(stickerDir).filter((f) => f.endsWith(".mp4") || f.endsWith(".mov"));
+        if (files.length > 0) {
+          // Select one random laughing sticker for each video compile!
+          const randomFile = files[Math.floor(Math.random() * files.length)];
+          stickerPath = path.join(stickerDir, randomFile);
+        }
+      }
+    } else {
+      stickerPath = path.join(stickerDir, `${mood}.mov`);
+    }
+
+    if (!stickerPath || !fs.existsSync(stickerPath)) {
       pipelineLogger.info(
         `Reaction sticker requested but none available for mood "${mood}" in profile "${this.profile.key}" — skipping.`,
         "DirectUploader",
@@ -3293,6 +3417,34 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     }
 
     const outPath = path.join(context.tempDir, "video_stickered.mp4");
+
+    if (isPromptGag) {
+      try {
+        // Loop the entire green screen sticker, crop the bottom 120px to remove watermarks,
+        // scale it to width 360 (matching CodeOrCap size), and chromakey out the background (0x00FF00 green)
+        const stickerInputs = `-stream_loop -1 -i "${stickerPath}"`;
+        const stickerFilter =
+          `[1:v]crop=in_w:in_h-120:0:0,scale=360:-1,chromakey=0x00FF00:0.3:0.1[sticker];` +
+          `[0:v][sticker]overlay=40:H-h-40:shortest=1[out]`;
+
+        const cmd = `${config.binaries.ffmpeg} -y -i "${inputPath}" ${stickerInputs} -filter_complex "${stickerFilter}" -map "[out]" -map 0:a? -c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p -c:a copy "${outPath}"`;
+        await new Promise<void>((resolve, reject) => {
+          exec(cmd, (error) => (error ? reject(error) : resolve()));
+        });
+        pipelineLogger.info(
+          `Overlaid keyed "${path.basename(stickerPath)}" green screen sticker (looped).`,
+          "DirectUploader",
+        );
+        return outPath;
+      } catch (err) {
+        pipelineLogger.warn(
+          `Reaction sticker overlay failed, continuing without it: ${err instanceof Error ? err.message : err}`,
+          "DirectUploader",
+        );
+        return null;
+      }
+    }
+
     const stickerTailPath = path.join(context.tempDir, "sticker_tail.mov");
     const tailStart = 5;
     const tailLength = 5;
