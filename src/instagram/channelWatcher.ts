@@ -26,11 +26,35 @@ export class ChannelWatcher {
   constructor(
     private profile: ChannelProfile,
     private telegram: TelegramService,
+    private profileIndex: number,
   ) {
     const dbKey = profile.isDefault ? undefined : profile.key;
     this.store = new WatchStore(dbKey);
     this.history = new ReelHistoryStore(dbKey);
     this.db = new JobDatabase(dbKey);
+  }
+
+  private getScraperEnv(): Record<string, string> {
+    const envs: Record<string, string> = {};
+    const prefix = `${this.profile.key.toUpperCase()}_`;
+
+    const username = process.env[`${prefix}INSTAGRAM_USERNAME`] || process.env.INSTAGRAM_USERNAME;
+    const password = process.env[`${prefix}INSTAGRAM_PASSWORD`] || process.env.INSTAGRAM_PASSWORD;
+    const totp = process.env[`${prefix}INSTAGRAM_TOTP_SECRET`] || process.env.INSTAGRAM_TOTP_SECRET;
+    
+    // Only inherit global INSTAGRAM_SESSION_ID for default profile if CODEORCAP_INSTAGRAM_USERNAME is not set
+    const session =
+      process.env[`${prefix}INSTAGRAM_SESSION_ID`] ||
+      (this.profile.isDefault && !process.env.CODEORCAP_INSTAGRAM_USERNAME
+        ? process.env.INSTAGRAM_SESSION_ID
+        : undefined);
+
+    if (username) envs.INSTAGRAM_USERNAME = username;
+    if (password) envs.INSTAGRAM_PASSWORD = password;
+    if (totp) envs.INSTAGRAM_TOTP_SECRET = totp;
+    envs.INSTAGRAM_SESSION_ID = session || "";
+
+    return envs;
   }
 
   // Pool of pre-scored reels from hashtag search, populated each daily batch.
@@ -119,12 +143,11 @@ export class ChannelWatcher {
       return;
     }
 
-    if (Date.now() >= this.todayScheduleUtcMs()) {
-      // Stagger profiles so they never hammer the Instagram API simultaneously.
-      // isDefault = first profile (index 0) → no delay; secondary profiles → 5 min offset.
-      const staggerMs = this.profile.isDefault ? 0 : 5 * 60 * 1000;
+    const staggeredScheduledMs = this.todayScheduleUtcMs() + (this.profileIndex * 5 * 60 * 1000);
+    if (Date.now() >= staggeredScheduledMs) {
+      const staggerMs = this.profileIndex * 5 * 60 * 1000;
       pipelineLogger.info(
-        `[${this.profile.brandName}] Startup is after scheduled IST time (${this.profile.watch.scheduleTime} IST) — ${batchRanToday ? "queue is empty, retrying batch" : "no batch ran today"}. Triggering batch selection in ${staggerMs / 1000}s...`,
+        `[${this.profile.brandName}] Startup is after scheduled IST time (${this.profile.watch.scheduleTime} IST, staggered) — ${batchRanToday ? "queue is empty, retrying batch" : "no batch ran today"}. Triggering batch selection in ${staggerMs / 1000}s...`,
         "ChannelWatcher",
       );
       setTimeout(() => {
@@ -157,7 +180,7 @@ export class ChannelWatcher {
 
   private msUntilNextScheduleTime(): number {
     const nowMs = Date.now();
-    const scheduledMs = this.todayScheduleUtcMs();
+    const scheduledMs = this.todayScheduleUtcMs() + (this.profileIndex * 5 * 60 * 1000);
     if (scheduledMs <= nowMs) {
       // Already past today's IST schedule — fire tomorrow
       return scheduledMs + 24 * 60 * 60 * 1000 - nowMs;
@@ -198,6 +221,7 @@ export class ChannelWatcher {
           viralThreshold,
           20,
           this.history,
+          this.getScraperEnv(),
         );
         pipelineLogger.info(
           `[${this.profile.brandName}] Hashtag search returned ${this.hashtagReelPool.length} viral reel(s)`,
@@ -225,7 +249,7 @@ export class ChannelWatcher {
     if (searchMode === "channels" || searchMode === "both" || this.hashtagReelPool.length === 0) {
       for (const channel of channels) {
         try {
-          const reels = await listChannelReels(channel);
+          const reels = await listChannelReels(channel, this.getScraperEnv());
           for (const r of reels) {
             if (!this.history.has(r.shortcode)) {
               pool.push({ ...r, channel });
@@ -279,7 +303,7 @@ export class ChannelWatcher {
     }
 
     const gapMs = this.profile.watch.gapHours * 60 * 60 * 1000;
-    const startTime = this.todayScheduleUtcMs();
+    const startTime = this.todayScheduleUtcMs() + (this.profileIndex * 5 * 60 * 1000);
     const queue: QueuedReel[] = picked.map((p, i) => ({
       shortcode: p.shortcode,
       url: p.url,
@@ -315,7 +339,22 @@ export class ChannelWatcher {
     const inFlight = queue.find((item) => item.fired && !item.published && !item.failed && item.jobId);
     if (inFlight) {
       const job = this.db.getJob(inFlight.jobId!);
-      if (!job) return;
+      if (!job) {
+        // If the job has not been created yet, it might still be downloading.
+        // But if it has been downloading for too long, it must have failed to download/initialize.
+        const parts = inFlight.jobId!.split("-");
+        const firedAt = parts.length > 1 ? parseInt(parts[1], 10) : 0;
+        const elapsedMs = now - firedAt;
+        if (firedAt > 0 && elapsedMs > 15 * 60 * 1000) {
+          pipelineLogger.warn(
+            `[${this.profile.brandName}] Job ${inFlight.jobId} was never initialized in the database (failed to download/init) and has timed out after ${Math.round(elapsedMs / 1000)}s. Marking as failed.`,
+            "ChannelWatcher",
+          );
+          await this.store.markFailed(inFlight.shortcode, "Job initialization/download timed out");
+          await this.history.markFailed(inFlight.shortcode, "Job initialization/download timed out");
+        }
+        return;
+      }
 
       if (job.status === "completed") {
         await this.store.markPublished(inFlight.shortcode, job.youtubeUrl, job.instagramUrl, job.facebookUrl);
@@ -384,17 +423,19 @@ export class ChannelWatcher {
       }
       this.rateLimitedUntil = null;
 
-      // Check if we should fetch now (3-minute gap)
+      // Check if we should fetch now (3-minute gap with profile-based stagger)
       let canFetch = false;
       if (queue.length === 0) {
-        // Start populating as soon as we reach the scheduled time
-        if (this.isForcedRun || now >= this.todayScheduleUtcMs()) {
+        // Start populating as soon as we reach the staggered scheduled time
+        const staggeredScheduledMs = this.todayScheduleUtcMs() + (this.profileIndex * 5 * 60 * 1000);
+        if (this.isForcedRun || now >= staggeredScheduledMs) {
           canFetch = true;
         }
       } else {
         const lastItem = queue[queue.length - 1];
         const lastAddedAt = lastItem.addedAt ? new Date(lastItem.addedAt).getTime() : new Date(lastItem.scheduledAt).getTime();
-        if (now - lastAddedAt >= 3 * 60 * 1000) {
+        const staggerOffsetMs = 3 * 60 * 1000 + this.profileIndex * 20 * 1000;
+        if (now - lastAddedAt >= staggerOffsetMs) {
           canFetch = true;
         }
       }
@@ -408,7 +449,7 @@ export class ChannelWatcher {
 
         let reels: Awaited<ReturnType<typeof listChannelReels>>;
         try {
-          reels = await listChannelReels(channel);
+          reels = await listChannelReels(channel, this.getScraperEnv());
         } catch (err) {
           if (err instanceof InstagramRateLimitError) {
             this.rateLimitedUntil = now + ChannelWatcher.RATE_LIMIT_COOLDOWN_MS;
@@ -424,9 +465,10 @@ export class ChannelWatcher {
             "ChannelWatcher",
           );
 
+          const staggeredScheduledMs = this.todayScheduleUtcMs() + (this.profileIndex * 5 * 60 * 1000);
           const skippedAtStr = new Date(
             queue.length === 0
-              ? (this.isForcedRun ? now : this.todayScheduleUtcMs())
+              ? (this.isForcedRun ? now : staggeredScheduledMs)
               : new Date(queue[queue.length - 1].scheduledAt).getTime() + this.profile.watch.gapHours * 60 * 60 * 1000
           ).toISOString();
 
@@ -452,9 +494,10 @@ export class ChannelWatcher {
             "ChannelWatcher",
           );
 
+          const staggeredScheduledMs = this.todayScheduleUtcMs() + (this.profileIndex * 5 * 60 * 1000);
           const skippedAtStr = new Date(
             queue.length === 0
-              ? (this.isForcedRun ? now : this.todayScheduleUtcMs())
+              ? (this.isForcedRun ? now : staggeredScheduledMs)
               : new Date(queue[queue.length - 1].scheduledAt).getTime() + this.profile.watch.gapHours * 60 * 60 * 1000
           ).toISOString();
 
@@ -474,8 +517,9 @@ export class ChannelWatcher {
         }
 
         const pick = unseen[Math.floor(Math.random() * unseen.length)];
+        const staggeredScheduledMs = this.todayScheduleUtcMs() + (this.profileIndex * 5 * 60 * 1000);
         const scheduledTime = queue.length === 0
-          ? (this.isForcedRun ? now : this.todayScheduleUtcMs())
+          ? (this.isForcedRun ? now : staggeredScheduledMs)
           : new Date(queue[queue.length - 1].scheduledAt).getTime() + this.profile.watch.gapHours * 60 * 60 * 1000;
         const scheduledAtStr = new Date(scheduledTime).toISOString();
 

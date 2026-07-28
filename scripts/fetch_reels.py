@@ -86,16 +86,22 @@ def get_client():
         )
         sys.exit(1)
 
+    # Dynamically suffix the session file path using the logged-in username.
+    if ig_user:
+        session_file = os.path.join(os.path.dirname(SESSION_FILE), f"instagrapi_session_{ig_user}.json")
+    else:
+        session_file = SESSION_FILE
+
     cl = Client()
     cl.delay_range = [1, 3]  # 1–3 s random pause between API calls
 
     # Attempt to reuse a previously saved session.
     session_loaded = False
-    if os.path.exists(SESSION_FILE):
+    if os.path.exists(session_file):
         try:
-            cl.load_settings(SESSION_FILE)
+            cl.load_settings(session_file)
             session_loaded = True
-            print("INFO: Loaded saved instagrapi session.", file=sys.stderr)
+            print(f"INFO: Loaded saved instagrapi session from {session_file}.", file=sys.stderr)
         except Exception as exc:
             print(f"WARN: Could not load session file: {exc}", file=sys.stderr)
 
@@ -136,7 +142,7 @@ def get_client():
             # Saved session is stale — wipe it and try a clean login.
             print("WARN: Saved session expired — clearing and re-logging in...", file=sys.stderr)
             try:
-                os.remove(SESSION_FILE)
+                os.remove(session_file)
             except Exception:
                 pass
             cl = Client()
@@ -159,8 +165,8 @@ def get_client():
 
     # Persist session so subsequent runs skip the full login flow.
     try:
-        os.makedirs(os.path.dirname(SESSION_FILE), exist_ok=True)
-        cl.dump_settings(SESSION_FILE)
+        os.makedirs(os.path.dirname(session_file), exist_ok=True)
+        cl.dump_settings(session_file)
     except Exception as exc:
         print(f"WARN: Could not save session file: {exc}", file=sys.stderr)
 
