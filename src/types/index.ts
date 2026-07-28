@@ -115,8 +115,8 @@ export interface ReviewSettings {
   // Voiceover (above) layers on top of whichever bed is active either way.
   originalAudio: boolean;
   captions: boolean;
-  cropTopPct: number; // 0 | 5 | 10 | 15 | 20 | 25 | 30 | 35
-  cropBottomPct: number; // 0 | 5 | 10 | 15 | 20 | 25 | 30 | 35
+  cropTopPct?: number; // 0 | 5 | 10 | 15 | 20 | 25 | 30 | 35 (optional for dynamic presets)
+  cropBottomPct?: number; // 0 | 5 | 10 | 15 | 20 | 25 | 30 | 35 (optional for dynamic presets)
   sticker: boolean; // overlay a mood-matched reaction sticker (assets/stickers/<mood>.mov)
 }
 

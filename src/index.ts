@@ -112,7 +112,7 @@ async function bootstrap() {
     // isn't configured for this profile). Force an immediate run any time
     // via the /runwatchnow Telegram command instead of waiting for the
     // scheduled time.
-    const watcher = new ChannelWatcher(profile, telegramService);
+    const watcher = new ChannelWatcher(profile, telegramService, config.profiles.indexOf(profile));
     telegramService.registerWatcher(watcher);
     await watcher.start();
   }

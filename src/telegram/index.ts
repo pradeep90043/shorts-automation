@@ -231,8 +231,8 @@ export class TelegramService implements ITelegramService {
           { text: `🎭 Sticker: ${onOff(s.sticker)}`, callback_data: `st_sk_${id}` },
         ],
         ...moodRows,
-        ...cropRows("ct", s.cropTopPct, "⬆"),
-        ...cropRows("cb", s.cropBottomPct, "⬇"),
+        ...cropRows("ct", s.cropTopPct || 0, "⬆"),
+        ...cropRows("cb", s.cropBottomPct || 0, "⬇"),
         [
           { text: "▶️ Process Now", callback_data: `st_go_${id}` },
           { text: "❌ Cancel", callback_data: `st_can_${id}` },
@@ -1216,8 +1216,8 @@ export class TelegramService implements ITelegramService {
       voiceover: true,
       originalAudio: false,
       captions: true,
-      cropTopPct: 0,
-      cropBottomPct: 0,
+      cropTopPct: undefined,
+      cropBottomPct: undefined,
       sticker: true,
     };
 

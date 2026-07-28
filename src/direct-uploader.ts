@@ -144,15 +144,16 @@ export class DirectUploader {
   private buildVoiceoverLengthInstruction(context?: PipelineContext): string {
     const duration = context?.videoDurationSeconds;
     if (!duration || duration <= 0) {
-      return "Write a short, highly engaging 10-15 second script (approx 20-30 words)";
+      return "Write a short, highly engaging script containing no more than 20-25 words. CRITICAL: The script is a voiceover spoken to the audience. You MUST NEVER mention frame numbers (e.g., 'frame 1', 'frame 2'), 'slide', 'image', 'picture', or refer to the visual layout stages. Narrate the story or explain the code naturally as a single continuous flow of speech.";
     }
-    const wordsPerSecond = 2.2;
-    const targetWords = Math.max(10, Math.min(170, Math.round(duration * wordsPerSecond)));
+    // Assume a safer speech rate of 1.7 words per second to prevent the voiceover from running past the video duration
+    const wordsPerSecond = 1.7;
+    const targetWords = Math.max(10, Math.min(150, Math.round((duration - 1.5) * wordsPerSecond)));
     return (
-      `Write a highly engaging, natural-sounding script paced to fill the ENTIRE ` +
-      `${Math.round(duration)}-second video when read aloud at a natural conversational ` +
-      `pace (approx ${targetWords} words) — the narration must continue all the way to ` +
-      `the end of the video, not stop partway through and leave the rest silent`
+      `Write a highly engaging, natural-sounding script of exactly or fewer than ${targetWords} words. ` +
+      `It MUST finish speaking about 1.5 to 2 seconds before the end of the ${Math.round(duration)}-second video ` +
+      `so that the voice is never cut off in the middle of a sentence. It should be concise and well-paced. ` +
+      `CRITICAL: The script is a voiceover spoken to the audience. You MUST NEVER mention frame numbers (e.g. 'frame 1', 'frame 2', 'first frame'), 'slide', 'image', 'picture', or refer to the visual layout stages. Narrate the story or explain the code naturally as a single continuous flow of speech.`
     );
   }
   private viralAnalyzer = new ViralAnalyzer();
@@ -306,7 +307,7 @@ export class DirectUploader {
 
       let prompt = `You are a computer vision assistant and growth strategist for ${this.theme.channelDescriptor} called "${this.profile.brandName}".
 
-These 4 frames represent the visual progression of the video at 0%, 25%, 50%, and 75% of its duration. Describe what is happening at each stage and write a voiceover script that tracks this progression.
+These 6 frames represent the visual progression of the video at 0%, 20%, 40%, 60%, 80%, and 95% of its duration. Describe what is happening at each stage and write a voiceover script that tracks this progression.
 
 Analyze this video frame/image and perform two tasks:
 
@@ -873,6 +874,41 @@ Use this to write a voiceover script that matches the content arc of the video. 
       return Math.round(clamped / 5) * 5;
     };
 
+    let calculatedCropTop = rec?.cropTopPct !== undefined ? snapCrop(rec.cropTopPct) : 0;
+    let calculatedCropBottom = rec?.cropBottomPct !== undefined ? snapCrop(rec.cropBottomPct) : 0;
+
+    // Auto-adjust crop to cleanly cut out any creator branding/handles at the edges
+    const zones = context.brandingDetection?.zones || [];
+    const edgeTypes = ["logo", "watermark", "handle", "profile_name", "profile_picture"];
+    for (const z of zones) {
+      if (z.type === "main_post_content" || z.type === "original_captions") continue;
+      if (!edgeTypes.includes(z.type as string)) continue;
+
+      const box = z.boundingBox;
+      // Top edge branding zone (within top 35%)
+      if (box.y + box.height <= 0.35) {
+        const neededPct = Math.ceil((box.y + box.height) * 20) * 5; // Snap to next multiple of 5
+        if (neededPct > calculatedCropTop) {
+          calculatedCropTop = Math.min(35, neededPct);
+          pipelineLogger.info(
+            `Auto-adjusting cropTopPct from ${snapCrop(rec?.cropTopPct)}% to ${calculatedCropTop}% to crop out top edge branding: ${z.type} (${z.description || ""})`,
+            "DirectUploader"
+          );
+        }
+      }
+      // Bottom edge branding zone (within bottom 35%)
+      if (box.y >= 0.65) {
+        const neededPct = Math.ceil((1.0 - box.y) * 20) * 5; // Snap to next multiple of 5
+        if (neededPct > calculatedCropBottom) {
+          calculatedCropBottom = Math.min(35, neededPct);
+          pipelineLogger.info(
+            `Auto-adjusting cropBottomPct from ${snapCrop(rec?.cropBottomPct)}% to ${calculatedCropBottom}% to crop out bottom edge branding: ${z.type} (${z.description || ""})`,
+            "DirectUploader"
+          );
+        }
+      }
+    }
+
     const hasTranscriptWords = !!context.transcript?.words?.length;
     context.aiRecommendedSettings = {
       voiceover: rec?.voiceover ?? !!context.metadata?.voiceoverScript,
@@ -880,8 +916,8 @@ Use this to write a voiceover script that matches the content arc of the video. 
       captions:
         rec?.captions ??
         (hasTranscriptWords || !!context.metadata?.voiceoverScript),
-      cropTopPct: snapCrop(rec?.cropTopPct),
-      cropBottomPct: snapCrop(rec?.cropBottomPct),
+      cropTopPct: calculatedCropTop,
+      cropBottomPct: calculatedCropBottom,
       sticker: true, // always ON by default for all profiles
     };
     context.creatorTextDetected =
@@ -2086,15 +2122,24 @@ ${this.theme.analysisRules}`;
 
       let keyframePaths: string[] = [];
       const f0 = path.join(tempDir, "frame_0.jpg");
-      const f25 = path.join(tempDir, "frame_25.jpg");
-      const f50 = path.join(tempDir, "frame_50.jpg");
-      const f75 = path.join(tempDir, "frame_75.jpg");
+      const f20 = path.join(tempDir, "frame_20.jpg");
+      const f40 = path.join(tempDir, "frame_40.jpg");
+      const f60 = path.join(tempDir, "frame_60.jpg");
+      const f80 = path.join(tempDir, "frame_80.jpg");
+      const f95 = path.join(tempDir, "frame_95.jpg");
 
-      // If video, extract 4 keyframes at 0% (t=0.5s floor), 25%, 50%, and 75% of video duration in parallel.
+      // If video, extract 6 keyframes at 0% (t=0.5s floor), 20%, 40%, 60%, 80%, and 95% of video duration in parallel.
       if (isVideo && context.originalVideoPath) {
         context.status = "analyzing";
-        if (fs.existsSync(f0) && fs.existsSync(f25) && fs.existsSync(f50) && fs.existsSync(f75)) {
-          keyframePaths = [f0, f25, f50, f75];
+        if (
+          fs.existsSync(f0) &&
+          fs.existsSync(f20) &&
+          fs.existsSync(f40) &&
+          fs.existsSync(f60) &&
+          fs.existsSync(f80) &&
+          fs.existsSync(f95)
+        ) {
+          keyframePaths = [f0, f20, f40, f60, f80, f95];
           if (!fs.existsSync(originalImagePath)) {
             fs.copyFileSync(f0, originalImagePath);
           }
@@ -2130,9 +2175,11 @@ ${this.theme.analysisRules}`;
             context.videoDurationSeconds = duration;
 
             const t0 = Math.max(0.5, 0.0 * duration);
-            const t25 = 0.25 * duration;
-            const t50 = 0.5 * duration;
-            const t75 = 0.75 * duration;
+            const t20 = 0.20 * duration;
+            const t40 = 0.40 * duration;
+            const t60 = 0.60 * duration;
+            const t80 = 0.80 * duration;
+            const t95 = 0.95 * duration;
 
             const extractFrame = (ss: number, outPath: string): Promise<void> => {
               const cmd = `"${config.binaries.ffmpeg || "ffmpeg"}" -y -ss ${ss.toFixed(3)} -i "${context.originalVideoPath}" -vframes 1 -q:v 2 "${outPath}"`;
@@ -2146,9 +2193,11 @@ ${this.theme.analysisRules}`;
 
             await Promise.all([
               extractFrame(t0, f0),
-              extractFrame(t25, f25),
-              extractFrame(t50, f50),
-              extractFrame(t75, f75),
+              extractFrame(t20, f20),
+              extractFrame(t40, f40),
+              extractFrame(t60, f60),
+              extractFrame(t80, f80),
+              extractFrame(t95, f95),
               TranscriptionService.transcribe(context).catch((txErr) => {
                 pipelineLogger.warn(
                   `Transcription failed in parallel: ${txErr instanceof Error ? txErr.message : txErr}`,
@@ -2158,10 +2207,10 @@ ${this.theme.analysisRules}`;
               })
             ]);
 
-            keyframePaths = [f0, f25, f50, f75];
+            keyframePaths = [f0, f20, f40, f60, f80, f95];
             // Copy frame_0.jpg to originalImagePath so downstream code has a valid image to analyze/edit
             fs.copyFileSync(f0, originalImagePath);
-            pipelineLogger.info("Successfully extracted 4 keyframes in parallel.", "DirectUploader");
+            pipelineLogger.info("Successfully extracted 6 keyframes in parallel.", "DirectUploader");
           } catch (err) {
             pipelineLogger.warn(
               `Keyframe extraction failed: ${err instanceof Error ? err.message : err}. Falling back to original.jpg at 1.0s.`,
@@ -2361,6 +2410,15 @@ ${this.theme.analysisRules}`;
           context.aiRecommendedSettings.originalAudio = true;
           context.aiRecommendedSettings.captions = false;
           context.aiRecommendedSettings.sticker = true;
+        }
+      }
+      // If reviewSettings has undefined crop values, inherit them from AI recommendations
+      if (context.reviewSettings && context.aiRecommendedSettings) {
+        if (context.reviewSettings.cropTopPct === undefined || (context.reviewSettings.cropTopPct as any) === null) {
+          context.reviewSettings.cropTopPct = context.aiRecommendedSettings.cropTopPct;
+        }
+        if (context.reviewSettings.cropBottomPct === undefined || (context.reviewSettings.cropBottomPct as any) === null) {
+          context.reviewSettings.cropBottomPct = context.aiRecommendedSettings.cropBottomPct;
         }
       }
 

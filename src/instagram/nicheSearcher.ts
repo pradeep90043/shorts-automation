@@ -91,11 +91,12 @@ export async function searchViralReels(
   viralThreshold: number,
   limitPerTag: number,
   reelHistory: { has: (shortcode: string) => boolean },
+  scraperEnv?: Record<string, string>,
 ): Promise<ScoredReel[]> {
   // All hashtags fetched in ONE Python process — single login, rate-limit-safe delays.
   let rawReels: import("./channelFeed").ScoredReelSummary[] = [];
   try {
-    rawReels = await searchAllHashtagReels(hashtags, limitPerTag);
+    rawReels = await searchAllHashtagReels(hashtags, limitPerTag, scraperEnv);
   } catch (err) {
     if (err instanceof InstagramRateLimitError) {
       throw err; // propagate so ChannelWatcher can set cooldown

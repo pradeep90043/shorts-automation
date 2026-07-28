@@ -39,6 +39,7 @@ const FETCH_SCRIPT = path.resolve(__dirname, "../../scripts/fetch_reels.py");
  */
 export async function listChannelReels(
   username: string,
+  scraperEnv?: Record<string, string>,
 ): Promise<ChannelReelSummary[]> {
   pipelineLogger.info(
     `[ChannelFeed] Fetching reels for @${username} via Instagram mobile API...`,
@@ -51,7 +52,11 @@ export async function listChannelReels(
     execFile(
       PYTHON3,
       args,
-      { timeout: 60000, maxBuffer: 5 * 1024 * 1024 },
+      {
+        timeout: 60000,
+        maxBuffer: 5 * 1024 * 1024,
+        env: { ...process.env, ...scraperEnv },
+      },
       (err, stdout, stderr) => {
         const stderrText = stderr.trim();
         if (stderrText) {
@@ -114,6 +119,7 @@ export async function listChannelReels(
 export async function searchAllHashtagReels(
   hashtags: string[],
   limitPerTag = 20,
+  scraperEnv?: Record<string, string>,
 ): Promise<ScoredReelSummary[]> {
   const tags = hashtags.map((t) => t.replace(/^#/, "")).filter(Boolean);
   if (tags.length === 0) return [];
@@ -137,7 +143,11 @@ export async function searchAllHashtagReels(
     execFile(
       PYTHON3,
       args,
-      { timeout: timeoutMs, maxBuffer: 10 * 1024 * 1024 },
+      {
+        timeout: timeoutMs,
+        maxBuffer: 10 * 1024 * 1024,
+        env: { ...process.env, ...scraperEnv },
+      },
       (err, stdout, stderr) => {
         const stderrTrimmed = stderr.trim();
         if (stderrTrimmed) {
