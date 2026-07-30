@@ -3414,8 +3414,9 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         fs.copyFileSync(baseVideoPath, finalVideoPath);
       }
 
-      // 3.5 — Append verdict sequence (CodeOrCap only)
-      if (this.profile.key.toLowerCase() === "codeorcap") {
+      // 3.5 — Append verdict / CTA sequence (CodeOrCap + Storiyum)
+      const _pk = this.profile.key.toLowerCase();
+      if (_pk === "codeorcap" || _pk === "storiyum") {
         const withVerdictPath = path.join(tempDir, "video_with_verdict.mp4");
         const appended = await this.appendVerdictSequence(context, finalVideoPath, withVerdictPath);
         if (appended) finalVideoPath = withVerdictPath;
@@ -4344,22 +4345,17 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
   }
 
   /**
-   * Appends a verdict sequence to the end of the compiled video (CodeOrCap only).
+   * Appends a verdict / CTA sequence to the end of the compiled video.
    *
-   * Two modes depending on whether the avatar bg video is present:
+   * Supported profiles:
+   *   codeorcap — verdict + score PNG, avatar bg (codeorcap_verdict_bg.mp4)
+   *               Falls back to blurred-frame + animated sticker when asset is absent.
+   *   storiyum  — CTA only (no score), avatar bg (storiyum_cta.mp4).
+   *               Skips silently when asset is absent.
    *
-   * AVATAR MODE (assets/verdict-clips/codeorcap_verdict_bg.mp4 exists):
-   *   The pre-generated avatar video is the complete visual. Original audio is
-   *   already stripped (done at processing time). TTS speaks the actual verdict +
-   *   score; the avatar video loops if TTS runs long. Score PNG fades in when
-   *   the TTS says "Score" (~40% into the TTS duration), matching when the avatar
-   *   says "out of 10" in the source video (transcript: ~2.4s mark in a 9.5s clip).
-   *
-   * FALLBACK MODE (no avatar bg video):
-   *   Uses the blurred last frame of the main video as background and animates the
-   *   existing mood sticker from bottom-left to centre-frame.
-   *
-   * Returns false and skips gracefully on any error or missing asset.
+   * In avatar mode, TTS is split into two segments and each is time-stretched via
+   * atempo to match the avatar's Whisper transcript timestamps exactly, keeping
+   * voice and lip movements in sync.
    */
   private async appendVerdictSequence(
     context: PipelineContext,
@@ -4367,18 +4363,59 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     outputPath: string,
   ): Promise<boolean> {
     const profileKey = this.profile.key.toLowerCase();
-    if (profileKey !== "codeorcap") return false;
 
     const tempDir = context.tempDir;
     const stickerTailPath = path.join(tempDir, "verdict_sticker_tail.mov");
+    // Intermediate TTS files — cleaned up in finally
+    const ttsIntermediates = [
+      path.join(tempDir, "vd_seg1.mp3"),
+      path.join(tempDir, "vd_seg2.mp3"),
+      path.join(tempDir, "vd_seg1_s.mp3"),
+      path.join(tempDir, "vd_seg2_s.mp3"),
+      path.join(tempDir, "vd_silence.mp3"),
+      path.join(tempDir, "vd_concat.txt"),
+    ];
+
+    // Per-profile config: avatar asset file + Whisper transcript timings
+    const PROFILE_CFG = {
+      codeorcap: {
+        assetFile:    "codeorcap_verdict_bg.mp4",
+        ttsKey:       "codeorcap",          // voice key for TTSService
+        seg1Target:   3.46,                 // Whisper: 0.00–3.46s
+        gapDuration:  0.60,                 // Whisper: 3.46–4.06s
+        seg2Target:   3.76,                 // Whisper: 4.06–7.82s
+        scoreEnabled: true as const,
+        scorePinStart: "2.40",              // avatar says "out of 10" at 2.40s
+        scorePinEnd:   "3.46",
+        scoreFadeOut:  "3.06",
+      },
+      storiyum: {
+        assetFile:    "storiyum_cta.mp4",
+        ttsKey:       "storiyum_cta",       // English female voice (NeerjaNeural)
+        seg1Target:   1.44,                 // Whisper: 0.00–1.44s
+        gapDuration:  0.88,                 // Whisper: 1.44–2.32s
+        seg2Target:   0.82,                 // Whisper: 2.32–3.14s
+        scoreEnabled: false as const,
+      },
+    } as const;
+
+    type ProfileKey = keyof typeof PROFILE_CFG;
+    const cfg = (PROFILE_CFG as Record<string, typeof PROFILE_CFG[ProfileKey]>)[profileKey];
+    if (!cfg) return false;
 
     try {
-      const customBgPath = path.join(config.paths.assetsDir, "verdict-clips", "codeorcap_verdict_bg.mp4");
-      const useAvatarBg = fs.existsSync(customBgPath);
+      const customBgPath = path.join(config.paths.assetsDir, "verdict-clips", cfg.assetFile);
+      const useAvatarBg  = fs.existsSync(customBgPath);
 
-      // 1 — Resolve sticker (only needed in fallback mode)
+      const score = Math.min(10, Math.max(1, Math.round((context.metadata?.factCheckScore ?? 70) / 10)));
+
+      // 1 — Resolve sticker (CodeOrCap fallback only — Storiyum skips if asset missing)
       let stickerPath = "";
       if (!useAvatarBg) {
+        if (profileKey !== "codeorcap") {
+          pipelineLogger.info(`CTA asset not found for "${profileKey}" — skipping.`, "DirectUploader");
+          return false;
+        }
         const mood = normalizeMood(context.metadata?.mood);
         stickerPath = path.join(config.paths.assetsDir, "stickers", profileKey, `${mood}.mov`);
         if (!fs.existsSync(stickerPath)) {
@@ -4390,66 +4427,152 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         }
       }
 
-      // 2 — Generate TTS
-      // Avatar transcript: "The verdict of this video is [pause] out of 10."
-      // We overlay TTS audio that speaks the actual verdict text + score.
-      const verdict = context.metadata?.verdict ?? "this video delivers quality content";
-      const score = Math.min(10, Math.max(1, Math.round((context.metadata?.factCheckScore ?? 70) / 10)));
-      const ttsScript =
-        `The verdict of this video is: ${verdict}. ` +
-        `Score: ${score} out of 10. ` +
-        `For more info, check the caption. ` +
-        `For tech reels, follow CodeOrCap.`;
-      const ttsTempPath = path.join(tempDir, "verdict_tts.mp3");
+      // 2 — Generate lip-synced TTS (two segments stretched to transcript timings)
+      const seg1Text = profileKey === "codeorcap"
+        ? `The verdict of this video is ${score} out of 10.`
+        : `Every story has a lesson.`;
+      const seg2Text = profileKey === "codeorcap"
+        ? `For more info check the caption. For tech reels, follow CodeOrCap.`
+        : `Follow Storiyum.`;
 
-      let ttsDuration: number;
-      try {
-        ttsDuration = await this.tts.generateVoiceover(ttsScript, ttsTempPath, profileKey);
-      } catch (err) {
-        pipelineLogger.warn(
-          `Verdict TTS failed — skipping verdict sequence: ${err instanceof Error ? err.message : err}`,
-          "DirectUploader",
+      const [seg1Path, seg2Path, str1Path, str2Path, silPath, concatList] = ttsIntermediates;
+      const finalTtsPath = path.join(tempDir, "verdict_tts.mp3");
+
+      // atempo = original/target — pitch-preserving; chains two filters outside 0.5–2.0
+      const atempoFilter = (orig: number, target: number): string => {
+        const r = orig / target;
+        if (r >= 0.5 && r <= 2.0) return `atempo=${r.toFixed(4)}`;
+        const half = Math.sqrt(r);
+        return `atempo=${half.toFixed(4)},atempo=${half.toFixed(4)}`;
+      };
+
+      let ttsTempPath: string;
+      let clipDuration: number;
+      let scoreShowStart: string;
+      let scoreShowEnd: string;
+      let scoreFadeOutStart: string;
+
+      if (useAvatarBg) {
+        try {
+          await this.tts.generateVoiceover(seg1Text, seg1Path, cfg.ttsKey);
+          await this.tts.generateVoiceover(seg2Text, seg2Path, cfg.ttsKey);
+        } catch (err) {
+          pipelineLogger.warn(
+            `Verdict TTS failed — skipping: ${err instanceof Error ? err.message : err}`,
+            "DirectUploader",
+          );
+          return false;
+        }
+
+        const dur1 = await this.getVideoDuration(seg1Path);
+        const dur2 = await this.getVideoDuration(seg2Path);
+
+        await new Promise<void>((resolve, reject) => {
+          exec(`${config.binaries.ffmpeg} -y -i "${seg1Path}" -af "${atempoFilter(dur1, cfg.seg1Target)}" "${str1Path}"`,
+            (err) => (err ? reject(err) : resolve()));
+        });
+        await new Promise<void>((resolve, reject) => {
+          exec(`${config.binaries.ffmpeg} -y -i "${seg2Path}" -af "${atempoFilter(dur2, cfg.seg2Target)}" "${str2Path}"`,
+            (err) => (err ? reject(err) : resolve()));
+        });
+        // Silence gap at 24 kHz mono (Edge TTS sample rate)
+        await new Promise<void>((resolve, reject) => {
+          exec(`${config.binaries.ffmpeg} -y -f lavfi -i anullsrc=r=24000:cl=mono -t ${cfg.gapDuration} -c:a libmp3lame -q:a 4 "${silPath}"`,
+            (err) => (err ? reject(err) : resolve()));
+        });
+        fs.writeFileSync(concatList,
+          `file '${str1Path.replace(/\\/g, "/")}'\n` +
+          `file '${silPath.replace(/\\/g, "/")}'\n` +
+          `file '${str2Path.replace(/\\/g, "/")}'\n`,
         );
-        return false;
+        await new Promise<void>((resolve, reject) => {
+          exec(`${config.binaries.ffmpeg} -y -f concat -safe 0 -i "${concatList}" -ar 24000 -ac 1 -c:a libmp3lame -q:a 2 "${finalTtsPath}"`,
+            (err) => (err ? reject(err) : resolve()));
+        });
+
+        ttsTempPath  = finalTtsPath;
+        clipDuration = await this.getVideoDuration(customBgPath);
+
+        // Score pin timing from Whisper transcript (CodeOrCap only; Storiyum has no score)
+        scoreShowStart    = cfg.scoreEnabled ? (cfg as any).scorePinStart : "-1";
+        scoreShowEnd      = cfg.scoreEnabled ? (cfg as any).scorePinEnd   : "-1";
+        scoreFadeOutStart = cfg.scoreEnabled ? (cfg as any).scoreFadeOut  : "-1";
+      } else {
+        // ── FALLBACK MODE: single-script TTS, heuristic timing ───────────────────
+        const verdict = context.metadata?.verdict ?? "this video delivers quality content";
+        const ttsScript =
+          `The verdict of this video is: ${verdict}. ` +
+          `Score: ${score} out of 10. ` +
+          `For more info, check the caption. ` +
+          `For tech reels, follow CodeOrCap.`;
+        const singlePath = path.join(tempDir, "verdict_tts.mp3");
+        let ttsDuration: number;
+        try {
+          ttsDuration = await this.tts.generateVoiceover(ttsScript, singlePath, profileKey);
+        } catch (err) {
+          pipelineLogger.warn(
+            `Verdict TTS failed — skipping: ${err instanceof Error ? err.message : err}`,
+            "DirectUploader",
+          );
+          return false;
+        }
+        ttsTempPath  = singlePath;
+        clipDuration = ttsDuration + 1.0;
+
+        const start = Math.max(1.5, ttsDuration * 0.40);
+        const end   = Math.min(clipDuration - 0.5, start + 3.0);
+        scoreShowStart    = start.toFixed(2);
+        scoreShowEnd      = end.toFixed(2);
+        scoreFadeOutStart = (end - 0.40).toFixed(2);
       }
 
-      const clipDuration = ttsDuration + 1.0;
-
-      // 3 — Render score PNG
+      // 3 — Render score PNG (CodeOrCap only)
       const scorePngPath = path.join(tempDir, "verdict_score.png");
-      await this.renderScorePng(score, scorePngPath);
-
-      // Score timing: appears at ~40% of TTS duration (when "Score: N out of 10" is spoken).
-      // In the avatar video this aligns with the avatar saying "out of 10" at ~2.4s.
-      const scoreShowStart = Math.max(1.5, ttsDuration * 0.40).toFixed(2);
-      const scoreShowEnd = Math.min(clipDuration - 0.5, parseFloat(scoreShowStart) + 3.0).toFixed(2);
-      const scoreFadeOutStart = (parseFloat(scoreShowEnd) - 0.4).toFixed(2);
+      if (cfg.scoreEnabled) await this.renderScorePng(score, scorePngPath);
 
       const verdictClipPath = path.join(tempDir, "verdict_clip.mp4");
 
       if (useAvatarBg) {
-        // ── AVATAR MODE ──────────────────────────────────────────────────────────
-        // Inputs: [0]=avatar bg (looped)  [1]=score PNG  [2]=TTS audio
         const bgInputArgs = `-stream_loop -1 -t ${clipDuration.toFixed(2)} -i "${customBgPath}"`;
-        const filterComplex = [
-          `[0:v]setpts=PTS-STARTPTS[bg]`,
-          `[1:v]fade=in:st=${scoreShowStart}:d=0.4,fade=out:st=${scoreFadeOutStart}:d=0.4[scoreCard]`,
-          `[bg][scoreCard]overlay=x=(W-overlay_w)/2:y=H*0.08:enable='between(t,${scoreShowStart},${scoreShowEnd})'[out]`,
-        ].join(";");
 
-        const cmd =
-          `${config.binaries.ffmpeg} -y ` +
-          `${bgInputArgs} ` +
-          `-i "${scorePngPath}" ` +
-          `-i "${ttsTempPath}" ` +
-          `-filter_complex "${filterComplex}" ` +
-          `-map "[out]" -map "2:a" ` +
-          `-c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p ` +
-          `-c:a aac -shortest ` +
-          `"${verdictClipPath}"`;
+        let filterComplex: string;
+        let mapArgs: string;
+        let extraInputs = "";
+
+        if (cfg.scoreEnabled) {
+          // CodeOrCap: bg + score PNG overlay + TTS audio padded to full clip length
+          // Inputs: [0]=bg  [1]=score PNG  [2]=TTS
+          extraInputs = `-i "${scorePngPath}" `;
+          filterComplex = [
+            `[0:v]setpts=PTS-STARTPTS[bg]`,
+            `[1:v]fade=in:st=${scoreShowStart}:d=0.4,fade=out:st=${scoreFadeOutStart}:d=0.4[scoreCard]`,
+            `[bg][scoreCard]overlay=x=(W-overlay_w)/2:y=H*0.08:enable='between(t,${scoreShowStart},${scoreShowEnd})'[out_v]`,
+            `[2:a]apad=whole_dur=${clipDuration.toFixed(2)}[out_a]`,
+          ].join(";");
+          mapArgs = `-map "[out_v]" -map "[out_a]"`;
+        } else {
+          // Storiyum: bg + TTS audio only — no score overlay
+          // Inputs: [0]=bg  [1]=TTS
+          filterComplex = [
+            `[0:v]setpts=PTS-STARTPTS[out_v]`,
+            `[1:a]apad=whole_dur=${clipDuration.toFixed(2)}[out_a]`,
+          ].join(";");
+          mapArgs = `-map "[out_v]" -map "[out_a]"`;
+        }
 
         await new Promise<void>((resolve, reject) => {
-          exec(cmd, (err) => (err ? reject(err) : resolve()));
+          exec(
+            `${config.binaries.ffmpeg} -y ` +
+            `${bgInputArgs} ` +
+            extraInputs +
+            `-i "${ttsTempPath}" ` +
+            `-filter_complex "${filterComplex}" ` +
+            `${mapArgs} ` +
+            `-c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p ` +
+            `-c:a aac ` +
+            `"${verdictClipPath}"`,
+            (err) => (err ? reject(err) : resolve()),
+          );
         });
       } else {
         // ── FALLBACK MODE ────────────────────────────────────────────────────────
@@ -4531,6 +4654,9 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       return false;
     } finally {
       if (fs.existsSync(stickerTailPath)) fs.unlinkSync(stickerTailPath);
+      for (const f of ttsIntermediates) {
+        if (fs.existsSync(f)) fs.unlinkSync(f);
+      }
     }
   }
 }
