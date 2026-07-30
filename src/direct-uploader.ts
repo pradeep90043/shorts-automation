@@ -1423,6 +1423,12 @@ ${this.theme.analysisRules}`;
           ? `✅ *Uploaded successfully!*`
           : `⚠️ *Upload partially failed*`;
 
+      const { shortcode, channel } = pending.context;
+      const sourceLine = shortcode
+        ? `*Source:* [instagram.com/reel/${escapeMarkdown(shortcode)}](https://www.instagram.com/reel/${shortcode}/)` +
+          (channel ? ` \\(@${escapeMarkdown(channel)}\\)` : "")
+        : "";
+
       const successText =
         `${headline}\n\n` +
         failBlock +
@@ -1430,6 +1436,7 @@ ${this.theme.analysisRules}`;
         (channelLines ? `${channelLines}\n` : "") +
         (instaLines ? `${instaLines}\n` : "") +
         (fbLines ? `${fbLines}\n` : "") +
+        (sourceLine ? `\n${sourceLine}\n` : "") +
         `\n*ID:* ${escapeMarkdown(id)}`;
 
       const successMessageId = await this.telegram.sendSuccessMessageWithRevoke(
