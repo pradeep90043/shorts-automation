@@ -4344,6 +4344,19 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     await sharp(Buffer.from(svg)).png().toFile(outputPath);
   }
 
+  private verdictCategory(verdict: string): { label: string; color: string } {
+    const v = verdict.toLowerCase();
+    if (v.includes("partially true") || v.includes("mostly true") || v.includes("largely true"))
+      return { label: "PARTIALLY TRUE", color: "#FFD700" };
+    if (v.includes("partially false") || v.includes("partially wrong") || v.includes("misleading") || v.includes("mostly false"))
+      return { label: "PARTIALLY WRONG", color: "#FF8C00" };
+    if (v.includes("false") || v.includes("wrong") || v.includes("incorrect") || v.includes("fake") || v.includes("myth"))
+      return { label: "WRONG", color: "#FF4444" };
+    if (v.includes("true") || v.includes("correct") || v.includes("accurate") || v.includes("verified") || v.includes("fact"))
+      return { label: "TRUE", color: "#00CC66" };
+    return { label: "UNVERIFIED", color: "#FFFFFF" };
+  }
+
   /**
    * Appends a verdict / CTA sequence to the end of the compiled video.
    *
@@ -4353,9 +4366,8 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
    *   storiyum  — CTA only (no score), avatar bg (storiyum_cta.mp4).
    *               Skips silently when asset is absent.
    *
-   * In avatar mode, TTS is split into two segments and each is time-stretched via
-   * atempo to match the avatar's Whisper transcript timestamps exactly, keeping
-   * voice and lip movements in sync.
+   * Avatar mode uses the clip's original audio; verdict category and score are shown
+   * as drawtext overlays timed to the avatar's speech (Whisper transcript timestamps).
    */
   private async appendVerdictSequence(
     context: PipelineContext,
@@ -4407,7 +4419,9 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       const customBgPath = path.join(config.paths.assetsDir, "verdict-clips", cfg.assetFile);
       const useAvatarBg  = fs.existsSync(customBgPath);
 
-      const score = Math.min(10, Math.max(1, Math.round((context.metadata?.factCheckScore ?? 70) / 10)));
+      // factCheckScore is stored on a 1–10 scale; clamp to that range
+      const rawFCS = context.metadata?.factCheckScore ?? 7;
+      const score  = Math.min(10, Math.max(1, Math.round(rawFCS)));
 
       // 1 — Resolve sticker (CodeOrCap fallback only — Storiyum skips if asset missing)
       let stickerPath = "";
@@ -4427,79 +4441,23 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         }
       }
 
-      // 2 — Generate lip-synced TTS (two segments stretched to transcript timings)
-      const seg1Text = profileKey === "codeorcap"
-        ? `The verdict of this video is ${score} out of 10.`
-        : `Every story has a lesson.`;
-      const seg2Text = profileKey === "codeorcap"
-        ? `For more info check the caption. For tech reels, follow CodeOrCap.`
-        : `Follow Storiyum.`;
-
-      const [seg1Path, seg2Path, str1Path, str2Path, silPath, concatList] = ttsIntermediates;
-      const finalTtsPath = path.join(tempDir, "verdict_tts.mp3");
-
-      // atempo = original/target — pitch-preserving; chains two filters outside 0.5–2.0
-      const atempoFilter = (orig: number, target: number): string => {
-        const r = orig / target;
-        if (r >= 0.5 && r <= 2.0) return `atempo=${r.toFixed(4)}`;
-        const half = Math.sqrt(r);
-        return `atempo=${half.toFixed(4)},atempo=${half.toFixed(4)}`;
-      };
-
-      let ttsTempPath: string;
+      // 2 — Audio/timing setup
+      // Avatar mode uses the clip's own original audio (no TTS needed).
+      // Fallback mode generates TTS.
+      let ttsTempPath: string = "";
       let clipDuration: number;
       let scoreShowStart: string;
       let scoreShowEnd: string;
       let scoreFadeOutStart: string;
 
       if (useAvatarBg) {
-        try {
-          await this.tts.generateVoiceover(seg1Text, seg1Path, cfg.ttsKey);
-          await this.tts.generateVoiceover(seg2Text, seg2Path, cfg.ttsKey);
-        } catch (err) {
-          pipelineLogger.warn(
-            `Verdict TTS failed — skipping: ${err instanceof Error ? err.message : err}`,
-            "DirectUploader",
-          );
-          return false;
-        }
-
-        const dur1 = await this.getVideoDuration(seg1Path);
-        const dur2 = await this.getVideoDuration(seg2Path);
-
-        await new Promise<void>((resolve, reject) => {
-          exec(`${config.binaries.ffmpeg} -y -i "${seg1Path}" -af "${atempoFilter(dur1, cfg.seg1Target)}" "${str1Path}"`,
-            (err) => (err ? reject(err) : resolve()));
-        });
-        await new Promise<void>((resolve, reject) => {
-          exec(`${config.binaries.ffmpeg} -y -i "${seg2Path}" -af "${atempoFilter(dur2, cfg.seg2Target)}" "${str2Path}"`,
-            (err) => (err ? reject(err) : resolve()));
-        });
-        // Silence gap at 24 kHz mono (Edge TTS sample rate)
-        await new Promise<void>((resolve, reject) => {
-          exec(`${config.binaries.ffmpeg} -y -f lavfi -i anullsrc=r=24000:cl=mono -t ${cfg.gapDuration} -c:a libmp3lame -q:a 4 "${silPath}"`,
-            (err) => (err ? reject(err) : resolve()));
-        });
-        fs.writeFileSync(concatList,
-          `file '${str1Path.replace(/\\/g, "/")}'\n` +
-          `file '${silPath.replace(/\\/g, "/")}'\n` +
-          `file '${str2Path.replace(/\\/g, "/")}'\n`,
-        );
-        await new Promise<void>((resolve, reject) => {
-          exec(`${config.binaries.ffmpeg} -y -f concat -safe 0 -i "${concatList}" -ar 24000 -ac 1 -c:a libmp3lame -q:a 2 "${finalTtsPath}"`,
-            (err) => (err ? reject(err) : resolve()));
-        });
-
-        ttsTempPath  = finalTtsPath;
-        clipDuration = await this.getVideoDuration(customBgPath);
-
-        // Score pin timing from Whisper transcript (CodeOrCap only; Storiyum has no score)
+        clipDuration      = await this.getVideoDuration(customBgPath);
         scoreShowStart    = cfg.scoreEnabled ? (cfg as any).scorePinStart : "-1";
         scoreShowEnd      = cfg.scoreEnabled ? (cfg as any).scorePinEnd   : "-1";
         scoreFadeOutStart = cfg.scoreEnabled ? (cfg as any).scoreFadeOut  : "-1";
       } else {
-        // ── FALLBACK MODE: single-script TTS, heuristic timing ───────────────────
-        const verdict = context.metadata?.verdict ?? "this video delivers quality content";
+        // ── FALLBACK MODE: TTS, heuristic timing ─────────────────────────────────
+        const verdict   = context.metadata?.verdict ?? "this video delivers quality content";
         const ttsScript =
           `The verdict of this video is: ${verdict}. ` +
           `Score: ${score} out of 10. ` +
@@ -4533,39 +4491,41 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       const verdictClipPath = path.join(tempDir, "verdict_clip.mp4");
 
       if (useAvatarBg) {
-        const bgInputArgs = `-stream_loop -1 -t ${clipDuration.toFixed(2)} -i "${customBgPath}"`;
+        // Avatar mode: original audio from clip + optional score PNG + verdict drawtext
+        // Font path escaped for FFmpeg filter parser (single-quotes bypass : parsing)
+        const fontFile = `'C:/Windows/Fonts/arialbd.ttf'`;
 
         let filterComplex: string;
         let mapArgs: string;
         let extraInputs = "";
 
         if (cfg.scoreEnabled) {
-          // CodeOrCap: bg + score PNG overlay + TTS audio padded to full clip length
-          // Inputs: [0]=bg  [1]=score PNG  [2]=TTS
+          // CodeOrCap: [0]=avatar clip  [1]=score PNG
+          const { label: verdictLabel, color: verdictColor } = this.verdictCategory(
+            context.metadata?.verdict ?? "",
+          );
           extraInputs = `-i "${scorePngPath}" `;
           filterComplex = [
             `[0:v]setpts=PTS-STARTPTS[bg]`,
             `[1:v]fade=in:st=${scoreShowStart}:d=0.4,fade=out:st=${scoreFadeOutStart}:d=0.4[scoreCard]`,
-            `[bg][scoreCard]overlay=x=(W-overlay_w)/2:y=H*0.08:enable='between(t,${scoreShowStart},${scoreShowEnd})'[out_v]`,
-            `[2:a]apad=whole_dur=${clipDuration.toFixed(2)}[out_a]`,
+            `[bg][scoreCard]overlay=x=(W-overlay_w)/2:y=H*0.08:enable='between(t,${scoreShowStart},${scoreShowEnd})'[withScore]`,
+            `[withScore]drawtext=fontfile=${fontFile}:text='${verdictLabel}':fontsize=90:fontcolor=${verdictColor}` +
+              `:x=(w-tw)/2:y=h*0.80:shadowcolor=black:shadowx=5:shadowy=5` +
+              `:box=1:boxcolor=black@0.65:boxborderw=20` +
+              `:enable='between(t,0.3,${scoreShowEnd})'[out_v]`,
           ].join(";");
-          mapArgs = `-map "[out_v]" -map "[out_a]"`;
+          mapArgs = `-map "[out_v]" -map 0:a`;
         } else {
-          // Storiyum: bg + TTS audio only — no score overlay
-          // Inputs: [0]=bg  [1]=TTS
-          filterComplex = [
-            `[0:v]setpts=PTS-STARTPTS[out_v]`,
-            `[1:a]apad=whole_dur=${clipDuration.toFixed(2)}[out_a]`,
-          ].join(";");
-          mapArgs = `-map "[out_v]" -map "[out_a]"`;
+          // Storiyum: avatar clip video + original audio only — no text overlays
+          filterComplex = `[0:v]setpts=PTS-STARTPTS[out_v]`;
+          mapArgs = `-map "[out_v]" -map 0:a`;
         }
 
         await new Promise<void>((resolve, reject) => {
           exec(
             `${config.binaries.ffmpeg} -y ` +
-            `${bgInputArgs} ` +
+            `-i "${customBgPath}" ` +
             extraInputs +
-            `-i "${ttsTempPath}" ` +
             `-filter_complex "${filterComplex}" ` +
             `${mapArgs} ` +
             `-c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p ` +
