@@ -3414,9 +3414,9 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         fs.copyFileSync(baseVideoPath, finalVideoPath);
       }
 
-      // 3.5 — Append verdict / CTA sequence (CodeOrCap + Storiyum)
+      // 3.5 — Append verdict / CTA sequence (CodeOrCap + Storiyum + Prompt Gag)
       const _pk = this.profile.key.toLowerCase();
-      if (_pk === "codeorcap" || _pk === "storiyum") {
+      if (_pk === "codeorcap" || _pk === "storiyum" || _pk === "prompt_gag") {
         const withVerdictPath = path.join(tempDir, "video_with_verdict.mp4");
         const appended = await this.appendVerdictSequence(context, finalVideoPath, withVerdictPath);
         if (appended) finalVideoPath = withVerdictPath;
@@ -4407,6 +4407,14 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         seg1Target:   1.44,                 // Whisper: 0.00–1.44s
         gapDuration:  0.88,                 // Whisper: 1.44–2.32s
         seg2Target:   0.82,                 // Whisper: 2.32–3.14s
+        scoreEnabled: false as const,
+      },
+      prompt_gag: {
+        assetFile:    "prompt_gag_cta.mp4",
+        ttsKey:       "prompt_gag",
+        seg1Target:   2.0,
+        gapDuration:  0.5,
+        seg2Target:   1.0,
         scoreEnabled: false as const,
       },
     } as const;
