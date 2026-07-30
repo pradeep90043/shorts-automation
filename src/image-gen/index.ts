@@ -168,7 +168,115 @@ Replace the example with real content from the image. Include ALL items visible.
     return content;
   }
 
-  // Step 2: Pollinations → generate AI visual background incorporating post's visual elements
+  private async generateBackgroundWombo(stylePrompt: string): Promise<Buffer> {
+    pipelineLogger.info(
+      "Generating background image with Dream.ai…",
+      "PollinationsImageGenerator",
+    );
+
+    // 1. Get Firebase Anonymous ID Token
+    const authRes = await fetch(
+      "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=AIzaSyDCvp5MTJLUdtBYEKYWXJrlLzu1zuKM6Xw",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ returnSecureToken: true }),
+      }
+    );
+
+    if (!authRes.ok) {
+      throw new Error(`Dream AI Auth failed with status ${authRes.status}`);
+    }
+
+    const authData = (await authRes.json()) as any;
+    const token = authData.idToken;
+    if (!token) {
+      throw new Error("Dream AI Auth token not returned in signup response");
+    }
+
+    const headers = {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "X-App-Version": "WEB-7.0.4",
+      "X-Service": "Dream",
+      "service": "Dream",
+      "Accept": "*/*",
+      "Origin": "https://dream.ai",
+      "Referer": "https://dream.ai/",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+    };
+
+    // 2. Submit Task Creation Request
+    const createRes = await fetch("https://api.dream.ai/api/v2/tasks/", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        is_premium: false,
+        input_spec: {
+          prompt: stylePrompt,
+          style: 180, // Default Wombo Dream art style
+          aspect_ratio: "ratio_9_16",
+          gen_type: "NORMAL",
+        },
+      }),
+    });
+
+    if (!createRes.ok) {
+      throw new Error(`Dream AI Task Creation failed: HTTP ${createRes.status} - ${await createRes.text()}`);
+    }
+
+    const taskData = (await createRes.json()) as any;
+    const taskId = taskData.id;
+    if (!taskId) {
+      throw new Error("Dream AI Task ID not returned in creation response");
+    }
+
+    // 3. Poll Task Status until completed
+    pipelineLogger.info(`Dream AI task started (ID: ${taskId}). Polling status…`, "PollinationsImageGenerator");
+    const statusUrl = `https://api.dream.ai/api/v2/tasks/batch?ids=${taskId}`;
+    let imageUrl: string | null = null;
+    let finished = false;
+    let attempts = 40; // up to 120 seconds (3s intervals)
+
+    while (!finished && attempts > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      const statusRes = await fetch(statusUrl, { headers });
+      if (statusRes.ok) {
+        const tasks = (await statusRes.json()) as any[];
+        if (tasks && tasks[0]) {
+          const task = tasks[0];
+          if (task.state === "completed" || task.state === "succeeded") {
+            imageUrl = task.result?.final || (task.photo_url_list && task.photo_url_list[0]);
+            finished = true;
+          } else if (task.state === "failed") {
+            throw new Error(`Dream AI task generation failed: ${task.error || "unknown error"}`);
+          }
+        }
+      }
+      attempts--;
+    }
+
+    if (!finished) {
+      throw new Error("Dream AI task generation timed out");
+    }
+    if (!imageUrl) {
+      throw new Error("Dream AI task succeeded but no final image URL found");
+    }
+
+    pipelineLogger.info(`Dream AI image generated: ${imageUrl}. Downloading…`, "PollinationsImageGenerator");
+    const imageRes = await fetch(imageUrl);
+    if (!imageRes.ok) {
+      throw new Error(`Failed to download Dream AI image: HTTP ${imageRes.status}`);
+    }
+
+    const buffer = Buffer.from(await imageRes.arrayBuffer());
+    return sharp(buffer)
+      .resize(CANVAS_W, CANVAS_H, { fit: "cover", position: "center" })
+      .png()
+      .toBuffer();
+  }
+
+  // Step 2: Generate AI visual background incorporating post's visual elements
   private async generateBackground(
     content: InfographicContent & { visualContext?: string },
   ): Promise<Buffer> {
@@ -184,6 +292,18 @@ Replace the example with real content from the image. Include ALL items visible.
       "premium tech documentary aesthetic, high contrast, vertical portrait 9:16 format",
       "yellow neon glow emanating from card borders, dark ambient lighting, cinematic",
     ].join(", ");
+
+    if (process.env.IMAGE_GEN_PROVIDER === "dream") {
+      try {
+        return await this.generateBackgroundWombo(stylePrompt);
+      } catch (err) {
+        pipelineLogger.error(
+          "Dream AI image generation failed. Falling back to Pollinations…",
+          err,
+          "PollinationsImageGenerator",
+        );
+      }
+    }
 
     const encodedPrompt = encodeURIComponent(stylePrompt);
     const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${CANVAS_W}&height=${CANVAS_H}&model=flux&nologo=true&enhance=false`;

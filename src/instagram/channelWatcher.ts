@@ -4,7 +4,7 @@ import { WatchStore, QueuedReel } from "../utils/watchStore";
 import { ReelHistoryStore } from "../utils/reelHistoryStore";
 import { JobDatabase } from "../utils/db";
 import { listChannelReels } from "./channelFeed";
-import { buildHashtagsForNiche, searchViralReels, ScoredReel, InstagramRateLimitError } from "./nicheSearcher";
+import { buildHashtagsForNiche, searchViralReels, ScoredReel } from "./nicheSearcher";
 import { pipelineLogger } from "../utils/logger";
 
 /**
@@ -34,27 +34,112 @@ export class ChannelWatcher {
     this.db = new JobDatabase(dbKey);
   }
 
-  private getScraperEnv(): Record<string, string> {
-    const envs: Record<string, string> = {};
-    const prefix = `${this.profile.key.toUpperCase()}_`;
+  private getScraperEnvCandidates(): Record<string, string>[] {
+    const candidates: Record<string, string>[] = [];
 
-    const username = process.env[`${prefix}INSTAGRAM_USERNAME`] || process.env.INSTAGRAM_USERNAME;
-    const password = process.env[`${prefix}INSTAGRAM_PASSWORD`] || process.env.INSTAGRAM_PASSWORD;
-    const totp = process.env[`${prefix}INSTAGRAM_TOTP_SECRET`] || process.env.INSTAGRAM_TOTP_SECRET;
+    // Candidate 1: Profile's own credentials
+    const ownEnv = this.buildEnvForPrefix(this.profile.key.toUpperCase());
+    if (ownEnv) candidates.push(ownEnv);
+
+    // Candidate 2: Storiyum fallback (if not already candidate 1)
+    if (this.profile.key.toLowerCase() !== "storiyum") {
+      const storiyumEnv = this.buildEnvForPrefix("STORIYUM");
+      if (storiyumEnv) candidates.push(storiyumEnv);
+    }
+
+    // Candidate 3: CodeOrCap fallback (if not already candidate 1)
+    if (this.profile.key.toLowerCase() !== "codeorcap") {
+      const codeorcapEnv = this.buildEnvForPrefix("CODEORCAP");
+      if (codeorcapEnv) candidates.push(codeorcapEnv);
+    }
+
+    // Candidate 4: Global fallback (unprefixed)
+    const globalEnv = {
+      INSTAGRAM_USERNAME: process.env.INSTAGRAM_USERNAME || "",
+      INSTAGRAM_PASSWORD: process.env.INSTAGRAM_PASSWORD || "",
+      INSTAGRAM_TOTP_SECRET: process.env.INSTAGRAM_TOTP_SECRET || "",
+      INSTAGRAM_SESSION_ID: process.env.INSTAGRAM_SESSION_ID || "",
+    };
+    if (globalEnv.INSTAGRAM_USERNAME || globalEnv.INSTAGRAM_SESSION_ID) {
+      candidates.push(globalEnv);
+    }
+
+    // Deduplicate candidates by INSTAGRAM_USERNAME or INSTAGRAM_SESSION_ID
+    const seen = new Set<string>();
+    const uniqueCandidates: Record<string, string>[] = [];
+    for (const cand of candidates) {
+      const key = cand.INSTAGRAM_USERNAME || cand.INSTAGRAM_SESSION_ID || "";
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        uniqueCandidates.push(cand);
+      }
+    }
+
+    return uniqueCandidates;
+  }
+
+  private buildEnvForPrefix(prefix: string): Record<string, string> | null {
+    const username = process.env[`${prefix}_INSTAGRAM_USERNAME`] || "";
+    const password = process.env[`${prefix}_INSTAGRAM_PASSWORD`] || "";
+    const totp = process.env[`${prefix}_INSTAGRAM_TOTP_SECRET`] || "";
+    const session = process.env[`${prefix}_INSTAGRAM_SESSION_ID`] || "";
+
+    if (!username && !session) return null;
+
+    return {
+      INSTAGRAM_USERNAME: username,
+      INSTAGRAM_PASSWORD: password,
+      INSTAGRAM_TOTP_SECRET: totp,
+      INSTAGRAM_SESSION_ID: session,
+    };
+  }
+
+  private async searchViralReelsWithFallback(
+    hashtags: string[],
+    viralThreshold: number,
+    limitPerTag: number,
+  ): Promise<ScoredReel[]> {
+    const candidates = this.getScraperEnvCandidates();
+    let lastError: Error | null = null;
     
-    // Only inherit global INSTAGRAM_SESSION_ID for default profile if CODEORCAP_INSTAGRAM_USERNAME is not set
-    const session =
-      process.env[`${prefix}INSTAGRAM_SESSION_ID`] ||
-      (this.profile.isDefault && !process.env.CODEORCAP_INSTAGRAM_USERNAME
-        ? process.env.INSTAGRAM_SESSION_ID
-        : undefined);
+    for (const env of candidates) {
+      try {
+        pipelineLogger.info(
+          `[${this.profile.brandName}] Attempting searchViralReels with account "${env.INSTAGRAM_USERNAME || 'session-only'}"...`,
+          "ChannelWatcher",
+        );
+        return await searchViralReels(hashtags, viralThreshold, limitPerTag, this.history, env);
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        pipelineLogger.warn(
+          `[${this.profile.brandName}] searchViralReels failed with account "${env.INSTAGRAM_USERNAME || 'session-only'}": ${lastError.message}. Trying next fallback...`,
+          "ChannelWatcher",
+        );
+      }
+    }
+    throw lastError || new Error("All Instagram login candidates failed");
+  }
 
-    if (username) envs.INSTAGRAM_USERNAME = username;
-    if (password) envs.INSTAGRAM_PASSWORD = password;
-    if (totp) envs.INSTAGRAM_TOTP_SECRET = totp;
-    envs.INSTAGRAM_SESSION_ID = session || "";
+  private async listChannelReelsWithFallback(channel: string): Promise<any[]> {
+    const candidates = this.getScraperEnvCandidates();
+    let lastError: Error | null = null;
 
-    return envs;
+    for (const env of candidates) {
+      try {
+        pipelineLogger.info(
+          `[${this.profile.brandName}] Attempting listChannelReels with account "${env.INSTAGRAM_USERNAME || 'session-only'}"...`,
+          "ChannelWatcher",
+        );
+        return await listChannelReels(channel, env);
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        pipelineLogger.warn(
+          `[${this.profile.brandName}] listChannelReels failed with account "${env.INSTAGRAM_USERNAME || 'session-only'}": ${lastError.message}. Trying next fallback...`,
+          "ChannelWatcher",
+        );
+      }
+    }
+    throw lastError || new Error("All Instagram login candidates failed");
   }
 
   // Pool of pre-scored reels from hashtag search, populated each daily batch.
@@ -216,19 +301,19 @@ export class ChannelWatcher {
         "ChannelWatcher",
       );
       try {
-        this.hashtagReelPool = await searchViralReels(
+        this.hashtagReelPool = await this.searchViralReelsWithFallback(
           hashtags,
           viralThreshold,
           20,
-          this.history,
-          this.getScraperEnv(),
         );
         pipelineLogger.info(
           `[${this.profile.brandName}] Hashtag search returned ${this.hashtagReelPool.length} viral reel(s)`,
           "ChannelWatcher",
         );
       } catch (err) {
-        if (err instanceof InstagramRateLimitError) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        const isRateLimit = err instanceof Error && (err.name === "InstagramRateLimitError" || errorMsg.includes("rate limited"));
+        if (isRateLimit) {
           pipelineLogger.warn(
             `[${this.profile.brandName}] Hashtag search rate-limited — falling back to channel mode`,
             "ChannelWatcher",
@@ -249,7 +334,7 @@ export class ChannelWatcher {
     if (searchMode === "channels" || searchMode === "both" || this.hashtagReelPool.length === 0) {
       for (const channel of channels) {
         try {
-          const reels = await listChannelReels(channel, this.getScraperEnv());
+          const reels = await this.listChannelReelsWithFallback(channel);
           for (const r of reels) {
             if (!this.history.has(r.shortcode)) {
               pool.push({ ...r, channel });
@@ -449,9 +534,11 @@ export class ChannelWatcher {
 
         let reels: Awaited<ReturnType<typeof listChannelReels>>;
         try {
-          reels = await listChannelReels(channel, this.getScraperEnv());
+          reels = await this.listChannelReelsWithFallback(channel);
         } catch (err) {
-          if (err instanceof InstagramRateLimitError) {
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          const isRateLimit = err instanceof Error && (err.name === "InstagramRateLimitError" || errorMsg.includes("rate limited"));
+          if (isRateLimit) {
             this.rateLimitedUntil = now + ChannelWatcher.RATE_LIMIT_COOLDOWN_MS;
             pipelineLogger.warn(
               `[${this.profile.brandName}] Instagram rate limited (429) — holding ingestion slot ${queue.length + 1} (@${channel}), retrying in 30 minutes`,

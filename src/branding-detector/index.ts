@@ -168,7 +168,7 @@ class AiBrandingDetector implements IBrandingSubDetector {
 
   public async detect(
     imagePath: string,
-    _analysis: ImageAnalysisResult,
+    analysis: ImageAnalysisResult,
   ): Promise<BrandingZone[]> {
     if (!this.freellmapi) {
       pipelineLogger.warn(
@@ -233,13 +233,40 @@ Return ONLY a raw JSON array of objects with the following schema — no markdow
         }>
       >(raw);
 
-      const zones: BrandingZone[] = items.map((item, index) => ({
-        id: `ai-branding-${index}`,
-        type: item.type,
-        boundingBox: item.box,
-        confidence: 0.9,
-        description: item.description,
-      }));
+      const zones: BrandingZone[] = items.map((item, index) => {
+        let { x, y, width, height } = item.box;
+
+        // If the model returned coordinates in pixel/1000 scale, normalize them
+        if (x > 1.0 || y > 1.0 || width > 1.0 || height > 1.0) {
+          const maxVal = Math.max(x, y, width, height);
+          if (maxVal <= 1000) {
+            x /= 1000;
+            y /= 1000;
+            width /= 1000;
+            height /= 1000;
+          } else {
+            // Raw pixel coordinates relative to the analysis resolution
+            x /= (analysis.width || 1080);
+            width /= (analysis.width || 1080);
+            y /= (analysis.height || 1920);
+            height /= (analysis.height || 1920);
+          }
+        }
+
+        // Clamp values to [0.0, 1.0] for safety
+        x = Math.max(0, Math.min(1.0, x));
+        y = Math.max(0, Math.min(1.0, y));
+        width = Math.max(0, Math.min(1.0 - x, width));
+        height = Math.max(0, Math.min(1.0 - y, height));
+
+        return {
+          id: `ai-branding-${index}`,
+          type: item.type,
+          boundingBox: { x, y, width, height },
+          confidence: 0.9,
+          description: item.description,
+        };
+      });
 
       pipelineLogger.info(
         `AI Branding Detector found ${zones.length} zones`,
