@@ -4528,8 +4528,8 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
             extraInputs +
             `-filter_complex "${filterComplex}" ` +
             `${mapArgs} ` +
-            `-c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p ` +
-            `-c:a aac ` +
+            `-c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p -r 30 ` +
+            `-c:a aac -ar 44100 -ac 2 ` +
             `"${verdictClipPath}"`,
             (err) => (err ? reject(err) : resolve()),
           );
@@ -4586,18 +4586,34 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       }
 
       // 4 — Concat main video + verdict clip
+      // Normalize scale and fps on both inputs so concat never fails on resolution
+      // or frame-rate mismatch (avatar clip is 24fps; main video is typically 30fps).
+      const concatFilter =
+        `[0:v]scale=1080:1920:force_original_aspect_ratio=decrease,` +
+        `pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[v0];` +
+        `[1:v]scale=1080:1920:force_original_aspect_ratio=decrease,` +
+        `pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[v1];` +
+        `[0:a]aresample=44100[a0];[1:a]aresample=44100[a1];` +
+        `[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]`;
       const concatCmd =
         `${config.binaries.ffmpeg} -y ` +
         `-i "${mainVideoPath}" ` +
         `-i "${verdictClipPath}" ` +
-        `-filter_complex "[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1[v][a]" ` +
+        `-filter_complex "${concatFilter}" ` +
         `-map "[v]" -map "[a]" ` +
         `-c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p ` +
         `-c:a aac ` +
         `"${outputPath}"`;
 
       await new Promise<void>((resolve, reject) => {
-        exec(concatCmd, (err) => (err ? reject(err) : resolve()));
+        exec(concatCmd, (err, _stdout, stderr) => {
+          if (err) {
+            pipelineLogger.error(`Verdict concat failed: ${stderr || err.message}`, err, "DirectUploader");
+            reject(err);
+          } else {
+            resolve();
+          }
+        });
       });
 
       pipelineLogger.checkpoint(
