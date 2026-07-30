@@ -4515,11 +4515,23 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         let extraInputs = "";
 
         if (cfg.scoreEnabled) {
-          // CodeOrCap: [0]=avatar clip  [1]=score PNG
+          // CodeOrCap: [0]=avatar clip  [1]=score PNG  [2]=score number TTS
+          // Generate TTS for just the score digit so it fills the gap the avatar
+          // leaves between "…is" and "out of 10" (avatar never said the number).
+          const numberTtsPath = path.join(tempDir, "verdict_number.mp3");
+          try {
+            await this.tts.generateVoiceover(String(score), numberTtsPath, "codeorcap");
+          } catch {
+            // non-fatal — fall back to silent gap
+          }
+          // Delay the number TTS to land just before "out of 10" (~0.35s headroom)
+          const numberDelayMs = Math.max(0, Math.round((parseFloat(scoreShowStart) - 0.35) * 1000));
+
           const { label: verdictLabel, color: verdictColor } = this.verdictCategory(
             context.metadata?.verdict ?? "",
           );
-          extraInputs = `-i "${scorePngPath}" `;
+          extraInputs = `-i "${scorePngPath}" ` + (fs.existsSync(numberTtsPath) ? `-i "${numberTtsPath}" ` : "");
+          const hasNumberTts = fs.existsSync(numberTtsPath);
           filterComplex = [
             `[0:v]setpts=PTS-STARTPTS[bg]`,
             `[1:v]fade=in:st=${scoreShowStart}:d=0.4,fade=out:st=${scoreFadeOutStart}:d=0.4[scoreCard]`,
@@ -4528,8 +4540,14 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
               `:x=(w-tw)/2:y=h*0.80:shadowcolor=black:shadowx=5:shadowy=5` +
               `:box=1:boxcolor=black@0.65:boxborderw=20` +
               `:enable='between(t,0.3,${scoreShowEnd})'[out_v]`,
+            ...(hasNumberTts
+              ? [
+                  `[2:a]adelay=${numberDelayMs}|${numberDelayMs}[num]`,
+                  `[0:a][num]amix=inputs=2:duration=first:normalize=0[out_a]`,
+                ]
+              : [`[0:a]acopy[out_a]`]),
           ].join(";");
-          mapArgs = `-map "[out_v]" -map 0:a`;
+          mapArgs = `-map "[out_v]" -map "[out_a]"`;
         } else {
           // Storiyum: avatar clip video + original audio only — no text overlays
           filterComplex = `[0:v]setpts=PTS-STARTPTS[out_v]`;
@@ -4648,6 +4666,8 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       for (const f of ttsIntermediates) {
         if (fs.existsSync(f)) fs.unlinkSync(f);
       }
+      const numberTts = path.join(context.tempDir, "verdict_number.mp3");
+      if (fs.existsSync(numberTts)) fs.unlinkSync(numberTts);
     }
   }
 }
