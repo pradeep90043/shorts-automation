@@ -8,10 +8,12 @@ export class TTSService {
     try {
       pipelineLogger.info(`Generating TTS voiceover (${script.length} chars) for channel: ${channelKey || 'default'}...`, 'TTSService');
       
-      const isEnglishMale = channelKey?.toLowerCase() === 'codeorcap';
-      const edgeVoice = isEnglishMale ? 'en-IN-PrabhatNeural' : 'hi-IN-SwaraNeural';
-      const edgeLang = isEnglishMale ? 'en-IN' : 'hi-IN';
-      const openaiVoice = isEnglishMale ? 'onyx' : 'nova';
+      const key = channelKey?.toLowerCase();
+      const isEnglishMale   = key === 'codeorcap';
+      const isEnglishFemale = key === 'storiyum_cta'; // English female for Storiyum CTA clip
+      const edgeVoice  = isEnglishMale ? 'en-IN-PrabhatNeural' : isEnglishFemale ? 'en-IN-NeerjaNeural' : 'hi-IN-SwaraNeural';
+      const edgeLang   = (isEnglishMale || isEnglishFemale) ? 'en-IN' : 'hi-IN';
+      const openaiVoice = isEnglishMale ? 'onyx' : isEnglishFemale ? 'nova' : 'nova';
       
       let generated = false;
 
