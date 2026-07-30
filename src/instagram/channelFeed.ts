@@ -74,6 +74,9 @@ export async function listChannelReels(
 
         if (err && !stdout.trim()) {
           const errMsg = stderrText || err.message.split("\n")[0];
+          if (errMsg.includes("ERROR:") || errMsg.includes("login failed") || errMsg.includes("LoginRequired") || errMsg.includes("ChallengeRequired") || errMsg.includes("2FA required")) {
+            return reject(new Error(errMsg));
+          }
           pipelineLogger.warn(
             `[ChannelFeed] fetch_reels.py failed for @${username}: ${errMsg}`,
             "ChannelFeed",
@@ -168,6 +171,10 @@ export async function searchAllHashtagReels(
         }
 
         if (err && !stdout.trim()) {
+          const errMsg = stderrTrimmed || err.message.split("\n")[0];
+          if (errMsg.includes("ERROR:") || errMsg.includes("login failed") || errMsg.includes("LoginRequired") || errMsg.includes("ChallengeRequired") || errMsg.includes("2FA required")) {
+            return reject(new Error(errMsg));
+          }
           pipelineLogger.warn(
             `[ChannelFeed] fetch_reels.py hashtag failed: ${err.message.split("\n")[0]}`,
             "ChannelFeed",

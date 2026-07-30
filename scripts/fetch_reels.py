@@ -49,13 +49,13 @@ _rate_limited = False
 def _is_rate_limit(exc: Exception) -> bool:
     """Detect Instagram 429 / throttle errors regardless of instagrapi version."""
     type_name = type(exc).__name__.lower()
-    if "throttl" in type_name or "ratelimit" in type_name:
+    if "throttl" in type_name or "ratelimit" in type_name or "feedback" in type_name:
         return True
     s = str(exc).lower()
-    return "429" in s or "too many requests" in s or "please wait" in s
+    return "429" in s or "too many requests" in s or "please wait" in s or "feedback_required" in s
 
 
-def get_client():
+def get_client(force_login=False):
     """Return an authenticated instagrapi Client, reusing saved session when possible."""
     global _rate_limited
 
@@ -65,6 +65,7 @@ def get_client():
             LoginRequired,
             ChallengeRequired,
             TwoFactorRequired,
+            FeedbackRequired,
         )
     except ImportError:
         print(
@@ -77,11 +78,11 @@ def get_client():
     ig_user = os.environ.get("INSTAGRAM_USERNAME", "").strip()
     ig_pass = os.environ.get("INSTAGRAM_PASSWORD", "").strip()
     totp_secret = os.environ.get("INSTAGRAM_TOTP_SECRET", "").strip()
+    session_id = os.environ.get("INSTAGRAM_SESSION_ID", "").strip()
 
-    if not ig_user or not ig_pass:
+    if not ig_user and not session_id:
         print(
-            "ERROR: INSTAGRAM_USERNAME and INSTAGRAM_PASSWORD must be set in .env\n"
-            "  These replace the old INSTAGRAM_SESSION_ID — instagrapi manages its own session.",
+            "ERROR: INSTAGRAM_USERNAME or INSTAGRAM_SESSION_ID must be set in .env\n",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -90,23 +91,33 @@ def get_client():
     if ig_user:
         session_file = os.path.join(os.path.dirname(SESSION_FILE), f"instagrapi_session_{ig_user}.json")
     else:
-        session_file = SESSION_FILE
+        session_file = os.path.join(os.path.dirname(SESSION_FILE), "instagrapi_session_direct.json")
 
     cl = Client()
     cl.delay_range = [1, 3]  # 1–3 s random pause between API calls
 
     # Attempt to reuse a previously saved session.
     session_loaded = False
-    if os.path.exists(session_file):
+    if not force_login and os.path.exists(session_file):
         try:
             cl.load_settings(session_file)
             session_loaded = True
             print(f"INFO: Loaded saved instagrapi session from {session_file}.", file=sys.stderr)
         except Exception as exc:
-            print(f"WARN: Could not load session file: {exc}", file=sys.stderr)
+            print(f"WARN: Could not reuse saved session file: {exc}", file=sys.stderr)
 
     def _do_login(client: "Client") -> None:
-        """Login, injecting a TOTP code when 2FA is configured."""
+        """Login, injecting a TOTP code when 2FA is configured, or login by session ID."""
+        if session_id:
+            try:
+                client.login_by_sessionid(session_id)
+                print("INFO: Logged in using INSTAGRAM_SESSION_ID.", file=sys.stderr)
+                return
+            except Exception as e:
+                print(f"WARN: Login by session ID failed: {e}", file=sys.stderr)
+                if not ig_user or not ig_pass:
+                    raise e
+                    
         if totp_secret:
             try:
                 import pyotp
@@ -120,48 +131,34 @@ def get_client():
                 )
         client.login(ig_user, ig_pass)
 
-    try:
-        _do_login(cl)
-    except TwoFactorRequired:
-        print(
-            "ERROR: 2FA required.\n"
-            "  Set INSTAGRAM_TOTP_SECRET=<your_totp_secret> in .env\n"
-            "  and install pyotp:  pip install pyotp",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    except ChallengeRequired:
-        print(
-            "ERROR: Instagram challenge required (suspicious login detected).\n"
-            "  Open the Instagram app or website, complete the security check, then retry.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    except LoginRequired:
-        if session_loaded:
-            # Saved session is stale — wipe it and try a clean login.
-            print("WARN: Saved session expired — clearing and re-logging in...", file=sys.stderr)
-            try:
-                os.remove(session_file)
-            except Exception:
-                pass
-            cl = Client()
-            cl.delay_range = [1, 3]
-            try:
-                _do_login(cl)
-            except Exception as exc2:
-                print(f"ERROR: Re-login failed: {exc2}", file=sys.stderr)
-                sys.exit(1)
-        else:
+    if not session_loaded:
+        try:
+            _do_login(cl)
+        except TwoFactorRequired:
+            print(
+                "ERROR: 2FA required.\n"
+                "  Set INSTAGRAM_TOTP_SECRET=<your_totp_secret> in .env\n"
+                "  and install pyotp:  pip install pyotp",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        except ChallengeRequired:
+            print(
+                "ERROR: Instagram challenge required (suspicious login detected).\n"
+                "  Open the Instagram app or website, complete the security check, then retry.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        except LoginRequired:
             print("ERROR: Instagram login failed (LoginRequired).", file=sys.stderr)
             sys.exit(1)
-    except Exception as exc:
-        if _is_rate_limit(exc):
-            _rate_limited = True
-            print(f"RATE_LIMITED: 429 during login: {exc}", file=sys.stderr)
-            sys.exit(2)
-        print(f"ERROR: Instagram login failed: {exc}", file=sys.stderr)
-        sys.exit(1)
+        except Exception as exc:
+            if _is_rate_limit(exc):
+                _rate_limited = True
+                print(f"RATE_LIMITED: 429 during login: {exc}", file=sys.stderr)
+                sys.exit(2)
+            print(f"ERROR: Instagram login failed: {exc}", file=sys.stderr)
+            sys.exit(1)
 
     # Persist session so subsequent runs skip the full login flow.
     try:
@@ -311,6 +308,9 @@ def fetch_hashtag_reels_with_client(cl: "object", cookies: dict, tag: str, limit
         if _is_rate_limit(exc):
             print(f"RATE_LIMITED: instagrapi #{tag_clean}", file=sys.stderr)
             sys.exit(2)
+        type_name = type(exc).__name__
+        if type_name == "LoginRequired" or "login_required" in str(exc).lower():
+            raise exc
         print(f"WARN: instagrapi hashtag failed for #{tag_clean}: {exc}", file=sys.stderr)
 
     # ── Strategy 2: direct POST sections API (requires csrftoken) ────────────
@@ -366,6 +366,13 @@ def main():
 
     cl = get_client()
 
+    # Determine dynamic session file name for retries
+    ig_user = os.environ.get("INSTAGRAM_USERNAME", "").strip()
+    if ig_user:
+        session_file = os.path.join(os.path.dirname(SESSION_FILE), f"instagrapi_session_{ig_user}.json")
+    else:
+        session_file = os.path.join(os.path.dirname(SESSION_FILE), "instagrapi_session_direct.json")
+
     if mode == "hashtag":
         if not tag:
             print("ERROR: --tag or --tags is required in hashtag mode", file=sys.stderr)
@@ -384,7 +391,21 @@ def main():
                 # Polite delay between hashtag calls (3–5 s) — avoids per-minute rate limits
                 time.sleep(3 + (i % 3))
 
-            batch = fetch_hashtag_reels_with_client(cl, cookies, tag_name, max_count)
+            try:
+                batch = fetch_hashtag_reels_with_client(cl, cookies, tag_name, max_count)
+            except Exception as exc:
+                type_name = type(exc).__name__
+                if type_name == "LoginRequired" or "login_required" in str(exc).lower():
+                    print("WARN: Saved session expired during hashtag fetch — re-logging in...", file=sys.stderr)
+                    try:
+                        os.remove(session_file)
+                    except Exception:
+                        pass
+                    cl = get_client(force_login=True)
+                    batch = fetch_hashtag_reels_with_client(cl, cookies, tag_name, max_count)
+                else:
+                    raise exc
+
             for r in batch:
                 if r["shortcode"] not in seen_codes:
                     seen_codes.add(r["shortcode"])
@@ -400,25 +421,49 @@ def main():
             print("Usage: fetch_reels.py <username> [ignored] [max_count]", file=sys.stderr)
             sys.exit(1)
 
-        try:
-            user_id = cl.user_id_from_username(username)
-        except Exception as exc:
-            if _is_rate_limit(exc):
-                _rate_limited = True
-                print(f"RATE_LIMITED: 429 resolving user_id for @{username}: {exc}", file=sys.stderr)
-                sys.exit(2)
-            print(f"WARN: Could not resolve user_id for @{username}: {exc}", file=sys.stderr)
-            sys.exit(1)
+        def fetch_channel_data(client):
+            try:
+                # Try private API resolving username first (authenticated, not rate-limited)
+                user_pk = client.user_info_by_username_v1(username).pk
+            except Exception as exc:
+                print(f"DEBUG: private API user_info_by_username_v1 failed: {exc}", file=sys.stderr)
+                type_name = type(exc).__name__
+                if type_name == "LoginRequired" or "login_required" in str(exc).lower() or _is_rate_limit(exc):
+                    raise exc
+                try:
+                    user_pk = client.user_id_from_username(username)
+                except Exception as exc2:
+                    raise exc2
+
+            return client.user_clips(user_pk, amount=max_count)
 
         try:
-            medias = cl.user_clips(user_id, amount=max_count)
+            medias = fetch_channel_data(cl)
         except Exception as exc:
-            if _is_rate_limit(exc):
-                _rate_limited = True
-                print(f"RATE_LIMITED: 429 fetching clips for @{username}: {exc}", file=sys.stderr)
-                sys.exit(2)
-            print(f"WARN: Error fetching clips for @{username}: {exc}", file=sys.stderr)
-            sys.exit(1)
+            type_name = type(exc).__name__
+            if type_name == "LoginRequired" or "login_required" in str(exc).lower():
+                print("WARN: Saved session expired during channel fetch — re-logging in...", file=sys.stderr)
+                try:
+                    os.remove(session_file)
+                except Exception:
+                    pass
+                cl = get_client(force_login=True)
+                try:
+                    medias = fetch_channel_data(cl)
+                except Exception as exc2:
+                    if _is_rate_limit(exc2):
+                        _rate_limited = True
+                        print(f"RATE_LIMITED: 429 during re-fetch: {exc2}", file=sys.stderr)
+                        sys.exit(2)
+                    print(f"ERROR: Fetch failed after re-login: {exc2}", file=sys.stderr)
+                    sys.exit(1)
+            else:
+                if _is_rate_limit(exc):
+                    _rate_limited = True
+                    print(f"RATE_LIMITED: 429 fetching clips for @{username}: {exc}", file=sys.stderr)
+                    sys.exit(2)
+                print(f"WARN: Error fetching clips for @{username}: {exc}", file=sys.stderr)
+                sys.exit(1)
 
         for media in medias:
             shortcode = media.code

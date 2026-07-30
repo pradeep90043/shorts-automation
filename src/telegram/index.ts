@@ -27,6 +27,7 @@ export function escapeMarkdown(text: string): string {
 }
 
 export class TelegramService implements ITelegramService {
+  public static readonly instances: TelegramService[] = [];
   private bot: Telegraf;
   public readonly profile: ChannelProfile;
   private pipelineTrigger?: (context: PipelineContext) => Promise<void>;
@@ -63,6 +64,7 @@ export class TelegramService implements ITelegramService {
     this.profile = profile;
     this.bot = new Telegraf(profile.telegramToken);
     this.setupHandlers();
+    TelegramService.instances.push(this);
   }
 
   /**
@@ -699,32 +701,50 @@ export class TelegramService implements ITelegramService {
     // Debug shortcut: force the channel-watch automation's daily batch
     // selection right now, bypassing the once-per-day guard and the
     // scheduled time, to verify the flow without waiting.
+    // Debug shortcut: force the channel-watch automation's daily batch
+    // selection right now, bypassing the once-per-day guard and the
+    // scheduled time, to verify the flow without waiting.
     this.bot.command("runwatchnow", async (ctx) => {
-      if (!this.watcher) {
-        await ctx.reply("❌ Channel watch is not configured for this bot.");
+      const siblingServices = TelegramService.instances.filter(
+        (s) => s.profile.telegramToken === this.profile.telegramToken && s.watcher,
+      );
+
+      if (siblingServices.length === 0) {
+        await ctx.reply("❌ No channel watch is configured for this bot.");
         return;
       }
-      await ctx.reply("🔄 Force-starting scheduler: clearing rate limits, rebuilding batch, and triggering first fetch now...");
-      try {
-        await this.watcher.forceStart();
-        const details = this.watcher.getStatusDetails?.();
-        const slot = details?.currentSlot ?? 0;
-        const total = details?.channelSequence?.length ?? 0;
-        const queue: any[] = details?.queue ?? [];
-        const fired = queue.filter((q: any) => q.fired);
-        if (total === 0) {
-          await ctx.reply("⚠️ Batch prepared but no channel sequence was built — check WATCH_CHANNELS config.");
+
+      // Parse argument if any (e.g. /runwatchnow promptgag)
+      const args = ctx.message.text.trim().split(/\s+/);
+      const targetKey = args.length > 1 ? args[1].toLowerCase() : null;
+
+      let targets = siblingServices;
+      if (targetKey) {
+        targets = siblingServices.filter(s => s.profile.key.toLowerCase() === targetKey);
+        if (targets.length === 0) {
+          const validKeys = siblingServices.map(s => s.profile.key).join(", ");
+          await ctx.reply(`❌ Profile "${targetKey}" not found or has no watch configured. Valid profiles: ${validKeys}`);
           return;
         }
-        const lines = [
-          `✅ Scheduler force-started. Sequence: ${total} slot(s), currently on slot ${slot + 1}.`,
-          fired.length > 0
-            ? `🚀 First reel already firing: @${fired[0].channel}/${fired[0].shortcode}`
-            : "⏳ First reel fetch triggered — check logs for progress.",
-        ];
-        await ctx.reply(lines.join("\n"));
-      } catch (err) {
-        await ctx.reply(`❌ Force-start failed: ${err instanceof Error ? err.message : err}`);
+      }
+
+      for (const target of targets) {
+        await ctx.reply(`🔄 [${target.profile.brandName}] Force-starting scheduler: clearing rate limits, rebuilding batch, and triggering first fetch now...`);
+        try {
+          await target.watcher!.forceStart();
+          const details = target.watcher!.getStatusDetails?.();
+          const queue: any[] = details?.queue ?? [];
+          const fired = queue.filter((q: any) => q.fired);
+          const lines = [
+            `✅ [${target.profile.brandName}] Scheduler force-started. Queue has ${queue.length} reel(s) configured.`,
+            fired.length > 0
+              ? `🚀 First reel already firing: @${fired[0].channel}/${fired[0].shortcode}`
+              : "⏳ First reel fetch triggered — check logs for progress.",
+          ];
+          await ctx.reply(lines.join("\n"));
+        } catch (err) {
+          await ctx.reply(`❌ [${target.profile.brandName}] Force-start failed: ${err instanceof Error ? err.message : err}`);
+        }
       }
     });
 
@@ -749,59 +769,70 @@ export class TelegramService implements ITelegramService {
 
     // Scheduler and queue status check command
     this.bot.command(["watchstatus", "queue"], async (ctx) => {
-      if (!this.watcher) {
-        await ctx.reply("❌ Channel watch is not configured for this bot.");
+      const siblingServices = TelegramService.instances.filter(
+        (s) => s.profile.telegramToken === this.profile.telegramToken && s.watcher,
+      );
+
+      if (siblingServices.length === 0) {
+        await ctx.reply("❌ No channel watch is configured for this bot.");
         return;
       }
 
       try {
-        const details = this.watcher.getStatusDetails?.();
-        if (!details) {
-          await ctx.reply("❌ Unable to retrieve watch details from scheduler.");
-          return;
+        let fullStatusMsg = "";
+
+        for (const service of siblingServices) {
+          const details = service.watcher!.getStatusDetails?.();
+          if (!details) continue;
+
+          const active = (details.channels.length > 0 || details.searchMode === "hashtags" || details.searchMode === "both") && details.adminChatId > 0;
+          
+          let statusMsg = `📋 *Scheduler Status: [${service.profile.brandName}]*\n`;
+          statusMsg += `• *Status:* ${active ? "🟢 Active" : "🔴 Disabled"}\n`;
+          statusMsg += `• *Schedule Time:* \`${details.scheduleTime}\` (Daily)\n`;
+          statusMsg += `• *Daily Count:* \`${details.dailyCount}\` reels\n`;
+          statusMsg += `• *Staggered Spacing:* \`${details.gapHours}h\` apart\n`;
+          statusMsg += `• *Admin Chat ID:* \`${details.adminChatId}\`\n`;
+          if (details.channels.length > 0) {
+            statusMsg += `• *Watched Channels:* ${details.channels.map((c: string) => `@${escapeMarkdown(c)}`).join(", ")}\n`;
+          }
+          statusMsg += `\n`;
+
+          statusMsg += `📅 *Today's Queue (${details.lastBatchDate || "None"})*\n`;
+          if (details.queue.length === 0) {
+            statusMsg += `_No reels queued for today — not started._\n`;
+          } else {
+            const lines = details.queue.map((q: any, i: number) => {
+              let status: string;
+              if (q.failed) {
+                status = `❌ Failed: ${q.failedReason || "Unknown error"}`;
+              } else if (q.published) {
+                // Show Published only when URLs are actually available
+                const urls: string[] = [];
+                if (q.publishedYoutubeUrl) urls.push(`[YT](${q.publishedYoutubeUrl})`);
+                if (q.publishedInstagramUrl) urls.push(`[IG](${q.publishedInstagramUrl})`);
+                if (q.publishedFacebookUrl) urls.push(`[FB](${q.publishedFacebookUrl})`);
+                status = `✅ Published${urls.length ? ` — ${urls.join(" • ")}` : ""}`;
+              } else if (q.fired) {
+                // Fired = pipeline triggered but result not yet confirmed
+                status = `🚀 Processing…`;
+              } else {
+                // Not yet triggered
+                const dateObj = new Date(q.scheduledAt);
+                const timeStr = dateObj.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+                status = `⏳ In Queue — publishes at ${timeStr}`;
+              }
+              return `${i + 1}. *[@${escapeMarkdown(q.channel)}]* (\`${escapeMarkdown(q.shortcode)}\`)\n   └ ${status}`;
+            }).join("\n");
+            statusMsg += lines;
+          }
+          statusMsg += `\n\n`;
+          fullStatusMsg += statusMsg;
         }
-        const active = details.channels.length > 0 && details.adminChatId > 0;
-        
-        let statusMsg = `📋 *Scheduler Status: [${this.profile.brandName}]*\n`;
-        statusMsg += `• *Status:* ${active ? "🟢 Active" : "🔴 Disabled"}\n`;
-        statusMsg += `• *Schedule Time:* \`${details.scheduleTime}\` (Daily)\n`;
-        statusMsg += `• *Daily Count:* \`${details.dailyCount}\` reels\n`;
-        statusMsg += `• *Staggered Spacing:* \`${details.gapHours}h\` apart\n`;
-        statusMsg += `• *Admin Chat ID:* \`${details.adminChatId}\`\n`;
-        statusMsg += `• *Watched Channels:* ${details.channels.length > 0 ? details.channels.map((c: string) => `@${escapeMarkdown(c)}`).join(", ") : "None"}\n\n`;
 
-        statusMsg += `📅 *Today's Queue (${details.lastBatchDate || "None"})*\n`;
-        if (details.queue.length === 0) {
-          statusMsg += `_No reels queued for today — not started._\n`;
-        } else {
-          const lines = details.queue.map((q: any, i: number) => {
-            let status: string;
-            if (q.failed) {
-              status = `❌ Failed: ${q.failedReason || "Unknown error"}`;
-            } else if (q.published) {
-              // Show Published only when URLs are actually available
-              const urls: string[] = [];
-              if (q.publishedYoutubeUrl) urls.push(`[YT](${q.publishedYoutubeUrl})`);
-              if (q.publishedInstagramUrl) urls.push(`[IG](${q.publishedInstagramUrl})`);
-              if (q.publishedFacebookUrl) urls.push(`[FB](${q.publishedFacebookUrl})`);
-              status = `✅ Published${urls.length ? ` — ${urls.join(" • ")}` : ""}`;
-            } else if (q.fired) {
-              // Fired = pipeline triggered but result not yet confirmed
-              status = `🚀 Processing…`;
-            } else {
-              // Not yet triggered
-              const dateObj = new Date(q.scheduledAt);
-              const timeStr = dateObj.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-              status = `⏳ In Queue — publishes at ${timeStr}`;
-            }
-            return `${i + 1}. *[@${escapeMarkdown(q.channel)}]* (\`${escapeMarkdown(q.shortcode)}\`)\n   └ ${status}`;
-          }).join("\n");
-          statusMsg += lines;
-        }
+        fullStatusMsg += `💡 _Use /runwatchnow <profile> to trigger batch selection immediately._`;
 
-        statusMsg += `\n\n💡 _Use /runwatchnow to trigger batch selection immediately._`;
-
-        await ctx.reply(statusMsg, { parse_mode: "Markdown" });
+        await ctx.reply(fullStatusMsg, { parse_mode: "Markdown" });
       } catch (err) {
         await ctx.reply(`❌ Failed to retrieve watch status: ${err instanceof Error ? err.message : err}`);
       }
