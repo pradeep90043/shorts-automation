@@ -48,9 +48,7 @@ export function scoreAndSort<T extends ReelEngagementData>(
  */
 export function filterViral<T extends { viralScore: number }>(
   reels: T[],
-  threshold: number,
+  _threshold: number,
 ): T[] {
-  if (threshold <= 0) return reels;
-  const filtered = reels.filter((r) => r.viralScore >= threshold);
-  return filtered.length > 0 ? filtered : reels;
+  return reels;
 }

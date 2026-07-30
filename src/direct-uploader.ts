@@ -113,6 +113,7 @@ interface PendingUpload {
 }
 
 export class DirectUploader {
+  public static instances: DirectUploader[] = [];
   private freellmapi: FreeLlmApiClient | null = null;
   private gemini: GeminiClient = new GeminiClient();
   private renderer: VideoRenderer;
@@ -199,6 +200,7 @@ export class DirectUploader {
     );
     this.telegram = telegram;
     this.tts = new TTSService();
+    DirectUploader.instances.push(this);
 
     // Wire up inline-button callbacks from Telegram
     telegram.registerReviewCallback((action, id) => {
@@ -675,89 +677,96 @@ Use this to write a voiceover script that matches the content arc of the video. 
         );
       }
 
-      context.existingBanner = data.existingBanner;
-      context.bannerBounds = data.bannerBounds || undefined;
-      context.safeAreaCandidates = data.safeAreas || [];
-      context.protectedRegions = data.protectedRegions || [];
-      context.recommendedPlacement = data.recommendedPlacement;
-      context.captionStyle = data.captionStyle || (data.existingBanner ? "style2_banner_replace" : "style1_outline");
-      context.backgroundType = data.backgroundType || (data.existingBanner ? "existing_banner" : "plain");
+      if (!context.brandingDetection) {
+        context.existingBanner = data.existingBanner;
+        context.bannerBounds = data.bannerBounds || undefined;
+        context.safeAreaCandidates = data.safeAreas || [];
+        context.protectedRegions = data.protectedRegions || [];
+        context.recommendedPlacement = data.recommendedPlacement;
+        context.captionStyle = data.captionStyle || (data.existingBanner ? "style2_banner_replace" : "style1_outline");
+        context.backgroundType = data.backgroundType || (data.existingBanner ? "existing_banner" : "plain");
 
-      pipelineLogger.info(
-        `Vision AI Caption Style: ${context.captionStyle}, Background: ${context.backgroundType}`,
-        "DirectUploader",
-      );
-
-      if (context.safeAreaCandidates && context.safeAreaCandidates.length > 0) {
-        const topCandidate = context.safeAreaCandidates[0];
-        context.safeArea = {
-          x: topCandidate.x,
-          y: topCandidate.y,
-          width: topCandidate.width,
-          height: topCandidate.height,
-        };
         pipelineLogger.info(
-          `Vision AI successfully detected safe areas list. Default selected candidate (Reason: ${topCandidate.reason}, Score: ${topCandidate.score}): x=${context.safeArea.x}, y=${context.safeArea.y}, w=${context.safeArea.width}, h=${context.safeArea.height}`,
-          "DirectUploader",
-        );
-      }
-
-      if (data.qualityScore) {
-        context.qualityScore = data.qualityScore;
-        pipelineLogger.info(
-          `Vision AI Quality Check: Readability=${data.qualityScore.readability}/100, Watermark Risk=${data.qualityScore.watermarkRisk}/100, Standard Style=${data.qualityScore.isStandardMemeStyle}`,
+          `Vision AI Caption Style: ${context.captionStyle}, Background: ${context.backgroundType}`,
           "DirectUploader",
         );
 
-        if (
-          data.qualityScore.readability < 50 ||
-          data.qualityScore.watermarkRisk > 70
-        ) {
-          const chatId = context.telegramMeta?.chatId;
-          const messageId = context.telegramMeta?.messageId;
-          if (chatId) {
-            this.telegram
-              .sendMessage(
-                chatId,
-                `⚠️ *AI Quality Check Warning:*\n` +
-                  `• *Readability:* ${data.qualityScore.readability}/100\n` +
-                  `• *Watermark Risk:* ${data.qualityScore.watermarkRisk}/100\n` +
-                  // Not wrapped in _..._ : an escaped underscore (from an
-                  // AI-mentioned @handle) living inside an active italic
-                  // entity breaks Telegram's legacy Markdown parser entirely
-                  // (verified: "Can't find end of the entity..."). Every
-                  // other dynamic value in this file is embedded plain,
-                  // after a bold label, with no wrapping emphasis — match
-                  // that convention here too.
-                  `• *Recommendation:* ${escapeMarkdown(data.qualityScore.recommendation)}`,
-                messageId,
-              )
-              .catch((sendErr) => {
-                pipelineLogger.error("Failed to send quality check warning message", sendErr, "DirectUploader");
-              });
+        if (context.safeAreaCandidates && context.safeAreaCandidates.length > 0) {
+          const topCandidate = context.safeAreaCandidates[0];
+          context.safeArea = {
+            x: topCandidate.x,
+            y: topCandidate.y,
+            width: topCandidate.width,
+            height: topCandidate.height,
+          };
+          pipelineLogger.info(
+            `Vision AI successfully detected safe areas list. Default selected candidate (Reason: ${topCandidate.reason}, Score: ${topCandidate.score}): x=${context.safeArea.x}, y=${context.safeArea.y}, w=${context.safeArea.width}, h=${context.safeArea.height}`,
+            "DirectUploader",
+          );
+        }
+
+        if (data.qualityScore) {
+          context.qualityScore = data.qualityScore;
+          pipelineLogger.info(
+            `Vision AI Quality Check: Readability=${data.qualityScore.readability}/100, Watermark Risk=${data.qualityScore.watermarkRisk}/100, Standard Style=${data.qualityScore.isStandardMemeStyle}`,
+            "DirectUploader",
+          );
+
+          if (
+            data.qualityScore.readability < 50 ||
+            data.qualityScore.watermarkRisk > 70
+          ) {
+            const chatId = context.telegramMeta?.chatId;
+            const messageId = context.telegramMeta?.messageId;
+            if (chatId) {
+              this.telegram
+                .sendMessage(
+                  chatId,
+                  `⚠️ *AI Quality Check Warning:*\n` +
+                    `• *Readability:* ${data.qualityScore.readability}/100\n` +
+                    `• *Watermark Risk:* ${data.qualityScore.watermarkRisk}/100\n` +
+                    // Not wrapped in _..._ : an escaped underscore (from an
+                    // AI-mentioned @handle) living inside an active italic
+                    // entity breaks Telegram's legacy Markdown parser entirely
+                    // (verified: "Can't find end of the entity..."). Every
+                    // other dynamic value in this file is embedded plain,
+                    // after a bold label, with no wrapping emphasis — match
+                    // that convention here too.
+                    `• *Recommendation:* ${escapeMarkdown(data.qualityScore.recommendation)}`,
+                  messageId,
+                )
+                .catch((sendErr) => {
+                  pipelineLogger.error("Failed to send quality check warning message", sendErr, "DirectUploader");
+                });
+            }
           }
         }
+
+        const zones = (data.brandingZones || []).map((item, index) => ({
+          id: `ai-branding-${index}`,
+          type: item.type,
+          boundingBox: item.box,
+          confidence: 0.9,
+          description: item.description,
+        }));
+
+        context.brandingDetection = {
+          detected: zones.length > 0,
+          zones,
+        };
+
+        this.applyRecommendedSettings(context, data.recommendedSettings);
+      } else {
+        pipelineLogger.info(
+          "Retaining existing brandingDetection, safe areas, quality scores, and recommendations in context",
+          "DirectUploader",
+        );
       }
-
-      const zones = (data.brandingZones || []).map((item, index) => ({
-        id: `ai-branding-${index}`,
-        type: item.type,
-        boundingBox: item.box,
-        confidence: 0.9,
-        description: item.description,
-      }));
-
-      context.brandingDetection = {
-        detected: zones.length > 0,
-        zones,
-      };
-
-      this.applyRecommendedSettings(context, data.recommendedSettings);
 
       pipelineLogger.checkpoint(
         "Unified AI vision completed",
         true,
-        `Metadata: "${data.metadata.title}", Branding zones: ${zones.length}`,
+        `Metadata: "${data.metadata.title}", Branding zones: ${context.brandingDetection?.zones?.length || 0}`,
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -2055,22 +2064,34 @@ ${this.theme.analysisRules}`;
     const pristineImagePath = path.join(tempDir, "pristine_original.jpg");
     const pristineVideoPath = path.join(tempDir, "pristine_video.mp4");
 
+    const copyWithRetry = async (src: string, dest: string) => {
+      for (let i = 0; i < 10; i++) {
+        try {
+          fs.copyFileSync(src, dest);
+          return;
+        } catch (err) {
+          if (i === 9) throw err;
+          await new Promise((resolve) => setTimeout(resolve, 200));
+        }
+      }
+    };
+
     // 1. On first run, create backup of original video
     if (isVideo && context.originalVideoPath) {
       if (
         !fs.existsSync(pristineVideoPath) &&
         fs.existsSync(context.originalVideoPath)
       ) {
-        fs.copyFileSync(context.originalVideoPath, pristineVideoPath);
+        await copyWithRetry(context.originalVideoPath, pristineVideoPath);
       }
     }
 
     // 2. Before we start processing, restore original pristine files (prevent "editing on edited")
     if (isVideo && fs.existsSync(pristineVideoPath)) {
-      fs.copyFileSync(pristineVideoPath, context.originalVideoPath!);
+      await copyWithRetry(pristineVideoPath, context.originalVideoPath!);
     }
     if (fs.existsSync(pristineImagePath)) {
-      fs.copyFileSync(pristineImagePath, originalImagePath);
+      await copyWithRetry(pristineImagePath, originalImagePath);
     }
 
     if (isVideo && context.originalVideoPath && fs.existsSync(context.originalVideoPath)) {
@@ -2237,7 +2258,7 @@ ${this.theme.analysisRules}`;
 
       // Back up pristine original image as soon as it is extracted/loaded
       if (fs.existsSync(originalImagePath) && !fs.existsSync(pristineImagePath)) {
-        fs.copyFileSync(originalImagePath, pristineImagePath);
+        await copyWithRetry(originalImagePath, pristineImagePath);
       }
 
       // Ensure image analysis is completed so dimensions are always populated (needed for layout mapping)
@@ -2339,19 +2360,47 @@ ${this.theme.analysisRules}`;
 
       if (isCodeOrCap && mood === "funny") {
         pipelineLogger.info(
-          `[CodeOrCap] Bypassing funny reel (${id}) — will not publish`,
+          `[CodeOrCap] Bypassing funny reel (${id}) — will not publish on CodeOrCap. Redirecting to PromptGag.`,
           "DirectUploader",
         );
         const adminChatId = context.telegramMeta?.chatId || this.profile.watch.adminChatId || 0;
         if (adminChatId) {
           await this.telegram.sendMessage(
             adminChatId,
-            `ℹ️ *Bypassed:* Reel \`@${context.channel || "unknown"}/${context.shortcode || "unknown"}\` has mood *funny* which is skipped on CodeOrCap.`,
-          ).catch((e) => pipelineLogger.error("Failed to send bypass message", e, "DirectUploader"));
+            `ℹ️ *Redirecting:* Reel \`@${context.channel || "unknown"}/${context.shortcode || "unknown"}\` has mood *funny*. Redirecting to PromptGag.`,
+          ).catch((e) => pipelineLogger.error("Failed to send redirect message", e, "DirectUploader"));
         }
+
+        // Find PromptGag uploader
+        const targetUploader = DirectUploader.instances.find(
+          (inst) => inst.profile.key.toLowerCase() === "prompt_gag"
+        );
+        if (targetUploader) {
+          pipelineLogger.info(`Found PromptGag uploader. Triggering redirected job ${id}.`, "DirectUploader");
+          // Clone and adapt context
+          const targetContext: PipelineContext = {
+            ...context,
+            status: "received",
+            metadata: undefined,
+            moodPinned: "funny",
+          };
+          if (targetUploader.profile.watch.adminChatId) {
+            targetContext.telegramMeta = {
+              ...context.telegramMeta,
+              chatId: targetUploader.profile.watch.adminChatId,
+              messageId: 0,
+            };
+          }
+          targetUploader.run(targetContext).catch((err) => {
+            pipelineLogger.error(`Redirected job ${id} failed on PromptGag uploader`, err, "DirectUploader");
+          });
+        } else {
+          pipelineLogger.warn("PromptGag uploader not found. Could not redirect funny reel.", "DirectUploader");
+        }
+
         this.db.updateJob(id, {
           status: "failed",
-          currentStep: "Bypassed: funny reels are skipped on CodeOrCap",
+          currentStep: "Bypassed: redirected funny reel to PromptGag",
           context,
         });
         this.resolveJob(id);
@@ -2360,19 +2409,47 @@ ${this.theme.analysisRules}`;
 
       if (isPromptGag && mood !== "funny") {
         pipelineLogger.info(
-          `[PromptGag] Bypassing non-funny reel (${id}, mood: ${mood}) — will not publish`,
+          `[PromptGag] Bypassing non-funny reel (${id}, mood: ${mood}) — will not publish on PromptGag. Redirecting to CodeOrCap.`,
           "DirectUploader",
         );
         const adminChatId = context.telegramMeta?.chatId || this.profile.watch.adminChatId || 0;
         if (adminChatId) {
           await this.telegram.sendMessage(
             adminChatId,
-            `ℹ️ *Bypassed:* Reel \`@${context.channel || "unknown"}/${context.shortcode || "unknown"}\` has mood *${mood}* which is skipped on PromptGag.`,
-          ).catch((e) => pipelineLogger.error("Failed to send bypass message", e, "DirectUploader"));
+            `ℹ️ *Redirecting:* Reel \`@${context.channel || "unknown"}/${context.shortcode || "unknown"}\` has mood *${mood}*. Redirecting to CodeOrCap.`,
+          ).catch((e) => pipelineLogger.error("Failed to send redirect message", e, "DirectUploader"));
         }
+
+        // Find CodeOrCap uploader
+        const targetUploader = DirectUploader.instances.find(
+          (inst) => inst.profile.key.toLowerCase() === "codeorcap"
+        );
+        if (targetUploader) {
+          pipelineLogger.info(`Found CodeOrCap uploader. Triggering redirected job ${id}.`, "DirectUploader");
+          // Clone and adapt context
+          const targetContext: PipelineContext = {
+            ...context,
+            status: "received",
+            metadata: undefined,
+            moodPinned: mood,
+          };
+          if (targetUploader.profile.watch.adminChatId) {
+            targetContext.telegramMeta = {
+              ...context.telegramMeta,
+              chatId: targetUploader.profile.watch.adminChatId,
+              messageId: 0,
+            };
+          }
+          targetUploader.run(targetContext).catch((err) => {
+            pipelineLogger.error(`Redirected job ${id} failed on CodeOrCap uploader`, err, "DirectUploader");
+          });
+        } else {
+          pipelineLogger.warn("CodeOrCap uploader not found. Could not redirect non-funny reel.", "DirectUploader");
+        }
+
         this.db.updateJob(id, {
           status: "failed",
-          currentStep: `Bypassed: mood ${mood} is skipped on PromptGag`,
+          currentStep: `Bypassed: redirected non-funny mood ${mood} to CodeOrCap`,
           context,
         });
         this.resolveJob(id);
@@ -3309,7 +3386,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       }
 
       // 3 — Audio mix matrix (voiceover / original audio / music)
-      const finalVideoPath = path.join(tempDir, "video_final.mp4");
+      let finalVideoPath = path.join(tempDir, "video_final.mp4");
       if (musicTrack) {
         pipelineLogger.info(
           `Mixing background music${useVoice ? " + voiceover" : ""}: ${musicTrack}`,
@@ -3335,6 +3412,13 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         );
       } else {
         fs.copyFileSync(baseVideoPath, finalVideoPath);
+      }
+
+      // 3.5 — Append verdict sequence (CodeOrCap only)
+      if (this.profile.key.toLowerCase() === "codeorcap") {
+        const withVerdictPath = path.join(tempDir, "video_with_verdict.mp4");
+        const appended = await this.appendVerdictSequence(context, finalVideoPath, withVerdictPath);
+        if (appended) finalVideoPath = withVerdictPath;
       }
 
       // 4 — Save to output folder
@@ -3546,6 +3630,37 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     }
   }
 
+  private async getVoiceoverTranscript(
+    context: PipelineContext,
+  ): Promise<Array<{ word: string; start: number; end: number }> | null> {
+    if ((context as any).ttsTranscript?.words?.length) {
+      return (context as any).ttsTranscript.words;
+    }
+    const voiceoverPath = (context as any).voiceoverPath;
+    if (voiceoverPath && fs.existsSync(voiceoverPath)) {
+      pipelineLogger.info(
+        "Transcribing generated voiceover for precise word-level timing...",
+        "DirectUploader",
+      );
+      try {
+        const ttsTranscript = await TranscriptionService.transcribeFile(
+          voiceoverPath,
+          context.tempDir,
+        );
+        if (ttsTranscript && ttsTranscript.words && ttsTranscript.words.length > 0) {
+          (context as any).ttsTranscript = ttsTranscript;
+          return ttsTranscript.words;
+        }
+      } catch (err) {
+        pipelineLogger.warn(
+          `Failed to transcribe generated voiceover: ${err instanceof Error ? err.message : err}`,
+          "DirectUploader",
+        );
+      }
+    }
+    return null;
+  }
+
   /**
    * Burn timed subtitles onto the video in a standalone pass. Caption text comes
    * from the voiceover script (estimated timings) when a voiceover is in use,
@@ -3561,10 +3676,15 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     try {
       let wordTimings: Array<{ word: string; start: number; end: number }> = [];
       if (useVoice && context.metadata?.voiceoverScript) {
-        wordTimings = estimateWordTimings(
-          context.metadata.voiceoverScript,
-          context.ttsDuration || 10,
-        );
+        const ttsTimings = await this.getVoiceoverTranscript(context);
+        if (ttsTimings) {
+          wordTimings = ttsTimings;
+        } else {
+          wordTimings = estimateWordTimings(
+            context.metadata.voiceoverScript,
+            context.ttsDuration || 10,
+          );
+        }
       } else if (context.transcript?.words?.length) {
         wordTimings = context.transcript.words;
       } else if (context.transcript?.text) {
@@ -3676,7 +3796,8 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     if (script && includeCaptions) {
       try {
         const assPath = path.join(tempDir, "subtitles.ass");
-        const wordTimings = estimateWordTimings(script, context.ttsDuration || 10);
+        const ttsTimings = await this.getVoiceoverTranscript(context);
+        const wordTimings = ttsTimings || estimateWordTimings(script, context.ttsDuration || 10);
         const lines = groupWordsIntoLines(wordTimings);
         generateASSFile(lines, assPath);
         const escapedAssPath = assPath
@@ -4194,6 +4315,222 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     if (resolveFn) {
       resolveFn();
       this.jobResolvers.delete(id);
+    }
+  }
+
+  private async getVideoDuration(videoPath: string): Promise<number> {
+    return new Promise<number>((resolve) => {
+      const cmd = `${config.binaries.ffprobe} -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${videoPath}"`;
+      exec(cmd, (err, stdout) => {
+        const parsed = parseFloat(stdout?.trim());
+        resolve(!err && !isNaN(parsed) && parsed > 0 ? parsed : 30);
+      });
+    });
+  }
+
+  private async renderScorePng(score: number, outputPath: string): Promise<void> {
+    const W = 560;
+    const H = 180;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">
+      <rect width="${W}" height="${H}" rx="24" ry="24" fill="#0B0B0B" fill-opacity="0.88"/>
+      <rect x="4" y="4" width="${W - 8}" height="${H - 8}" rx="20" ry="20"
+            fill="none" stroke="#FFB800" stroke-width="4"/>
+      <text x="${W / 2}" y="${H * 0.75}"
+            font-family="Arial Black, Arial, sans-serif"
+            font-size="110" font-weight="900"
+            fill="#FFB800" text-anchor="middle">${score}/10</text>
+    </svg>`;
+    await sharp(Buffer.from(svg)).png().toFile(outputPath);
+  }
+
+  /**
+   * Appends a verdict sequence to the end of the compiled video (CodeOrCap only).
+   *
+   * Two modes depending on whether the avatar bg video is present:
+   *
+   * AVATAR MODE (assets/verdict-clips/codeorcap_verdict_bg.mp4 exists):
+   *   The pre-generated avatar video is the complete visual. Original audio is
+   *   already stripped (done at processing time). TTS speaks the actual verdict +
+   *   score; the avatar video loops if TTS runs long. Score PNG fades in when
+   *   the TTS says "Score" (~40% into the TTS duration), matching when the avatar
+   *   says "out of 10" in the source video (transcript: ~2.4s mark in a 9.5s clip).
+   *
+   * FALLBACK MODE (no avatar bg video):
+   *   Uses the blurred last frame of the main video as background and animates the
+   *   existing mood sticker from bottom-left to centre-frame.
+   *
+   * Returns false and skips gracefully on any error or missing asset.
+   */
+  private async appendVerdictSequence(
+    context: PipelineContext,
+    mainVideoPath: string,
+    outputPath: string,
+  ): Promise<boolean> {
+    const profileKey = this.profile.key.toLowerCase();
+    if (profileKey !== "codeorcap") return false;
+
+    const tempDir = context.tempDir;
+    const stickerTailPath = path.join(tempDir, "verdict_sticker_tail.mov");
+
+    try {
+      const customBgPath = path.join(config.paths.assetsDir, "verdict-clips", "codeorcap_verdict_bg.mp4");
+      const useAvatarBg = fs.existsSync(customBgPath);
+
+      // 1 — Resolve sticker (only needed in fallback mode)
+      let stickerPath = "";
+      if (!useAvatarBg) {
+        const mood = normalizeMood(context.metadata?.mood);
+        stickerPath = path.join(config.paths.assetsDir, "stickers", profileKey, `${mood}.mov`);
+        if (!fs.existsSync(stickerPath)) {
+          pipelineLogger.info(
+            `Verdict sequence: no sticker for mood "${mood}" and no avatar bg — skipping.`,
+            "DirectUploader",
+          );
+          return false;
+        }
+      }
+
+      // 2 — Generate TTS
+      // Avatar transcript: "The verdict of this video is [pause] out of 10."
+      // We overlay TTS audio that speaks the actual verdict text + score.
+      const verdict = context.metadata?.verdict ?? "this video delivers quality content";
+      const score = Math.min(10, Math.max(1, Math.round((context.metadata?.factCheckScore ?? 70) / 10)));
+      const ttsScript =
+        `The verdict of this video is: ${verdict}. ` +
+        `Score: ${score} out of 10. ` +
+        `For more info, check the caption. ` +
+        `For tech reels, follow CodeOrCap.`;
+      const ttsTempPath = path.join(tempDir, "verdict_tts.mp3");
+
+      let ttsDuration: number;
+      try {
+        ttsDuration = await this.tts.generateVoiceover(ttsScript, ttsTempPath, profileKey);
+      } catch (err) {
+        pipelineLogger.warn(
+          `Verdict TTS failed — skipping verdict sequence: ${err instanceof Error ? err.message : err}`,
+          "DirectUploader",
+        );
+        return false;
+      }
+
+      const clipDuration = ttsDuration + 1.0;
+
+      // 3 — Render score PNG
+      const scorePngPath = path.join(tempDir, "verdict_score.png");
+      await this.renderScorePng(score, scorePngPath);
+
+      // Score timing: appears at ~40% of TTS duration (when "Score: N out of 10" is spoken).
+      // In the avatar video this aligns with the avatar saying "out of 10" at ~2.4s.
+      const scoreShowStart = Math.max(1.5, ttsDuration * 0.40).toFixed(2);
+      const scoreShowEnd = Math.min(clipDuration - 0.5, parseFloat(scoreShowStart) + 3.0).toFixed(2);
+      const scoreFadeOutStart = (parseFloat(scoreShowEnd) - 0.4).toFixed(2);
+
+      const verdictClipPath = path.join(tempDir, "verdict_clip.mp4");
+
+      if (useAvatarBg) {
+        // ── AVATAR MODE ──────────────────────────────────────────────────────────
+        // Inputs: [0]=avatar bg (looped)  [1]=score PNG  [2]=TTS audio
+        const bgInputArgs = `-stream_loop -1 -t ${clipDuration.toFixed(2)} -i "${customBgPath}"`;
+        const filterComplex = [
+          `[0:v]setpts=PTS-STARTPTS[bg]`,
+          `[1:v]fade=in:st=${scoreShowStart}:d=0.4,fade=out:st=${scoreFadeOutStart}:d=0.4[scoreCard]`,
+          `[bg][scoreCard]overlay=x=(W-overlay_w)/2:y=H*0.08:enable='between(t,${scoreShowStart},${scoreShowEnd})'[out]`,
+        ].join(";");
+
+        const cmd =
+          `${config.binaries.ffmpeg} -y ` +
+          `${bgInputArgs} ` +
+          `-i "${scorePngPath}" ` +
+          `-i "${ttsTempPath}" ` +
+          `-filter_complex "${filterComplex}" ` +
+          `-map "[out]" -map "2:a" ` +
+          `-c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p ` +
+          `-c:a aac -shortest ` +
+          `"${verdictClipPath}"`;
+
+        await new Promise<void>((resolve, reject) => {
+          exec(cmd, (err) => (err ? reject(err) : resolve()));
+        });
+      } else {
+        // ── FALLBACK MODE ────────────────────────────────────────────────────────
+        // Blur last frame of main video as background, animate sticker to centre.
+        // Inputs: [0]=bg  [1]=sticker full  [2]=sticker tail (looped)  [3]=score PNG  [4]=TTS audio
+        const mainDuration = await this.getVideoDuration(mainVideoPath);
+        const frameTime = Math.max(0, mainDuration - 0.5).toFixed(2);
+        const bgFramePath = path.join(tempDir, "verdict_bg_frame.png");
+        await new Promise<void>((resolve, reject) => {
+          const cmd = `${config.binaries.ffmpeg} -y -ss ${frameTime} -i "${mainVideoPath}" -vframes 1 "${bgFramePath}"`;
+          exec(cmd, (err) => (err ? reject(err) : resolve()));
+        });
+
+        // Pre-cut sticker tail for looping (same technique as overlayReactionSticker)
+        await new Promise<void>((resolve, reject) => {
+          const cmd = `${config.binaries.ffmpeg} -y -ss 5 -t 5 -i "${stickerPath}" -c copy -an "${stickerTailPath}"`;
+          exec(cmd, (err) => (err ? reject(err) : resolve()));
+        });
+
+        const bgInputArgs = `-loop 1 -t ${clipDuration.toFixed(2)} -i "${bgFramePath}"`;
+        const filterComplex = [
+          `[0:v]boxblur=20:20,colorlevels=romax=0.35:gomax=0.35:bomax=0.35[bg]`,
+          `[1:v]setpts=PTS-STARTPTS[stickerFull]`,
+          `[2:v]setpts=PTS-STARTPTS[stickerTail]`,
+          `[stickerFull][stickerTail]concat=n=2:v=1:a=0[stickerLooped]`,
+          `[stickerLooped]scale=550:-1[stickerScaled]`,
+          `[bg][stickerScaled]overlay=` +
+            `x='if(lt(t,1.5),40+(W/2-overlay_w/2-40)*(t/1.5),(W-overlay_w)/2)':` +
+            `y='if(lt(t,1.5),(H-overlay_h-40)+((H-overlay_h)/2-(H-overlay_h-40))*(t/1.5),(H-overlay_h)/2)':` +
+            `shortest=1[withSticker]`,
+          `[3:v]fade=in:st=${scoreShowStart}:d=0.4,fade=out:st=${scoreFadeOutStart}:d=0.4[scoreCard]`,
+          `[withSticker][scoreCard]overlay=x=(W-overlay_w)/2:y=H*0.08:enable='between(t,${scoreShowStart},${scoreShowEnd})'[out]`,
+        ].join(";");
+
+        const cmd =
+          `${config.binaries.ffmpeg} -y ` +
+          `${bgInputArgs} ` +
+          `-i "${stickerPath}" ` +
+          `-stream_loop -1 -i "${stickerTailPath}" ` +
+          `-i "${scorePngPath}" ` +
+          `-i "${ttsTempPath}" ` +
+          `-filter_complex "${filterComplex}" ` +
+          `-map "[out]" -map "4:a" ` +
+          `-c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p ` +
+          `-c:a aac -shortest ` +
+          `"${verdictClipPath}"`;
+
+        await new Promise<void>((resolve, reject) => {
+          exec(cmd, (err) => (err ? reject(err) : resolve()));
+        });
+      }
+
+      // 4 — Concat main video + verdict clip
+      const concatCmd =
+        `${config.binaries.ffmpeg} -y ` +
+        `-i "${mainVideoPath}" ` +
+        `-i "${verdictClipPath}" ` +
+        `-filter_complex "[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1[v][a]" ` +
+        `-map "[v]" -map "[a]" ` +
+        `-c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p ` +
+        `-c:a aac ` +
+        `"${outputPath}"`;
+
+      await new Promise<void>((resolve, reject) => {
+        exec(concatCmd, (err) => (err ? reject(err) : resolve()));
+      });
+
+      pipelineLogger.checkpoint(
+        `Verdict sequence appended (${useAvatarBg ? "avatar" : "fallback"} mode, score: ${score}/10)`,
+        true,
+        context.id,
+      );
+      return true;
+    } catch (err) {
+      pipelineLogger.warn(
+        `Verdict sequence failed — continuing without it: ${err instanceof Error ? err.message : err}`,
+        "DirectUploader",
+      );
+      return false;
+    } finally {
+      if (fs.existsSync(stickerTailPath)) fs.unlinkSync(stickerTailPath);
     }
   }
 }

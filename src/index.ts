@@ -1,3 +1,7 @@
+import sharp from "sharp";
+// Disable libvips cache to prevent file locking on Windows
+sharp.cache(false);
+
 import { config, validateConfig } from "./config";
 import { TelegramService } from "./telegram";
 import { DirectUploader } from "./direct-uploader";
