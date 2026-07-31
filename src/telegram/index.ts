@@ -789,7 +789,7 @@ export class TelegramService implements ITelegramService {
           
           let statusMsg = `📋 *Scheduler Status: [${service.profile.brandName}]*\n`;
           statusMsg += `• *Status:* ${active ? "🟢 Active" : "🔴 Disabled"}\n`;
-          statusMsg += `• *Schedule Time:* \`${details.scheduleTime}\` (Daily)\n`;
+          statusMsg += `• *Schedule Time:* \`${details.scheduleTime} IST\` (Daily)\n`;
           statusMsg += `• *Daily Count:* \`${details.dailyCount}\` reels\n`;
           statusMsg += `• *Staggered Spacing:* \`${details.gapHours}h\` apart\n`;
           statusMsg += `• *Admin Chat ID:* \`${details.adminChatId}\`\n`;

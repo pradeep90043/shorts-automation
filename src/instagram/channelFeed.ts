@@ -74,6 +74,10 @@ export async function listChannelReels(
 
         if (err && !stdout.trim()) {
           const errMsg = stderrText || err.message.split("\n")[0];
+          const code = (err as NodeJS.ErrnoException).code;
+          if (code === "ENOENT" || code === "EACCES") {
+            return reject(new Error(`Python binary not found (${PYTHON3}): ${errMsg}`));
+          }
           if (errMsg.includes("ERROR:") || errMsg.includes("login failed") || errMsg.includes("LoginRequired") || errMsg.includes("ChallengeRequired") || errMsg.includes("2FA required")) {
             return reject(new Error(errMsg));
           }
@@ -172,6 +176,10 @@ export async function searchAllHashtagReels(
 
         if (err && !stdout.trim()) {
           const errMsg = stderrTrimmed || err.message.split("\n")[0];
+          const code = (err as NodeJS.ErrnoException).code;
+          if (code === "ENOENT" || code === "EACCES") {
+            return reject(new Error(`Python binary not found (${PYTHON3}): ${errMsg}`));
+          }
           if (errMsg.includes("ERROR:") || errMsg.includes("login failed") || errMsg.includes("LoginRequired") || errMsg.includes("ChallengeRequired") || errMsg.includes("2FA required")) {
             return reject(new Error(errMsg));
           }
