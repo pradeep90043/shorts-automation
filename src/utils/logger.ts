@@ -2,6 +2,7 @@ import winston from "winston";
 import path from "path";
 import fs from "fs";
 import { config } from "../config";
+import { BroadcastTransport } from "./logBroadcast";
 
 // Ensure log directory exists
 if (!fs.existsSync(config.paths.logDir)) {
@@ -38,6 +39,7 @@ export const logger = winston.createLogger({
     new winston.transports.Console({
       format: consoleFormat,
     }),
+    new BroadcastTransport(),
   ],
 });
 
