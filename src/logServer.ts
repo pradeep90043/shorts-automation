@@ -4,7 +4,7 @@ import path from "path";
 import { addLogClient, removeLogClient } from "./utils/logBroadcast";
 import { config } from "./config";
 
-const PORT = parseInt(process.env.LOG_SERVER_PORT || "3001", 10);
+const PORT = parseInt(process.env.LOG_SERVER_PORT || "3002", 10);
 const COMBINED_LOG = path.join(config.paths.logDir, "combined.log");
 const TAIL_LINES = 300;
 
