@@ -11,6 +11,7 @@ import { cleanupOldMedia } from "./utils/cleanup";
 import { pipelineLogger } from "./utils/logger";
 import { acquireSingleInstanceLock } from "./utils/singleInstanceLock";
 import { initSchema, closePg } from "./utils/pgClient";
+import { startLogServer } from "./logServer";
 
 async function bootstrap() {
   pipelineLogger.info(
@@ -18,7 +19,10 @@ async function bootstrap() {
     "Bootstrap",
   );
 
-  // 0. Refuse to start if another instance is already polling Telegram —
+  // 0. Start live log HTTP server
+  startLogServer();
+
+  // 1. Refuse to start if another instance is already polling Telegram —
   // duplicate pollers cause the same message to be handled twice.
   acquireSingleInstanceLock();
 
