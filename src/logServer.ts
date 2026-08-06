@@ -90,23 +90,10 @@ const HTML = `<!DOCTYPE html>
   }
   function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
-  function formatLocalTime(tsStr) {
-    if (!tsStr) return '';
-    try {
-      const iso = tsStr.includes('T') || tsStr.includes('Z') ? tsStr : tsStr.replace(' ', 'T') + 'Z';
-      const d = new Date(iso);
-      if (!isNaN(d.getTime())) {
-        const pad = n => String(n).padStart(2, '0');
-        return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
-      }
-    } catch {}
-    return tsStr.replace('T', ' ').replace(/\\.\\d+Z$/, '');
-  }
-
   function append(raw) {
     let o; try { o = JSON.parse(raw); } catch { return; }
     const level = (o.level || 'info').toLowerCase();
-    const ts = formatLocalTime(o.timestamp || '');
+    const ts = (o.timestamp || '').replace('T',' ').replace(/\.\d+Z$/,'');
     const label = o.label || '';
     const msg = o.message || '';
     const div = document.createElement('div');
