@@ -55,6 +55,72 @@ def _is_rate_limit(exc: Exception) -> bool:
     return "429" in s or "too many requests" in s or "please wait" in s or "feedback_required" in s
 
 
+def fetch_reels_via_rapidapi(identifier: str, mode: str = "channel", limit: int = 10) -> list[dict]:
+    """Fetch reels cleanly via RapidAPI without requiring any Instagram login or cookies."""
+    rapidapi_key = os.environ.get("RAPIDAPI_KEY") or os.environ.get("RAPIDAPI_INSTAGRAM_KEY") or "8a0fd54a8amsh10bd5cc60f5ac47p1f0069jsn7077defe962b"
+    if not rapidapi_key:
+        return []
+    
+    try:
+        url = "https://instagram120.p.rapidapi.com/api/instagram/reels"
+        headers = {
+            "x-rapidapi-host": "instagram120.p.rapidapi.com",
+            "x-rapidapi-key": rapidapi_key,
+            "Content-Type": "application/x-www-form-urlencoded"
+        }
+        data = f"username={urllib.parse.quote(identifier.lstrip('@'))}".encode("utf-8")
+        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            raw_body = resp.read().decode("utf-8")
+            body = json.loads(raw_body)
+            
+        results = []
+        edges = []
+        if isinstance(body, dict):
+            res_obj = body.get("result", {})
+            if isinstance(res_obj, dict):
+                edges = res_obj.get("edges", []) or res_obj.get("items", [])
+            elif isinstance(res_obj, list):
+                edges = res_obj
+            if not edges:
+                edges = (body.get("data", {}) or {}).get("items", []) if isinstance(body.get("data"), dict) else (body.get("items") or [])
+
+        for edge in edges:
+            if not isinstance(edge, dict):
+                continue
+            node = edge.get("node", {}) if isinstance(edge.get("node"), dict) else edge
+            media = node.get("media", {}) if isinstance(node.get("media"), dict) else node
+            code = media.get("code") or media.get("shortcode") or media.get("pk")
+            if not code:
+                continue
+            video_url = ""
+            v_versions = media.get("video_versions", [])
+            if v_versions and isinstance(v_versions, list):
+                video_url = v_versions[0].get("url", "")
+            
+            results.append({
+                "shortcode": str(code),
+                "url": f"https://www.instagram.com/reel/{code}/",
+                "video_url": video_url,
+                "like_count": media.get("like_count", 0) or 0,
+                "play_count": media.get("play_count", 0) or media.get("view_count", 0) or 0,
+                "comment_count": media.get("comment_count", 0) or 0,
+                "owner_username": (media.get("user") or {}).get("username", identifier),
+            })
+            if len(results) >= limit:
+                break
+        if results:
+            print(f"INFO: RapidAPI retrieved {len(results)} reel(s) for {identifier}", file=sys.stderr)
+        else:
+            print(f"WARN: RapidAPI returned 0 reels for {identifier}. Body keys: {list(body.keys()) if isinstance(body, dict) else type(body)}", file=sys.stderr)
+        return results
+    except Exception as exc:
+        import traceback
+        print(f"WARN: RapidAPI fetch failed for {identifier}: {exc}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return []
+
+
 def get_client(force_login=False):
     """Return an authenticated instagrapi Client, reusing saved session when possible."""
     global _rate_limited
@@ -120,8 +186,9 @@ def get_client(force_login=False):
         """Login, injecting a TOTP code when 2FA is configured, or login by session ID."""
         if session_id:
             try:
-                client.login_by_sessionid(session_id)
-                print("INFO: Logged in using INSTAGRAM_SESSION_ID.", file=sys.stderr)
+                sid = urllib.parse.unquote(session_id)
+                client.login_by_sessionid(sid)
+                print(f"INFO: Logged in using INSTAGRAM_SESSION_ID ({sid[:15]}...).", file=sys.stderr)
                 return
             except Exception as e:
                 print(f"WARN: Login by session ID failed: {e}", file=sys.stderr)
@@ -386,8 +453,6 @@ def main():
         raw_tags  = args.tags or args.tag or ""
         tag       = raw_tags
 
-    cl = get_client()
-
     # Determine dynamic session file name for retries
     ig_user = os.environ.get("INSTAGRAM_USERNAME", "").strip()
     if ig_user:
@@ -400,6 +465,14 @@ def main():
             print("ERROR: --tag or --tags is required in hashtag mode", file=sys.stderr)
             sys.exit(1)
 
+        # Strategy 0: RapidAPI hashtag fetch
+        r_reels = fetch_reels_via_rapidapi(tag, mode="hashtag", limit=max_count)
+        if r_reels:
+            for r in r_reels:
+                print(json.dumps(r))
+            sys.exit(0)
+
+        cl = get_client()
         tag_list = [t.strip().lstrip("#") for t in tag.split(",") if t.strip()]
         if not tag_list:
             sys.exit(1)
@@ -438,10 +511,19 @@ def main():
             sys.exit(1)
 
     else:
-        # Channel mode — instagrapi user_clips() endpoint
+        # Channel mode — RapidAPI (zero login/zero blocks) -> instagrapi user_clips() fallback
         if not username:
             print("Usage: fetch_reels.py <username> [ignored] [max_count]", file=sys.stderr)
             sys.exit(1)
+
+        # Primary: RapidAPI zero-login instant fetch
+        r_reels = fetch_reels_via_rapidapi(username, mode="channel", limit=max_count)
+        if r_reels:
+            for r in r_reels:
+                print(json.dumps(r))
+            sys.exit(0)
+
+        cl = get_client()
 
         def fetch_channel_data(client):
             try:
