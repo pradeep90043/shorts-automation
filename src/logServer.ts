@@ -762,16 +762,13 @@ const HTML = `<!DOCTYPE html>
           <table>
             <thead>
               <tr>
-                <th>Shortcode</th>
+                <th>Source Reel & Time</th>
                 <th>Profile</th>
-                <th>Source Channel</th>
-                <th>Time</th>
-                <th>Status</th>
-                <th>Multi-Platform Links</th>
+                <th>Status & Links</th>
               </tr>
             </thead>
             <tbody id="activity-table-body">
-              <tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 24px;">Loading activity log...</td></tr>
+              <tr><td colspan="3" style="text-align: center; color: var(--text-muted); padding: 24px;">Loading activity log...</td></tr>
             </tbody>
           </table>
         </div>
@@ -800,16 +797,14 @@ const HTML = `<!DOCTYPE html>
           <table>
             <thead>
               <tr>
-                <th>Shortcode</th>
+                <th>Source Reel & Time</th>
                 <th>Channel</th>
-                <th>Source URL</th>
-                <th>Added Time</th>
-                <th>Status</th>
+                <th>Status & Links</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody id="queue-table-body">
-              <tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 30px;">Loading queue items...</td></tr>
+              <tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 30px;">Loading queue items...</td></tr>
             </tbody>
           </table>
         </div>
@@ -953,8 +948,8 @@ const HTML = `<!DOCTYPE html>
           <table>
             <thead>
               <tr>
-                <th>#</th>
-                <th>Shortcode</th>
+                <th>Rank</th>
+                <th>Source Reel</th>
                 <th>Channel</th>
                 <th>Views</th>
                 <th>Eng. Rate</th>
@@ -1181,24 +1176,34 @@ const HTML = `<!DOCTYPE html>
     tableBody.innerHTML = '';
 
     if (!history || history.length === 0) {
-      tableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 20px;">No processed activity records logged yet.</td></tr>';
+      tableBody.innerHTML = '<tr><td colspan="3" style="text-align: center; color: var(--text-muted); padding: 20px;">No processed activity records logged yet.</td></tr>';
       return;
     }
 
     history.forEach(item => {
       const tr = document.createElement('tr');
       const ts = fmtDate(item.published_at || item.picked_at);
-      const origUrl = 'https://www.instagram.com/reel/' + item.shortcode + '/';
-      tr.innerHTML = '<td><span class="code-badge">#' + item.shortcode + '</span></td>' +
-        '<td>' + (item.profile_key || 'default') + '</td>' +
-        '<td>@' + (item.channel || 'source') + '</td>' +
-        '<td style="color: var(--text-muted)">' + ts + '</td>' +
-        '<td><span class="status-badge ' + (item.failed ? 'status-failed' : 'status-published') + '">' + (item.failed ? 'FAILED' : 'PUBLISHED') + '</span></td>' +
-        '<td>' +
-          '<div style="display: flex; gap: 6px; flex-wrap: wrap;">' +
-            '<a href="' + origUrl + '" target="_blank" class="btn-icon" style="padding: 2px 8px; font-size: 11px;">📷 Source</a>' +
-            (item.youtube_url ? '<a href="' + item.youtube_url + '" target="_blank" class="btn-icon" style="padding: 2px 8px; font-size: 11px;">▶ YouTube</a>' : '') +
+      const origUrl = item.originalUrl || ('https://www.instagram.com/reel/' + item.shortcode + '/');
+      const instaUrl = item.instagramUrl || origUrl;
+      const ytUrl = item.youtubeUrl;
+      const fbUrl = item.facebookUrl;
+
+      let linksHtml = '<div style="display: flex; gap: 4px; margin-top: 4px; flex-wrap: wrap;">';
+      if (instaUrl) linksHtml += '<a href="' + instaUrl + '" target="_blank" class="btn-icon" style="padding: 2px 6px; font-size: 10px; color: #e1306c;" title="Instagram Reel">📷 Insta</a>';
+      if (ytUrl) linksHtml += '<a href="' + ytUrl + '" target="_blank" class="btn-icon" style="padding: 2px 6px; font-size: 10px; color: #ff4e4e;" title="YouTube Short">▶ YouTube</a>';
+      if (fbUrl) linksHtml += '<a href="' + fbUrl + '" target="_blank" class="btn-icon" style="padding: 2px 6px; font-size: 10px; color: #1877f2;" title="Facebook Reel">📘 FB</a>';
+      linksHtml += '</div>';
+
+      tr.innerHTML = '<td>' +
+          '<div style="max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' +
+            '<a href="' + origUrl + '" target="_blank" style="color: var(--primary); font-weight: 600; font-size: 13px; text-decoration: none;">📷 Source Reel</a>' +
           '</div>' +
+          '<div style="color: var(--text-muted); font-size: 11px; margin-top: 2px;">' + ts + '</div>' +
+        '</td>' +
+        '<td style="font-weight: 600; color: #fff;">' + (item.profile_key || item.channel || 'default') + '</td>' +
+        '<td>' +
+          '<div><span class="status-badge ' + (item.failed ? 'status-failed' : 'status-published') + '">' + (item.failed ? 'FAILED' : 'PUBLISHED') + '</span></div>' +
+          linksHtml +
         '</td>';
       tableBody.appendChild(tr);
     });
@@ -1218,7 +1223,7 @@ const HTML = `<!DOCTYPE html>
     tableBody.innerHTML = '';
 
     if (!queue || queue.length === 0) {
-      tableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 30px;">Queue is currently empty. Use "Inject Link" tab to add source reels.</td></tr>';
+      tableBody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 30px;">Queue is currently empty. Use "Inject Link" tab to add source reels.</td></tr>';
       return;
     }
 
@@ -1229,13 +1234,14 @@ const HTML = `<!DOCTYPE html>
     });
 
     if (filtered.length === 0) {
-      tableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 30px;">No queue items match selected filters.</td></tr>';
+      tableBody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 30px;">No queue items match selected filters.</td></tr>';
       return;
     }
 
     filtered.forEach(item => {
       const tr = document.createElement('tr');
       const ts = fmtDate(item.addedAt);
+      const sourceUrl = item.source || ('https://www.instagram.com/reel/' + item.shortcode + '/');
 
       const instaUrl = item.instagramUrl || (item.shortcode && !item.shortcode.startsWith('q_') ? 'https://www.instagram.com/reel/' + item.shortcode + '/' : null);
       const ytUrl = item.youtubeUrl;
@@ -1256,10 +1262,13 @@ const HTML = `<!DOCTYPE html>
         statusLinksHtml += '</div>';
       }
 
-      tr.innerHTML = '<td><span class="code-badge">#' + item.shortcode + '</span></td>' +
+      tr.innerHTML = '<td>' +
+          '<div style="max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' +
+            '<a href="' + sourceUrl + '" target="_blank" style="color: var(--primary); font-weight: 600; font-size: 13px; text-decoration: none;">📷 Source Reel</a>' +
+          '</div>' +
+          '<div style="color: var(--text-muted); font-size: 11px; margin-top: 2px;">' + ts + '</div>' +
+        '</td>' +
         '<td style="font-weight: 600; color: #fff;">' + (item.channel || item.profileKey) + '</td>' +
-        '<td><div style="max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"><a href="' + item.source + '" target="_blank" style="color: var(--primary); font-family: var(--font-mono); font-size: 11px;">' + item.source + '</a></div></td>' +
-        '<td style="color: var(--text-muted); font-size: 11px;">' + ts + '</td>' +
         '<td><div><span class="status-badge status-' + item.status + '"><div class="badge-dot" style="background: currentColor"></div>' + item.status + '</span></div>' + statusLinksHtml + '</td>';
 
       const actionTd = document.createElement('td');
@@ -1510,8 +1519,9 @@ const HTML = `<!DOCTYPE html>
       if (r.trend === '↓') trendColor = 'var(--danger)';
       else if (r.trend === '→') trendColor = 'var(--text-muted)';
 
+      const sourceUrl = r.sourceUrl || ('https://www.instagram.com/reel/' + r.shortcode + '/');
       tr.innerHTML = '<td style="font-weight: 800; color: var(--text-muted);">' + rankBadge + '</td>' +
-        '<td><span class="code-badge">#' + r.shortcode + '</span></td>' +
+        '<td><a href="' + sourceUrl + '" target="_blank" style="color: var(--primary); font-weight: 600; font-size: 12px; text-decoration: none;">📷 Source Reel</a></td>' +
         '<td><span style="font-weight: 600; color: #fff;">' + (r.profileKey || 'codeorcap') + '</span></td>' +
         '<td style="font-family: var(--font-mono); font-weight: 700; color: #fff;">' + fmtNum(r.playCount || 0) + '</td>' +
         '<td><span style="font-weight: 700; color: ' + (r.er > 6 ? 'var(--success)' : r.er > 4 ? 'var(--warning)' : 'var(--text-muted)') + ';">' + r.er + '%</span></td>' +
