@@ -635,9 +635,9 @@ const HTML = `<!DOCTYPE html>
   </div>
 
   <div class="nav-tabs">
-    <button class="tab-btn active" onclick="switchTab('analytics')">📊 Control Center</button>
-    <button class="tab-btn" onclick="switchTab('viral')">🔥 Viral Analytics & Graphs</button>
-    <button class="tab-btn" onclick="switchTab('logs')">📜 Live Console Logs</button>
+    <button class="tab-btn active" data-tab="analytics" onclick="switchTab('analytics', this)">📊 Control Center</button>
+    <button class="tab-btn" data-tab="viral" onclick="switchTab('viral', this)">🔥 Viral Analytics & Graphs</button>
+    <button class="tab-btn" data-tab="logs" onclick="switchTab('logs', this)">📜 Live Console Logs</button>
   </div>
 
   <div class="nav-right">
@@ -961,35 +961,35 @@ const HTML = `<!DOCTYPE html>
   let chartDoughnut = null;
   let chartEngagement = null;
 
-  function switchTab(tab) {
+  function switchTab(tab, btnEl) {
     activeTab = tab;
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.nav-tabs .tab-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
     
-    if (tab === 'analytics') {
-      document.querySelectorAll('.tab-btn')[0].classList.add('active');
-      document.getElementById('tab-analytics').classList.add('active');
-    } else if (tab === 'viral') {
-      document.querySelectorAll('.tab-btn')[1].classList.add('active');
-      document.getElementById('tab-viral').classList.add('active');
-      if (globalDashboardData && globalDashboardData.viralAnalytics) {
-        renderViralCharts(globalDashboardData.viralAnalytics);
-      }
-    } else {
-      document.querySelectorAll('.tab-btn')[2].classList.add('active');
-      document.getElementById('tab-logs').classList.add('active');
+    const targetBtn = btnEl || document.querySelector('.nav-tabs .tab-btn[data-tab="' + tab + '"]');
+    if (targetBtn) targetBtn.classList.add('active');
+    
+    const targetContent = document.getElementById('tab-' + tab);
+    if (targetContent) targetContent.classList.add('active');
+
+    if (tab === 'viral' && globalDashboardData && globalDashboardData.viralAnalytics) {
+      setTimeout(() => renderViralCharts(globalDashboardData.viralAnalytics), 50);
     }
   }
 
   async function fetchDashboardData() {
     try {
       const res = await fetch('/api/dashboard');
-      if (!res.ok) return;
+      if (!res.ok) throw new Error('HTTP status ' + res.status);
       const data = await res.json();
       globalDashboardData = data;
       renderDashboard(data);
     } catch (e) {
       console.error('Failed to fetch dashboard data', e);
+      const tableBody = document.getElementById('activity-table-body');
+      if (tableBody && tableBody.innerHTML.includes('Loading activity log')) {
+        tableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--warning); padding: 20px;">⚠️ Re-connecting to server API... Click 🔄 Refresh above to retry.</td></tr>';
+      }
     }
   }
 
