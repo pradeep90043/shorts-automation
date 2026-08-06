@@ -771,7 +771,7 @@ const HTML = `<!DOCTYPE html>
     <!-- Controls & Filters Bar -->
     <div class="viral-controls-bar">
       <div class="filter-pills" id="niche-pills-container">
-        <button class="pill-btn active" onclick="filterViralNiche('all', this)">All Channels</button>
+        <button class="pill-btn active" data-niche="all" onclick="filterViralNiche(this.dataset.niche, this)">All Channels</button>
       </div>
       <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
         <input class="search-input" id="viral-search-input" placeholder="Search viral reel, tag, or creator..." oninput="applyViralSearch()">
@@ -1025,7 +1025,7 @@ const HTML = `<!DOCTYPE html>
 
     // Render Niche Pills in Viral Section
     const pillsContainer = document.getElementById('niche-pills-container');
-    pillsContainer.innerHTML = '<button class="pill-btn ' + (selectedNicheFilter === 'all' ? 'active' : '') + '" onclick="filterViralNiche(\'all\', this)">All Channels</button>';
+    pillsContainer.innerHTML = '<button class="pill-btn ' + (selectedNicheFilter === 'all' ? 'active' : '') + '" data-niche="all" onclick="filterViralNiche(this.dataset.niche, this)">All Channels</button>';
 
     data.channels.forEach(ch => {
       // Add Niche Pill
@@ -1234,9 +1234,9 @@ const HTML = `<!DOCTYPE html>
   function exportViralCsv() {
     if (!globalDashboardData || !globalDashboardData.viralAnalytics) return;
     const items = globalDashboardData.viralAnalytics.leaderboard;
-    let csv = 'Rank,Shortcode,Title,Profile,Creator,Plays,Likes,Comments,ViralScore,Url\n';
+    let csv = 'Rank,Shortcode,Title,Profile,Creator,Plays,Likes,Comments,ViralScore,Url\\n';
     items.forEach((r, i) => {
-      csv += '"' + (i + 1) + '","' + r.shortcode + '","' + (r.title || '').replace(/"/g, '""') + '","' + r.profileKey + '","' + r.sourceChannel + '","' + r.playCount + '","' + r.likeCount + '","' + r.commentCount + '","' + r.viralScore + '","' + r.originalUrl + '"\n';
+      csv += '"' + (i + 1) + '","' + r.shortcode + '","' + (r.title || '').replace(/"/g, '""') + '","' + r.profileKey + '","' + r.sourceChannel + '","' + r.playCount + '","' + r.likeCount + '","' + r.commentCount + '","' + r.viralScore + '","' + r.originalUrl + '"\\n';
     });
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
