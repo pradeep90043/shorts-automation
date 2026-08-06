@@ -121,7 +121,12 @@ async function getDashboardData() {
     reelHistory = historyRes.rows;
 
     const watchRes = await pool.query(`SELECT * FROM watch_state`);
-    watchStates = watchRes.rows;
+    watchStates = watchRes.rows.map(w => {
+      if (Array.isArray(w.queue)) {
+        w.queue = w.queue.filter((q: any) => q.shortcode && !q.shortcode.startsWith("failed-fetch-") && !q.shortcode.startsWith("no-unseen-"));
+      }
+      return w;
+    });
 
     const insightsRes = await pool.query(`SELECT * FROM reel_insights ORDER BY views DESC LIMIT 50`);
     reelInsights = insightsRes.rows;
@@ -287,15 +292,21 @@ async function getDashboardData() {
   const compiledQueue: any[] = [];
 
   watchStates.forEach(ws => {
-    const qList = ws.queue || [];
+    const rawList = ws.queue || [];
+    const qList = rawList.filter((q: any) => {
+      const sc = q.shortcode || "";
+      if (sc.startsWith("failed-fetch-") || sc.startsWith("no-unseen-")) return false;
+      return true;
+    });
     qList.forEach((q: any, idx: number) => {
-      const sc = q.shortcode || q.url?.split("/reel/")[1]?.split("/")[0] || q.url?.split("/p/")[1]?.split("/")[0] || `q_${Math.random().toString(36).substr(2, 6)}`;
+      const sc = q.shortcode || q.url?.split("/reel/")[1]?.split("/")[0] || q.url?.split("/p/")[1]?.split("/")[0];
+      if (!sc || sc.startsWith("failed-fetch-") || sc.startsWith("no-unseen-")) return;
       compiledQueue.push({
         id: `q_${ws.profile_key}_${sc}`,
         shortcode: sc,
         channel: ws.profile_key,
         source: q.url || `https://www.instagram.com/reel/${sc}/`,
-        addedAt: q.pickedAt || new Date().toISOString(),
+        addedAt: q.pickedAt || q.addedAt || new Date().toISOString(),
         status: idx === 0 ? "processing" : "queued",
         slot: idx + 1,
         playCount: Number(q.playCount || q.play_count || 0),
@@ -306,6 +317,7 @@ async function getDashboardData() {
   });
 
   reelHistory.forEach((rh, idx) => {
+    if (!rh.shortcode || rh.shortcode.startsWith("failed-fetch-") || rh.shortcode.startsWith("no-unseen-")) return;
     compiledQueue.push({
       id: `h_${rh.shortcode}_${rh.profile_key}`,
       shortcode: rh.shortcode,
@@ -1863,7 +1875,11 @@ export function startLogServer(): void {
         const wRes = await pool.query(`SELECT queue FROM watch_state WHERE profile_key = $1`, [pKey]);
         if (wRes.rows.length > 0) {
           const currentQueue = wRes.rows[0].queue || [];
-          const updatedQueue = currentQueue.filter((q: any) => (q.shortcode || q.url?.split("/reel/")[1]?.replace(/\//g, "")) !== shortcode);
+          const updatedQueue = currentQueue.filter((q: any) => {
+            const sc = q.shortcode || q.url?.split("/reel/")[1]?.replace(/\//g, "") || "";
+            if (sc === shortcode || sc.startsWith("failed-fetch-") || sc.startsWith("no-unseen-")) return false;
+            return true;
+          });
           await pool.query(`UPDATE watch_state SET queue = $1::jsonb WHERE profile_key = $2`, [JSON.stringify(updatedQueue), pKey]);
         }
 
