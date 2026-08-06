@@ -11,6 +11,7 @@ import { cleanupOldMedia } from "./utils/cleanup";
 import { pipelineLogger } from "./utils/logger";
 import { acquireSingleInstanceLock } from "./utils/singleInstanceLock";
 import { initSchema, closePg } from "./utils/pgClient";
+import { loadCredentialsToEnv } from "./utils/credentialStore";
 import { startLogServer } from "./logServer";
 
 async function bootstrap() {
@@ -31,6 +32,13 @@ async function bootstrap() {
 
   // 1b. Connect to Supabase and ensure tables exist
   await initSchema();
+
+  // 1c. Load any Instagram credentials saved via the dashboard into process.env
+  // as fallbacks so env-var-based code (fetch_reels.py, channelWatcher) picks them up
+  // without needing them in the GitHub secret / .env file.
+  for (const profile of config.profiles) {
+    await loadCredentialsToEnv(profile.key).catch(() => {});
+  }
 
   // 2. Ensure branding and default audio assets are present
   try {

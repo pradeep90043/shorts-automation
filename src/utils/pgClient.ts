@@ -82,6 +82,16 @@ export async function initSchema(): Promise<void> {
         ALTER TABLE reel_history ADD COLUMN IF NOT EXISTS instagram_media_id TEXT;
         ALTER TABLE reel_history ADD COLUMN IF NOT EXISTS facebook_video_id TEXT;
       `);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS channel_credentials (
+          profile_key          TEXT PRIMARY KEY,
+          instagram_session_id TEXT,
+          instagram_username   TEXT,
+          instagram_password   TEXT,
+          instagram_email      TEXT,
+          updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `);
       pipelineLogger.info("Supabase schema ready (reel_history, watch_state, reel_insights)", "Supabase");
       return;
     } catch (err: any) {

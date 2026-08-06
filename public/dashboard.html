@@ -1,0 +1,1228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Shorts Automation — Control Center v3.5</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #0d1117; --card: #161b22; --card-border: #21262d; --card-hover: #1c2128;
+      --text: #e6edf3; --text-muted: #8b949e; --text-dim: #484f58;
+      --primary: #58a6ff; --primary-bg: rgba(56,139,253,0.15); --primary-glow: rgba(88,166,255,0.3);
+      --success: #3fb950; --success-bg: rgba(63,185,80,0.15);
+      --warning: #d29922; --warning-bg: rgba(210,153,34,0.15);
+      --danger: #f85149; --danger-bg: rgba(248,81,73,0.15);
+      --purple: #bc8cff; --purple-bg: rgba(188,140,255,0.15);
+      --font: 'Inter', system-ui, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; min-height: 100vh; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+
+    @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(1.15)} }
+    @keyframes fadeIn { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
+    tr:hover td { background: var(--card-hover) !important; }
+    input:focus, select:focus { border-color: var(--primary) !important; outline: none; }
+    button:hover { filter: brightness(1.12); }
+
+    /* TOPBAR */
+    #topbar { display:flex; align-items:center; justify-content:space-between; padding:12px 20px; border-bottom:1px solid var(--card-border); background:var(--card); position:sticky; top:0; z-index:100; flex-wrap:wrap; gap:12px; }
+    .brand { display:flex; align-items:center; gap:10px; }
+    .brand-dot { width:10px; height:10px; border-radius:50%; background:var(--primary); animation:pulse 2s infinite; box-shadow:0 0 12px var(--primary-glow); }
+    .brand-name { font-size:16px; font-weight:700; letter-spacing:-0.3px; }
+    .brand-tag { font-size:10px; color:var(--text-muted); background:var(--bg); border:1px solid var(--card-border); border-radius:4px; padding:2px 7px; font-family:var(--font-mono); }
+    .status-pill { display:flex; align-items:center; gap:6px; font-size:11px; font-weight:600; color:var(--success); background:rgba(13,68,41,.7); border:1px solid #1f6335; border-radius:20px; padding:4px 12px; }
+    .status-dot { width:6px; height:6px; border-radius:50%; background:var(--success); animation:pulse 1.5s infinite; }
+
+    /* LAYOUT */
+    .app-body { display:grid; grid-template-columns:210px 1fr; min-height:calc(100vh - 49px); }
+    .sidebar { border-right:1px solid var(--card-border); background:var(--card); padding:14px 0; display:flex; flex-direction:column; gap:2px; overflow-y:auto; position:sticky; top:49px; height:calc(100vh - 49px); }
+    .nav-section-label { font-size:10px; font-weight:700; color:var(--text-dim); text-transform:uppercase; letter-spacing:1px; padding:10px 16px 4px; }
+    .nav-item { display:flex; align-items:center; gap:8px; padding:8px 12px; margin:1px 8px; border-radius:6px; cursor:pointer; font-size:13px; font-weight:500; color:var(--text-muted); transition:all .15s; user-select:none; }
+    .nav-item:hover { color:var(--text); background:rgba(255,255,255,.04); }
+    .nav-item.active { color:var(--primary); background:#0d2033; font-weight:700; border-left:3px solid var(--primary); }
+    .nav-badge { margin-left:auto; font-size:10px; font-weight:700; background:var(--card-border); color:var(--text-muted); border-radius:10px; padding:1px 7px; font-family:var(--font-mono); }
+    .divider { height:1px; background:var(--card-border); margin:10px 12px; }
+    .main-content { overflow-y:auto; display:flex; flex-direction:column; background:var(--bg); }
+
+    /* STATS */
+    .section-stats { padding:18px 20px; border-bottom:1px solid var(--card-border); }
+    .stat-card { background:var(--card); border:1px solid var(--card-border); border-radius:10px; padding:14px 16px; transition:transform .15s,border-color .15s; }
+    .stat-card:hover { transform:translateY(-2px); border-color:rgba(88,166,255,.4); }
+    .stat-val { font-size:24px; font-weight:800; font-family:var(--font-mono); line-height:1; margin-bottom:4px; }
+    .stat-lbl { font-size:10px; color:var(--text-muted); font-weight:600; text-transform:uppercase; letter-spacing:.5px; }
+
+    /* TABS */
+    .tabs-bar { display:flex; border-bottom:1px solid var(--card-border); padding:0 20px; background:var(--card); overflow-x:auto; gap:4px; }
+    .tab-item { padding:12px 18px; font-size:13px; font-weight:600; color:var(--text-muted); border-bottom:2px solid transparent; cursor:pointer; transition:all .15s; white-space:nowrap; display:flex; align-items:center; gap:6px; }
+    .tab-item:hover { color:var(--text); }
+    .tab-item.active { color:var(--primary); border-bottom-color:var(--primary); font-weight:700; }
+    .tab-pane { display:none; padding:22px 20px; }
+    .tab-pane.active { display:block; animation:fadeIn .2s ease; }
+
+    /* BUTTONS & INPUTS */
+    .btn-icon { background:#21262d; border:1px solid #30363d; border-radius:6px; padding:6px 12px; cursor:pointer; font-size:12px; color:var(--text-muted); display:inline-flex; align-items:center; gap:6px; transition:all .15s; font-family:inherit; font-weight:600; }
+    .btn-icon:hover { color:var(--primary); border-color:var(--primary); background:rgba(56,139,253,.1); }
+    .btn-primary { background:#238636; border:1px solid #2ea043; border-radius:8px; padding:10px 20px; color:#fff; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit; transition:all .15s; display:inline-flex; align-items:center; gap:6px; }
+    .btn-primary:hover { background:#2ea043; }
+    .btn-danger { background:var(--danger-bg); border:1px solid rgba(248,81,73,.4); color:var(--danger); font-weight:700; padding:6px 12px; border-radius:6px; cursor:pointer; font-size:11px; font-family:inherit; }
+    .input-field { width:100%; background:var(--bg); border:1px solid #30363d; border-radius:8px; padding:10px 14px; color:var(--text); font-size:13px; font-family:inherit; outline:none; transition:border .15s; }
+    .select-field { background:var(--bg); border:1px solid #30363d; border-radius:8px; padding:8px 12px; color:var(--text); font-size:13px; font-family:inherit; outline:none; cursor:pointer; }
+
+    /* PILLS */
+    .filter-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:16px; }
+    .filter-label { color:var(--text-dim); font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; }
+    .pill-btn { font-size:11px; font-weight:600; padding:5px 13px; border-radius:6px; border:1px solid #30363d; background:var(--card); color:var(--text-muted); cursor:pointer; transition:all .15s; white-space:nowrap; font-family:inherit; }
+    .pill-btn:hover,.pill-btn.active { background:#0d2033; color:var(--primary); border-color:#388bfd; }
+
+    /* ANALYTICS KPI */
+    .analytics-kpi-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:20px; }
+    .analytics-kpi-card { background:var(--card); border:1px solid var(--card-border); border-radius:10px; padding:14px 16px; }
+    .analytics-kpi-val { font-size:26px; font-weight:800; color:#e6edf3; line-height:1; margin-bottom:4px; font-family:var(--font-mono); }
+    .analytics-kpi-lbl { font-size:10px; color:var(--text-muted); font-weight:600; text-transform:uppercase; letter-spacing:.7px; }
+    .analytics-kpi-delta { font-size:11px; font-weight:700; margin-top:4px; }
+    .delta-pos { color:var(--success); }
+    .delta-neg { color:var(--danger); }
+
+    /* CHARTS */
+    .graphs-grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; }
+    .chart-card { background:var(--card); border:1px solid var(--card-border); border-radius:10px; padding:16px 18px; margin-bottom:16px; }
+    .chart-title { font-size:12px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:.8px; margin-bottom:2px; }
+    .chart-sub { font-size:11px; color:var(--text-dim); margin-bottom:12px; }
+    .chart-container { position:relative; width:100%; height:230px; }
+    .chart-container-sm { position:relative; width:100%; height:180px; }
+
+    /* TABLES */
+    .table-card { background:var(--card); border:1px solid var(--card-border); border-radius:12px; padding:18px; margin-bottom:24px; }
+    .table-responsive { width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch; }
+    table { width:100%; border-collapse:collapse; text-align:left; }
+    th { padding:10px 12px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.8px; color:var(--text-dim); border-bottom:1px solid var(--card-border); }
+    td { padding:10px 12px; border-bottom:1px solid #161b22; vertical-align:middle; font-size:12px; }
+
+    .code-badge { font-family:var(--font-mono); font-size:11px; color:var(--primary); background:#0d2033; padding:2px 7px; border-radius:4px; font-weight:700; }
+    .status-badge { display:inline-flex; align-items:center; gap:5px; font-size:10px; font-weight:700; padding:3px 8px; border-radius:5px; text-transform:capitalize; }
+    .status-queued { background:var(--warning-bg); color:var(--warning); border:1px solid rgba(210,153,34,.3); }
+    .status-processing { background:var(--primary-bg); color:var(--primary); border:1px solid rgba(88,166,255,.3); }
+    .status-published { background:var(--success-bg); color:var(--success); border:1px solid rgba(63,185,80,.3); }
+    .status-failed { background:var(--danger-bg); color:var(--danger); border:1px solid rgba(248,81,73,.3); }
+    .badge-dot { width:5px; height:5px; border-radius:50%; background:currentColor; }
+
+    .avatar-box { width:34px; height:34px; border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:800; flex-shrink:0; }
+    .avatar-primary,.avatar-blue { background:#1e3a5f; color:#93c5fd; }
+    .avatar-purple { background:#3b1f6b; color:#c4b5fd; }
+    .avatar-warning,.avatar-amber { background:#451a03; color:#fcd34d; }
+    .avatar-teal { background:#065f46; color:#a7f3d0; }
+
+    .config-card { background:var(--card); border:1px solid var(--card-border); border-radius:12px; padding:18px; margin-bottom:16px; }
+
+    #toast { position:fixed; bottom:24px; right:24px; color:#fff; padding:12px 20px; border-radius:8px; font-size:13px; font-weight:600; z-index:9999; box-shadow:0 6px 20px rgba(0,0,0,.5); display:none; align-items:center; gap:8px; animation:fadeIn .2s ease; }
+
+    @media (max-width:900px) {
+      .app-body { grid-template-columns:1fr; }
+      .sidebar { position:static; height:auto; border-right:none; border-bottom:1px solid var(--card-border); padding:8px 12px; flex-direction:row; overflow-x:auto; }
+      .nav-section-label,.divider { display:none; }
+      .analytics-kpi-grid { grid-template-columns:repeat(2,1fr); }
+      .graphs-grid-2 { grid-template-columns:1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">
+    <div class="brand-dot"></div>
+    <span class="brand-name">Shorts Automation</span>
+    <span class="brand-tag">v3.5 Viral Analytics</span>
+  </div>
+  <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;">
+    <div class="status-pill"><div class="status-dot"></div> System Active</div>
+    <button class="btn-icon" onclick="fetchDashboardData()">⟳ Refresh</button>
+  </div>
+</div>
+
+<div class="app-body">
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+    <div class="nav-section-label">Control</div>
+    <div class="nav-item active" data-tab="overview" onclick="switchTab('overview',this)"><span>📊</span> Overview & Control</div>
+    <div class="nav-item" data-tab="channels" onclick="switchTab('channels',this)"><span>📺</span> Channel Cards</div>
+    <div class="nav-item" data-tab="queue" onclick="switchTab('queue',this)"><span>⏳</span> Queue Manager <span class="nav-badge" id="nav-badge-queued">0</span></div>
+    <div class="nav-item" data-tab="inject" onclick="switchTab('inject',this)"><span>＋</span> Inject Link</div>
+    <div class="nav-item" data-tab="viral" onclick="switchTab('viral',this)"><span>🔥</span> Viral Analytics</div>
+    <div class="nav-item" data-tab="config" onclick="switchTab('config',this)"><span>⚙️</span> Configuration</div>
+    <div class="nav-item" data-tab="logs" onclick="switchTab('logs',this)"><span>▶</span> Console Logs</div>
+    <div class="divider"></div>
+    <div class="nav-section-label">Channels</div>
+    <div id="sidebar-channels-list"></div>
+  </div>
+
+  <!-- MAIN CONTENT -->
+  <div class="main-content">
+
+    <!-- AUDIENCE HEADER CARDS -->
+    <div class="section-stats">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+        <div>
+          <div style="font-size:15px;font-weight:800;color:#fff;display:flex;align-items:center;gap:8px;">
+            🌐 Channel Audience
+            <span style="font-size:10px;background:rgba(56,139,253,.15);color:var(--primary);border:1px solid rgba(56,139,253,.4);padding:2px 9px;border-radius:12px;font-weight:700;">Click to Focus</span>
+          </div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">Click any card to filter all views by channel</div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;" id="header-channel-growth-grid"></div>
+    </div>
+
+    <!-- CHANNEL FOCUS BAR -->
+    <div id="channel-focus-tabs-bar" style="display:none;align-items:center;justify-content:space-between;background:var(--card);border:1px solid var(--card-border);padding:12px 18px;border-radius:10px;margin:14px 20px 0;flex-wrap:wrap;gap:12px;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span style="font-size:11px;font-weight:700;color:var(--primary);text-transform:uppercase;letter-spacing:.8px;background:rgba(56,139,253,.15);border:1px solid rgba(56,139,253,.3);padding:3px 8px;border-radius:6px;">Focused Channel</span>
+        <span style="font-size:16px;font-weight:800;color:#fff;" id="channel-focus-title">—</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <button class="pill-btn active" id="focused-tab-queue-btn" onclick="switchFocusedChannelTab('queue',this)">⏳ Queue</button>
+        <button class="pill-btn" id="focused-tab-logs-btn" onclick="switchFocusedChannelTab('logs',this)">📜 Logs</button>
+        <button class="pill-btn" id="focused-tab-config-btn" onclick="switchFocusedChannelTab('config',this)">⚙️ Config</button>
+        <button class="btn-primary" style="padding:5px 12px;font-size:11px;" onclick="forceStartQueue()">⚡ Force Start</button>
+        <button class="btn-primary" style="padding:5px 12px;font-size:11px;background:#8957e5;border-color:#ab7df6;" onclick="restartQueue()">🔄 Restart</button>
+        <button class="btn-icon" onclick="focusChannelProfile('all')">✕ Clear Focus</button>
+      </div>
+    </div>
+
+    <!-- TAB: OVERVIEW -->
+    <div id="tab-overview" class="tab-pane active">
+      <div id="alerts-container" style="margin-bottom:20px;"></div>
+
+      <div id="overview-active-profiles-section" style="margin-bottom:24px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+          <div style="font-size:16px;font-weight:800;color:#fff;">📺 Active Channel Profiles</div>
+          <div style="font-size:11px;color:var(--text-muted);">Queue status, limits & audience per channel</div>
+        </div>
+        <div id="overview-channels-cards-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;"></div>
+      </div>
+
+      <!-- INJECT SECTION -->
+      <div class="table-card" id="inject-workflow-section" style="margin-bottom:24px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
+          <div>
+            <div style="font-size:16px;font-weight:700;color:#fff;">＋ Inject Source Reel</div>
+            <div style="font-size:12px;color:var(--text-muted);">Paste Instagram Reel URL to trigger AI transcription, caption rendering, and multi-platform publishing</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <label style="font-size:11px;font-weight:700;color:var(--text-muted);">Target:</label>
+            <select class="input-field" id="inject-target-channel-select" style="width:160px;padding:6px 10px;font-weight:600;"></select>
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;margin-bottom:16px;">
+          <input class="input-field" style="font-family:var(--font-mono);" id="inject-url-input" placeholder="https://www.instagram.com/reel/XXXXXXXX/" onkeydown="if(event.key==='Enter')triggerInjectLink()">
+          <button class="btn-primary" style="white-space:nowrap;" onclick="triggerInjectLink()">⚡ Ingest & Process</button>
+        </div>
+        <!-- 6-STEP PIPELINE STEPPER -->
+        <div id="live-workflow-stepper" style="background:var(--bg);border:1px solid var(--card-border);border-radius:8px;padding:14px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+            <span style="font-weight:700;font-size:12px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;">Live 6-Step Pipeline</span>
+            <span id="stepper-status-badge" class="status-badge status-published">System Ready</span>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;text-align:center;" id="pipeline-steps">
+            <div class="step-card" id="step-1" style="background:var(--card);padding:10px 6px;border-radius:6px;border:1px solid var(--card-border);transition:all .3s;"><div style="font-size:16px;margin-bottom:2px;">📥</div><div style="font-size:11px;font-weight:700;color:#fff;">1. Fetch Reel</div><div style="font-size:9px;color:var(--text-muted);">Downloading HD</div></div>
+            <div class="step-card" id="step-2" style="background:var(--card);padding:10px 6px;border-radius:6px;border:1px solid var(--card-border);transition:all .3s;"><div style="font-size:16px;margin-bottom:2px;">🧠</div><div style="font-size:11px;font-weight:700;color:#fff;">2. AI Analysis</div><div style="font-size:9px;color:var(--text-muted);">Hook & Sentiment</div></div>
+            <div class="step-card" id="step-3" style="background:var(--card);padding:10px 6px;border-radius:6px;border:1px solid var(--card-border);transition:all .3s;"><div style="font-size:16px;margin-bottom:2px;">🎨</div><div style="font-size:11px;font-weight:700;color:#fff;">3. Captions</div><div style="font-size:9px;color:var(--text-muted);">Word Overlays</div></div>
+            <div class="step-card" id="step-4" style="background:var(--card);padding:10px 6px;border-radius:6px;border:1px solid var(--card-border);transition:all .3s;"><div style="font-size:16px;margin-bottom:2px;">🎵</div><div style="font-size:11px;font-weight:700;color:#fff;">4. Audio Check</div><div style="font-size:9px;color:var(--text-muted);">AcoustID & BGM</div></div>
+            <div class="step-card" id="step-5" style="background:var(--card);padding:10px 6px;border-radius:6px;border:1px solid var(--card-border);transition:all .3s;"><div style="font-size:16px;margin-bottom:2px;">🚀</div><div style="font-size:11px;font-weight:700;color:#fff;">5. Dispatch</div><div style="font-size:9px;color:var(--text-muted);">Insta / YT / FB</div></div>
+            <div class="step-card" id="step-6" style="background:var(--card);padding:10px 6px;border-radius:6px;border:1px solid var(--card-border);transition:all .3s;"><div style="font-size:16px;margin-bottom:2px;">✅</div><div style="font-size:11px;font-weight:700;color:#fff;">6. Published</div><div style="font-size:9px;color:var(--text-muted);">Live Multi-Links</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- RECENT ACTIVITY TABLE -->
+      <div class="table-card">
+        <div style="font-size:16px;font-weight:800;color:#fff;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;">
+          <span>Recent Processing Activity</span>
+          <input class="input-field" style="width:220px;padding:6px 12px;" id="activity-search" placeholder="Search activity..." oninput="filterActivityTable()">
+        </div>
+        <div class="table-responsive">
+          <table>
+            <thead><tr><th>Source Reel & Time</th><th>Channel</th><th>Status & Links</th></tr></thead>
+            <tbody id="activity-table-body"><tr><td colspan="3" style="text-align:center;color:var(--text-muted);padding:24px;">Loading activity log...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB: CHANNELS -->
+    <div id="tab-channels" class="tab-pane">
+      <div style="font-size:18px;font-weight:800;color:#fff;margin-bottom:4px;">📺 Managed Channel Profiles</div>
+      <div style="color:var(--text-muted);margin-bottom:20px;">Detailed metrics, audience data, queue status, and channel configuration.</div>
+      <div id="channels-cards-container" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;"></div>
+    </div>
+
+    <!-- TAB: QUEUE -->
+    <div id="tab-queue" class="tab-pane">
+      <div class="table-card" style="margin-bottom:24px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+          <div>
+            <div style="font-size:18px;font-weight:800;color:#fff;">⏳ Ingestion Queue Manager</div>
+            <div style="font-size:12px;color:var(--text-muted);">View, re-order, and manage pending or processed video ingestion items</div>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+            <button class="pill-btn active" data-status="all" onclick="filterQueueStatus('all',this)">All</button>
+            <button class="pill-btn" data-status="queued" onclick="filterQueueStatus('queued',this)">Queued</button>
+            <button class="pill-btn" data-status="processing" onclick="filterQueueStatus('processing',this)">Processing</button>
+            <button class="pill-btn" data-status="published" onclick="filterQueueStatus('published',this)">Published</button>
+            <button class="pill-btn" data-status="failed" onclick="filterQueueStatus('failed',this)">Failed</button>
+            <button class="btn-primary" style="padding:5px 12px;font-size:11px;" onclick="forceStartQueue()">⚡ Force Start</button>
+            <button class="btn-primary" style="padding:5px 12px;font-size:11px;background:#8957e5;border-color:#ab7df6;" onclick="restartQueue()">🔄 Restart</button>
+          </div>
+        </div>
+        <!-- Channel filter pills for queue -->
+        <div id="queue-channel-pills" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;"></div>
+        <div class="table-responsive">
+          <table>
+            <thead><tr><th>Source Reel & Time</th><th>Channel</th><th>Status & Links</th><th>Actions</th></tr></thead>
+            <tbody id="queue-table-body"><tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:30px;">Loading queue items...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB: INJECT -->
+    <div id="tab-inject" class="tab-pane">
+      <div class="table-card" style="margin-bottom:24px;">
+        <div style="font-size:18px;font-weight:800;color:#fff;margin-bottom:6px;">＋ Direct Reel Ingest & Pipeline</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:18px;">Paste Instagram Reel URL to trigger real-time AI transcription, caption overlay, and publishing</div>
+        <div style="margin-bottom:14px;">
+          <label style="font-size:11px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:6px;">Target Channel</label>
+          <select class="input-field" id="inject-tab-channel-select" style="width:280px;padding:8px 12px;font-weight:600;"></select>
+        </div>
+        <div style="display:flex;gap:10px;margin-bottom:16px;">
+          <input class="input-field" style="font-family:var(--font-mono);" id="inject-tab-url-input" placeholder="https://www.instagram.com/reel/XXXXXXXX/" onkeydown="if(event.key==='Enter')triggerInjectLink('inject-tab-url-input','inject-tab-channel-select')">
+          <button class="btn-primary" style="white-space:nowrap;" onclick="triggerInjectLink('inject-tab-url-input','inject-tab-channel-select')">⚡ Ingest Reel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB: VIRAL ANALYTICS -->
+    <div id="tab-viral" class="tab-pane">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px;">
+        <div>
+          <div style="font-size:18px;font-weight:800;color:#fff;">🔥 Viral Analytics & Channel Performance</div>
+          <div style="font-size:12px;color:var(--text-muted);">Performance, publishing cadence, and engagement rate metrics</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <div id="viral-channel-pills" style="display:flex;gap:6px;"></div>
+          <div style="width:1px;height:20px;background:var(--card-border);"></div>
+          <div id="viral-range-pills" style="display:flex;gap:6px;">
+            <button class="pill-btn" data-range="7d" onclick="filterAnalyticsRange('7d',this)">7d</button>
+            <button class="pill-btn" data-range="14d" onclick="filterAnalyticsRange('14d',this)">14d</button>
+            <button class="pill-btn active" data-range="30d" onclick="filterAnalyticsRange('30d',this)">30d</button>
+            <button class="pill-btn" data-range="90d" onclick="filterAnalyticsRange('90d',this)">90d</button>
+          </div>
+          <button class="btn-icon" onclick="exportViralCsv()">📥 Export CSV</button>
+        </div>
+      </div>
+
+      <!-- KPI CARDS -->
+      <div class="analytics-kpi-grid">
+        <div class="analytics-kpi-card" style="border-top:2px solid var(--primary);">
+          <div class="analytics-kpi-val" id="kpi-total-views">—</div>
+          <div class="analytics-kpi-lbl">Total Views</div>
+          <div class="analytics-kpi-delta delta-pos" id="kpi-views-delta">↑ — vs prev period</div>
+        </div>
+        <div class="analytics-kpi-card" style="border-top:2px solid var(--success);">
+          <div class="analytics-kpi-val" id="kpi-total-reels">—</div>
+          <div class="analytics-kpi-lbl">Reels Published</div>
+          <div class="analytics-kpi-delta delta-pos" id="kpi-reels-rate">— avg/day</div>
+        </div>
+        <div class="analytics-kpi-card" style="border-top:2px solid var(--warning);">
+          <div class="analytics-kpi-val" id="kpi-avg-er">—</div>
+          <div class="analytics-kpi-lbl">Avg Engagement Rate</div>
+          <div class="analytics-kpi-delta delta-pos" id="kpi-er-delta">↑ — vs prev period</div>
+        </div>
+        <div class="analytics-kpi-card" style="border-top:2px solid var(--purple);">
+          <div class="analytics-kpi-val" id="kpi-total-shares">—</div>
+          <div class="analytics-kpi-lbl">Total Shares</div>
+          <div class="analytics-kpi-delta delta-pos" id="kpi-shares-delta">↑ — vs prev period</div>
+        </div>
+      </div>
+
+      <!-- MAIN TREND CHART -->
+      <div class="chart-card">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
+          <div>
+            <div class="chart-title" id="main-chart-title">Views over time</div>
+            <div class="chart-sub">Daily breakdown by channel profile</div>
+          </div>
+          <div style="display:flex;gap:6px;">
+            <button class="pill-btn active" data-metric="views" onclick="switchAnalyticsMetric('views',this)">Views</button>
+            <button class="pill-btn" data-metric="reels" onclick="switchAnalyticsMetric('reels',this)">Reels</button>
+            <button class="pill-btn" data-metric="er" onclick="switchAnalyticsMetric('er',this)">Eng. Rate</button>
+            <button class="pill-btn" data-metric="shares" onclick="switchAnalyticsMetric('shares',this)">Shares</button>
+          </div>
+        </div>
+        <div class="chart-container"><canvas id="chart-main-metric"></canvas></div>
+      </div>
+
+      <!-- CADENCE + ER CHARTS -->
+      <div class="graphs-grid-2">
+        <div class="chart-card">
+          <div class="chart-title">Reels published per day</div>
+          <div class="chart-sub">Publishing cadence by channel</div>
+          <div class="chart-container-sm"><canvas id="chart-daily-cadence"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Engagement rate trend</div>
+          <div class="chart-sub">Likes + comments + saves ÷ views</div>
+          <div class="chart-container-sm"><canvas id="chart-er-trend"></canvas></div>
+        </div>
+      </div>
+
+      <!-- PIE + SHARES CHARTS -->
+      <div class="graphs-grid-2">
+        <div class="chart-card">
+          <div class="chart-title">View share by channel</div>
+          <div class="chart-sub">Proportion of total views across profiles</div>
+          <div style="display:flex;align-items:center;justify-content:space-around;height:180px;">
+            <div style="width:170px;height:170px;position:relative;"><canvas id="chart-view-share"></canvas></div>
+            <div id="view-share-legend" style="display:flex;flex-direction:column;gap:10px;"></div>
+          </div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Shares momentum</div>
+          <div class="chart-sub">Viral amplification and social reach</div>
+          <div class="chart-container-sm"><canvas id="chart-shares-momentum"></canvas></div>
+        </div>
+      </div>
+
+      <!-- AI INSIGHTS -->
+      <div class="table-card" style="margin-bottom:16px;">
+        <div style="font-size:15px;font-weight:700;color:var(--purple);margin-bottom:10px;">💡 AI Copywriting Insights & High-CTR Hooks</div>
+        <div id="viral-patterns-content" style="font-family:var(--font-mono);font-size:12px;color:var(--text);white-space:pre-wrap;background:var(--bg);padding:14px;border-radius:8px;border:1px solid var(--card-border);">Loading AI feedback loop...</div>
+      </div>
+
+      <!-- LEADERBOARD -->
+      <div class="table-card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
+          <div>
+            <div style="font-size:15px;font-weight:700;color:#fff;">🏆 Top Performing Reels Leaderboard</div>
+            <div style="font-size:11px;color:var(--text-muted);">Ranked by views and viral score in selected period</div>
+          </div>
+          <input class="input-field" style="width:220px;padding:6px 12px;" id="viral-search-input" placeholder="Search reels..." oninput="applyViralSearch()">
+        </div>
+        <div class="table-responsive">
+          <table>
+            <thead><tr><th>Rank</th><th>Source Reel</th><th>Channel</th><th>Views</th><th>Eng. Rate</th><th>Shares</th><th>Trend</th><th>Actions</th></tr></thead>
+            <tbody id="viral-leaderboard-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB: CONFIGURATION -->
+    <div id="tab-config" class="tab-pane">
+      <div style="max-width:760px;">
+        <div style="font-size:18px;font-weight:800;color:#fff;margin-bottom:4px;">⚙️ Channel Automation Configuration</div>
+        <div style="color:var(--text-muted);margin-bottom:20px;">Set daily reel limits, posting schedules, and automated retry policies per channel profile.</div>
+        <div id="config-cards-list"></div>
+      </div>
+    </div>
+
+    <!-- TAB: LOGS -->
+    <div id="tab-logs" class="tab-pane">
+      <div style="font-size:18px;font-weight:800;color:#fff;margin-bottom:4px;">▶ Console Logs</div>
+      <div style="color:var(--text-muted);margin-bottom:16px;">Live log output from watcher jobs, AI rendering engines, and uploader services</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:10px;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <input class="input-field" style="width:260px;padding:6px 12px;" id="log-filter" placeholder="Filter console logs..." oninput="applyLogFilter()">
+          <span id="log-count" style="color:var(--text-muted);font-size:12px;">0 entries</span>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn-icon" onclick="clearLogConsole()">Clear</button>
+          <button class="btn-icon" id="scrollToggleBtn" onclick="toggleAutoScroll()">Auto-scroll: ON</button>
+        </div>
+      </div>
+      <div id="log-container" style="background:var(--card);border:1px solid var(--card-border);border-radius:10px;padding:14px;height:60vh;overflow-y:auto;font-family:var(--font-mono);font-size:12px;"></div>
+    </div>
+
+  </div>
+</div>
+
+<div id="toast">✓ Notification</div>
+
+<script>
+  /* ─── STATE ─── */
+  let activeTab = 'overview';
+  let autoScroll = true;
+  let logTotal = 0;
+  let logFilterStr = '';
+  let focusedChannel = 'all';
+  let queueFilterStatus = 'all';
+  let selectedAnalyticsChannel = 'all';
+  let selectedAnalyticsRange = '30d';
+  let selectedAnalyticsMetric = 'views';
+  let globalDashboardData = null;
+
+  let chartMainMetric = null;
+  let chartDailyCadence = null;
+  let chartERTrend = null;
+  let chartViewShare = null;
+  let chartSharesMomentum = null;
+
+  /* ─── UTILS ─── */
+  function fmtNum(n) {
+    if (!n) return '0';
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+    return String(n);
+  }
+  function fmtDate(dStr) {
+    if (!dStr) return 'Recently';
+    const d = new Date(dStr);
+    if (isNaN(d.getTime())) return dStr;
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    let h = d.getHours(), m = d.getMinutes().toString().padStart(2,'0');
+    const ap = h >= 12 ? 'pm' : 'am';
+    h = h % 12 || 12;
+    return d.getDate() + ' ' + months[d.getMonth()] + ' at ' + h + ':' + m + ' ' + ap;
+  }
+  function setElText(id, text) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = String(text || '');
+  }
+  function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  function showToast(msg, type) {
+    const el = document.getElementById('toast');
+    el.textContent = (type === 'warn' ? '⚠️ ' : type === 'err' ? '❌ ' : '✓ ') + msg;
+    el.style.background = type === 'warn' ? '#9a6700' : type === 'err' ? '#da3633' : '#238636';
+    el.style.display = 'flex';
+    setTimeout(() => { el.style.display = 'none'; }, 3000);
+  }
+
+  /* ─── TAB SWITCHING ─── */
+  function switchTab(tab, btnEl) {
+    activeTab = tab;
+    document.querySelectorAll('.sidebar .nav-item').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-pane').forEach(c => c.classList.remove('active'));
+    const sideItem = document.querySelector('.sidebar .nav-item[data-tab="' + tab + '"]');
+    if (sideItem) sideItem.classList.add('active');
+    const pane = document.getElementById('tab-' + tab);
+    if (pane) pane.classList.add('active');
+    if (tab === 'viral' && globalDashboardData && globalDashboardData.viralAnalytics) {
+      setTimeout(() => renderViralCharts(globalDashboardData.viralAnalytics), 60);
+    }
+    if (tab === 'config') {
+      renderConfigTab(globalDashboardData ? globalDashboardData.channels : null);
+    }
+  }
+
+  /* ─── CHANNEL FOCUS ─── */
+  function focusChannelProfile(key) {
+    focusedChannel = key;
+    selectedAnalyticsChannel = key;
+    const bar = document.getElementById('channel-focus-tabs-bar');
+    const titleEl = document.getElementById('channel-focus-title');
+    const profilesSection = document.getElementById('overview-active-profiles-section');
+    const injectSection = document.getElementById('inject-workflow-section');
+    const NAMES = { codeorcap:'CodeOrCap (@codeorcap)', storiyum:'Storiyum (@storiyum)', prompt_gag:'PromptGag (@prompt_gag)' };
+    if (key === 'all') {
+      if (bar) bar.style.display = 'none';
+      if (profilesSection) profilesSection.style.display = '';
+      if (injectSection) injectSection.style.display = '';
+    } else {
+      if (bar) bar.style.display = 'flex';
+      if (titleEl) titleEl.textContent = NAMES[key] || key;
+      if (profilesSection) profilesSection.style.display = 'none';
+      if (injectSection) injectSection.style.display = 'none';
+      const sel = document.getElementById('inject-target-channel-select');
+      if (sel) sel.value = key;
+    }
+    renderHeaderAudienceCards(globalDashboardData ? globalDashboardData.channels : null);
+    if (globalDashboardData) {
+      renderQueueTable(globalDashboardData.queue);
+      renderActivityTable(globalDashboardData.recentHistory);
+      renderConfigTab(globalDashboardData.channels);
+    }
+  }
+
+  function switchFocusedChannelTab(subTab, btnEl) {
+    document.querySelectorAll('#channel-focus-tabs-bar .pill-btn').forEach(b => b.classList.remove('active'));
+    const targetBtn = btnEl || document.getElementById('focused-tab-' + subTab + '-btn');
+    if (targetBtn) targetBtn.classList.add('active');
+    switchTab(subTab === 'queue' ? 'queue' : subTab === 'logs' ? 'logs' : 'config');
+  }
+
+  /* ─── FETCH ─── */
+  async function fetchDashboardData() {
+    try {
+      const res = await fetch('/api/dashboard');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      globalDashboardData = data;
+      renderDashboard(data);
+    } catch(e) { console.error('Dashboard fetch failed:', e); }
+  }
+
+  function renderDashboard(data) {
+    try {
+      const qPending = (data.queue || []).filter(q => q.status === 'queued').length;
+      setElText('nav-badge-queued', qPending);
+      renderHeaderAudienceCards(data.channels);
+      renderChannelsList(data.channels);
+      renderActivityTable(data.recentHistory);
+      renderQueueTable(data.queue);
+      renderConfigTab(data.channels);
+      if (data.viralAnalytics) renderViralSection(data.viralAnalytics);
+    } catch(e) { console.error('renderDashboard error:', e); }
+  }
+
+  /* ─── HEADER AUDIENCE CARDS ─── */
+  function renderHeaderAudienceCards(channels) {
+    const container = document.getElementById('header-channel-growth-grid');
+    if (!container) return;
+    container.innerHTML = '';
+    const defaults = [
+      { key:'codeorcap', name:'CodeOrCap', handle:'@codeorcap', color:'primary', initials:'CO', igFollowers:null, ytSubscribers:null, niche:'TECH/AI' },
+      { key:'storiyum',  name:'Storiyum',  handle:'@storiyum',  color:'purple',  initials:'ST', igFollowers:null, ytSubscribers:null, niche:'STORIES' },
+      { key:'prompt_gag',name:'PromptGag', handle:'@prompt_gag',color:'warning', initials:'PG', igFollowers:null, ytSubscribers:null, niche:'HUMOR' }
+    ];
+    const list = (channels && channels.length > 0) ? channels : defaults;
+    let totalIg = 0, totalYt = 0;
+    list.forEach(c => {
+      if (c.igFollowers > 0) totalIg += c.igFollowers;
+      if (c.ytSubscribers > 0) totalYt += c.ytSubscribers;
+    });
+    const allObj = { key:'all', name:'🌐 All Channels', handle:'Combined Network', color:'blue', initials:'ALL', igFollowers:totalIg, ytSubscribers:totalYt, isAll:true };
+    [allObj, ...list].forEach(c => {
+      const isFocused = focusedChannel === c.key;
+      const borderColor = c.color === 'purple' ? '#a855f7' : c.color === 'warning' || c.color === 'amber' ? '#f59e0b' : '#388bfd';
+      const igVal = c.igFollowers || 0;
+      const ytVal = c.ytSubscribers || 0;
+      const nicheText = c.isAll ? 'NETWORK' : (c.niche || c.key.toUpperCase());
+      const statusBadge = isFocused
+        ? '<span style="font-size:10px;font-weight:800;color:#388bfd;background:rgba(56,139,253,.2);border:1px solid rgba(56,139,253,.5);padding:3px 8px;border-radius:12px;">✔ ACTIVE FOCUS</span>'
+        : '<span style="font-size:10px;color:var(--text-dim);background:var(--bg);padding:3px 8px;border-radius:12px;border:1px solid var(--card-border);">Click to Focus</span>';
+      const card = document.createElement('div');
+      card.style.cssText = 'background:var(--card);border:1px solid var(--card-border);border-top:4px solid ' + borderColor + ';border-radius:14px;padding:16px;cursor:pointer;transition:all .25s;' +
+        (isFocused ? 'box-shadow:0 0 0 2px ' + borderColor + ';transform:translateY(-2px);' : 'opacity:.92;');
+      card.onclick = () => focusChannelProfile(c.key);
+      card.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px;">' +
+        '<div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1;">' +
+          '<div class="avatar-box avatar-' + c.color + '" style="width:36px;height:36px;font-size:13px;flex-shrink:0;">' + c.initials + '</div>' +
+          '<div style="min-width:0;overflow:hidden;"><div style="font-weight:800;color:#fff;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + c.name + ' <span class="code-badge" style="font-size:9px;">' + nicheText + '</span></div>' +
+          '<div style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + c.handle + '</div></div>' +
+        '</div>' + '<div style="flex-shrink:0;">' + statusBadge + '</div>' + '</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;background:var(--bg);padding:10px;border-radius:8px;border:1px solid var(--card-border);text-align:center;">' +
+          '<div><div style="font-size:10px;color:#e1306c;font-weight:800;">📷 Instagram</div><div style="font-size:18px;font-weight:800;color:' + (igVal > 0 ? '#fff' : 'var(--text-muted)') + ';font-family:var(--font-mono);margin-top:2px;">' + fmtNum(igVal) + '</div><div style="font-size:9px;color:var(--text-muted);">Followers</div></div>' +
+          '<div style="border-left:1px solid var(--card-border);"><div style="font-size:10px;color:#ff4e4e;font-weight:800;">▶ YouTube</div><div style="font-size:18px;font-weight:800;color:' + (ytVal > 0 ? '#fff' : 'var(--text-muted)') + ';font-family:var(--font-mono);margin-top:2px;">' + fmtNum(ytVal) + '</div><div style="font-size:9px;color:var(--text-muted);">Subscribers</div></div>' +
+        '</div>';
+      container.appendChild(card);
+    });
+
+    /* Sync inject selects */
+    ['inject-target-channel-select','inject-tab-channel-select'].forEach(selId => {
+      const sel = document.getElementById(selId);
+      if (!sel || sel.children.length > 0) return;
+      list.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c.key; opt.textContent = c.name + ' (' + c.handle + ')';
+        sel.appendChild(opt);
+      });
+    });
+  }
+
+  /* ─── CHANNELS LIST / CARDS ─── */
+  function renderChannelsList(channels) {
+    const defaults = [
+      { key:'codeorcap', name:'CodeOrCap', color:'primary', initials:'CO', niche:'TECH/AI', handle:'@codeorcap', dailyLimit:6, queueCount:0, igFollowers:0, ytSubscribers:0, stats:{publishedCount:0} },
+      { key:'storiyum',  name:'Storiyum',  color:'purple',  initials:'ST', niche:'STORIES', handle:'@storiyum',  dailyLimit:6, queueCount:0, igFollowers:0, ytSubscribers:0, stats:{publishedCount:0} },
+      { key:'prompt_gag',name:'PromptGag', color:'warning', initials:'PG', niche:'HUMOR',   handle:'@prompt_gag',dailyLimit:6, queueCount:0, igFollowers:0, ytSubscribers:0, stats:{publishedCount:0} }
+    ];
+    const list = (channels && channels.length > 0) ? channels : defaults;
+
+    /* Sidebar */
+    const sideList = document.getElementById('sidebar-channels-list');
+    if (sideList) {
+      sideList.innerHTML = '';
+      list.forEach(c => {
+        const item = document.createElement('div');
+        item.className = 'nav-item';
+        item.onclick = () => focusChannelProfile(c.key);
+        item.innerHTML = '<div class="avatar-box avatar-' + c.color + '" style="width:20px;height:20px;font-size:8px;border-radius:4px;flex-shrink:0;">' + c.initials + '</div><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;">' + c.name + '</span><span class="nav-badge" style="flex-shrink:0;">' + (c.queueCount || 0) + '</span>';
+        sideList.appendChild(item);
+      });
+    }
+
+    /* Queue channel pills */
+    const qPills = document.getElementById('queue-channel-pills');
+    if (qPills) {
+      qPills.innerHTML = '<button class="pill-btn active" onclick="filterQueueChannel(\'all\',this)">All Channels</button>';
+      list.forEach(c => {
+        const pill = document.createElement('button');
+        pill.className = 'pill-btn';
+        pill.textContent = c.name;
+        pill.onclick = function() { filterQueueChannel(c.key, this); };
+        qPills.appendChild(pill);
+      });
+    }
+
+    /* Viral channel pills */
+    const vPills = document.getElementById('viral-channel-pills');
+    if (vPills) {
+      vPills.innerHTML = '<button class="pill-btn active" onclick="filterAnalyticsChannel(\'all\',this)">All Channels</button>';
+      list.forEach(c => {
+        const pill = document.createElement('button');
+        pill.className = 'pill-btn';
+        pill.textContent = c.name;
+        pill.onclick = function() { filterAnalyticsChannel(c.key, this); };
+        vPills.appendChild(pill);
+      });
+    }
+
+    /* Channel cards (tab-channels + overview) */
+    [document.getElementById('channels-cards-container'), document.getElementById('overview-channels-cards-grid')].forEach(container => {
+      if (!container) return;
+      container.innerHTML = '';
+      list.forEach(c => {
+        const borderColor = c.color === 'purple' ? '#a855f7' : c.color === 'warning' ? '#f59e0b' : '#388bfd';
+        const igVal = c.igFollowers || 0, ytVal = c.ytSubscribers || 0;
+        const pubCount = (c.stats && c.stats.publishedCount) || 0;
+        const card = document.createElement('div');
+        card.className = 'table-card';
+        card.style.cssText = 'border-top:4px solid ' + borderColor + ';padding:16px 18px;border-radius:12px;margin-bottom:0;background:var(--card);';
+        card.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:14px;">' +
+          '<div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1;">' +
+            '<div class="avatar-box avatar-' + c.color + '" style="width:38px;height:38px;font-size:14px;flex-shrink:0;">' + c.initials + '</div>' +
+            '<div style="min-width:0;overflow:hidden;"><div style="font-weight:800;color:#fff;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + c.name + ' <span class="code-badge" style="font-size:9px;">' + (c.niche || 'ACTIVE') + '</span></div>' +
+            '<div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + c.handle + '</div></div>' +
+          '</div>' +
+          '<button class="btn-icon" style="font-size:11px;color:var(--primary);flex-shrink:0;" onclick="focusChannelProfile(\'' + c.key + '\')">🎯 Focus</button>' +
+        '</div>' +
+        '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;background:var(--bg);padding:10px;border-radius:8px;border:1px solid var(--card-border);text-align:center;">' +
+          '<div><div style="font-size:10px;color:#e1306c;font-weight:800;">📷 IG</div><div style="font-size:15px;font-weight:800;color:' + (igVal>0?'#fff':'var(--text-muted)') + ';font-family:var(--font-mono);margin-top:2px;">' + fmtNum(igVal) + '</div><div style="font-size:9px;color:var(--text-muted);">Followers</div></div>' +
+          '<div><div style="font-size:10px;color:#ff4e4e;font-weight:800;">▶ YT</div><div style="font-size:15px;font-weight:800;color:' + (ytVal>0?'#fff':'var(--text-muted)') + ';font-family:var(--font-mono);margin-top:2px;">' + fmtNum(ytVal) + '</div><div style="font-size:9px;color:var(--text-muted);">Subscribers</div></div>' +
+          '<div><div style="font-size:10px;color:var(--warning);font-weight:800;">⏳ Queue</div><div style="font-size:15px;font-weight:800;color:#fff;font-family:var(--font-mono);margin-top:2px;">' + (c.queueCount||0) + '</div><div style="font-size:9px;color:var(--text-muted);">pending</div></div>' +
+          '<div><div style="font-size:10px;color:var(--success);font-weight:800;">🚀 Done</div><div style="font-size:15px;font-weight:800;color:#fff;font-family:var(--font-mono);margin-top:2px;">' + pubCount + '</div><div style="font-size:9px;color:var(--text-muted);">published</div></div>' +
+        '</div>';
+        container.appendChild(card);
+      });
+    });
+  }
+
+  /* ─── ACTIVITY TABLE ─── */
+  function renderActivityTable(history) {
+    const body = document.getElementById('activity-table-body');
+    if (!body) return;
+    if (!history || history.length === 0) {
+      body.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--text-muted);padding:20px;">No activity records yet.</td></tr>';
+      return;
+    }
+    const filtered = history.filter(i => focusedChannel === 'all' || (i.profile_key || i.channel || '') === focusedChannel);
+    if (!filtered.length) {
+      body.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--text-muted);padding:20px;">No activity for this channel yet.</td></tr>';
+      return;
+    }
+    body.innerHTML = '';
+    filtered.forEach(item => {
+      const origUrl = item.originalUrl || ('https://www.instagram.com/reel/' + item.shortcode + '/');
+      const tr = document.createElement('tr');
+      let links = '';
+      if (item.instagramUrl || origUrl) links += '<a href="' + (item.instagramUrl || origUrl) + '" target="_blank" class="btn-icon" style="padding:2px 6px;font-size:10px;color:#e1306c;">📷 Insta</a>';
+      if (item.youtubeUrl) links += '<a href="' + item.youtubeUrl + '" target="_blank" class="btn-icon" style="padding:2px 6px;font-size:10px;color:#ff4e4e;">▶ YouTube</a>';
+      if (item.facebookUrl) links += '<a href="' + item.facebookUrl + '" target="_blank" class="btn-icon" style="padding:2px 6px;font-size:10px;color:#1877f2;">📘 FB</a>';
+      tr.innerHTML = '<td><a href="' + origUrl + '" target="_blank" style="color:var(--primary);font-weight:600;text-decoration:none;">📷 Source Reel</a><div style="color:var(--text-muted);font-size:11px;margin-top:2px;">' + fmtDate(item.published_at || item.picked_at) + '</div></td>' +
+        '<td style="font-weight:600;color:#fff;">' + esc(item.profile_key || item.channel || '—') + '</td>' +
+        '<td><span class="status-badge ' + (item.failed ? 'status-failed' : 'status-published') + '">' + (item.failed ? 'FAILED' : 'PUBLISHED') + '</span><div style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap;">' + links + '</div></td>';
+      body.appendChild(tr);
+    });
+  }
+
+  function filterActivityTable() {
+    const q = (document.getElementById('activity-search').value || '').toLowerCase();
+    document.querySelectorAll('#activity-table-body tr').forEach(r => {
+      r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
+    });
+  }
+
+  /* ─── QUEUE TABLE ─── */
+  let queueFilterChannel = 'all';
+
+  function renderQueueTable(queue) {
+    const body = document.getElementById('queue-table-body');
+    if (!body) return;
+    if (!queue || queue.length === 0) {
+      body.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:36px;">' +
+        '<div style="font-size:15px;font-weight:700;color:#fff;margin-bottom:8px;">Queue is empty</div>' +
+        '<div style="display:flex;gap:10px;justify-content:center;margin-top:10px;">' +
+        '<button class="btn-primary" style="padding:7px 16px;" onclick="forceStartQueue()">⚡ Force Start</button>' +
+        '<button class="btn-primary" style="padding:7px 16px;background:#8957e5;border-color:#ab7df6;" onclick="restartQueue()">🔄 Restart Queue</button></div></td></tr>';
+      return;
+    }
+    const filtered = queue.filter(q => {
+      const chOk = queueFilterChannel === 'all' || (q.channel || q.profileKey) === queueFilterChannel;
+      const stOk = queueFilterStatus === 'all' || q.status === queueFilterStatus;
+      return chOk && stOk;
+    });
+    if (!filtered.length) {
+      body.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:24px;">No items match the selected filters.</td></tr>';
+      return;
+    }
+    body.innerHTML = '';
+    filtered.forEach(item => {
+      const sourceUrl = item.source || ('https://www.instagram.com/reel/' + item.shortcode + '/');
+      const tr = document.createElement('tr');
+      let links = '';
+      if (item.status === 'published') {
+        if (item.instagramUrl) links += '<a href="' + item.instagramUrl + '" target="_blank" class="btn-icon" style="padding:2px 6px;font-size:10px;color:#e1306c;">📷 Insta</a>';
+        if (item.youtubeUrl) links += '<a href="' + item.youtubeUrl + '" target="_blank" class="btn-icon" style="padding:2px 6px;font-size:10px;color:#ff4e4e;">▶ YouTube</a>';
+        if (item.facebookUrl) links += '<a href="' + item.facebookUrl + '" target="_blank" class="btn-icon" style="padding:2px 6px;font-size:10px;color:#1877f2;">📘 FB</a>';
+      }
+      tr.innerHTML = '<td><a href="' + sourceUrl + '" target="_blank" style="color:var(--primary);font-weight:600;text-decoration:none;">📷 Source Reel</a><div style="color:var(--text-muted);font-size:11px;margin-top:2px;">' + fmtDate(item.addedAt) + '</div></td>' +
+        '<td style="font-weight:600;color:#fff;">' + esc(item.channel || item.profileKey || '—') + '</td>' +
+        '<td><span class="status-badge status-' + item.status + '"><div class="badge-dot"></div>' + item.status + '</span><div style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap;">' + links + '</div></td>';
+      const actionTd = document.createElement('td');
+      const div = document.createElement('div');
+      div.style.display = 'flex'; div.style.gap = '6px';
+      if (item.status === 'failed') {
+        const rb = document.createElement('button'); rb.className='btn-icon'; rb.style.color='var(--primary)'; rb.textContent='↺ Retry';
+        rb.onclick = () => triggerRetryFailed(item.shortcode, item.channel || item.profileKey);
+        div.appendChild(rb);
+      }
+      const rmb = document.createElement('button'); rmb.className='btn-danger'; rmb.textContent='✕ Remove';
+      rmb.onclick = () => triggerRemoveQueue(item.shortcode, item.channel || item.profileKey);
+      div.appendChild(rmb);
+      actionTd.appendChild(div);
+      tr.appendChild(actionTd);
+      body.appendChild(tr);
+    });
+  }
+
+  function filterQueueChannel(chKey, btnEl) {
+    queueFilterChannel = chKey;
+    document.querySelectorAll('#queue-channel-pills .pill-btn').forEach(b => b.classList.remove('active'));
+    if (btnEl) btnEl.classList.add('active');
+    if (globalDashboardData) renderQueueTable(globalDashboardData.queue);
+  }
+
+  function filterQueueStatus(statusKey, btnEl) {
+    queueFilterStatus = statusKey;
+    document.querySelectorAll('[data-status]').forEach(b => b.classList.remove('active'));
+    if (btnEl) btnEl.classList.add('active');
+    if (globalDashboardData) renderQueueTable(globalDashboardData.queue);
+  }
+
+  /* ─── PIPELINE STEPPER ─── */
+  function animateLiveStepper() {
+    const badge = document.getElementById('stepper-status-badge');
+    if (badge) { badge.className='status-badge status-processing'; badge.textContent='Pipeline Active'; }
+    [1,2,3,4,5,6].forEach((s, idx) => {
+      setTimeout(() => {
+        [1,2,3,4,5,6].forEach(st => {
+          const el = document.getElementById('step-' + st);
+          if (!el) return;
+          if (st === s) { el.style.borderColor='var(--primary)'; el.style.background='rgba(88,166,255,.15)'; el.style.boxShadow='0 0 12px rgba(88,166,255,.4)'; }
+          else if (st < s) { el.style.borderColor='var(--success)'; el.style.background='rgba(46,160,67,.1)'; el.style.boxShadow='none'; }
+          else { el.style.borderColor='var(--card-border)'; el.style.background='var(--card)'; el.style.boxShadow='none'; }
+        });
+        if (idx === 5 && badge) setTimeout(() => { badge.className='status-badge status-published'; badge.textContent='Reel Live!'; }, 800);
+      }, idx * 700);
+    });
+  }
+
+  /* ─── INJECT LINK ─── */
+  async function triggerInjectLink(urlInputId, chanSelectId) {
+    const urlInput = document.getElementById(urlInputId || 'inject-url-input');
+    const chanSelect = document.getElementById(chanSelectId || 'inject-target-channel-select');
+    const url = (urlInput ? urlInput.value.trim() : '');
+    const targetChannel = (chanSelect ? chanSelect.value : null) || (focusedChannel !== 'all' ? focusedChannel : 'codeorcap');
+    if (!url) { showToast('Please enter a valid Instagram or Video URL', 'warn'); return; }
+    animateLiveStepper();
+    try {
+      const res = await fetch('/api/inject-link', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ profile:targetChannel, url }) });
+      const data = await res.json();
+      if (data.success) { showToast('Link injected into ' + targetChannel + ' workflow!'); if (urlInput) urlInput.value = ''; fetchDashboardData(); }
+      else showToast(data.message || 'Failed to inject link', 'err');
+    } catch { showToast('Error sending inject request', 'err'); }
+  }
+
+  /* ─── CONFIG TAB ─── */
+  function renderConfigTab(channels) {
+    const container = document.getElementById('config-cards-list');
+    if (!container) return;
+    const defaults = [
+      { key:'codeorcap', name:'CodeOrCap', color:'primary', initials:'CO', handle:'@codeorcap', dailyLimit:6, queueCount:0, stats:{publishedCount:0} },
+      { key:'storiyum',  name:'Storiyum',  color:'purple',  initials:'ST', handle:'@storiyum',  dailyLimit:6, queueCount:0, stats:{publishedCount:0} },
+      { key:'prompt_gag',name:'PromptGag', color:'warning', initials:'PG', handle:'@prompt_gag',dailyLimit:6, queueCount:0, stats:{publishedCount:0} }
+    ];
+    const list = (channels && channels.length > 0) ? channels : defaults;
+    const filtered = focusedChannel === 'all' ? list : list.filter(c => c.key === focusedChannel);
+    container.innerHTML = '';
+    filtered.forEach(c => {
+      const card = document.createElement('div');
+      card.className = 'config-card';
+      const dailyLimit = c.dailyLimit || 6;
+      card.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">' +
+        '<div style="display:flex;align-items:center;gap:10px;">' +
+          '<div class="avatar-box avatar-' + c.color + '">' + c.initials + '</div>' +
+          '<div><div style="font-weight:700;color:#fff;font-size:15px;">' + c.name + '</div>' +
+          '<div style="font-size:11px;color:var(--text-muted);">' + c.handle + ' · <span style="color:var(--success);">Active</span></div></div>' +
+        '</div><button class="btn-icon save-cfg-btn">💾 Save</button></div>' +
+        '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px;">' +
+          '<div style="background:var(--bg);padding:12px;border-radius:8px;"><div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;">Daily Limit</div><div style="font-size:20px;font-weight:800;color:var(--primary);font-family:var(--font-mono);" id="limit-val-' + c.key + '">' + dailyLimit + '</div><div style="font-size:10px;color:var(--text-muted);">reels / day</div></div>' +
+          '<div style="background:var(--bg);padding:12px;border-radius:8px;"><div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;">In Queue</div><div style="font-size:20px;font-weight:800;color:var(--warning);font-family:var(--font-mono);">' + (c.queueCount||0) + '</div><div style="font-size:10px;color:var(--text-muted);">pending</div></div>' +
+          '<div style="background:var(--bg);padding:12px;border-radius:8px;"><div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;">Published</div><div style="font-size:20px;font-weight:800;color:var(--success);font-family:var(--font-mono);">' + ((c.stats && c.stats.publishedCount) || 0) + '</div><div style="font-size:10px;color:var(--text-muted);">total</div></div>' +
+        '</div>' +
+        '<div>' +
+          '<div style="display:flex;justify-content:space-between;font-size:11px;font-weight:700;color:var(--text-muted);margin-bottom:6px;"><span>Daily Reel Limit</span><span style="color:var(--primary);font-family:var(--font-mono);" id="limit-label-' + c.key + '">' + dailyLimit + ' reels/day</span></div>' +
+          '<input type="range" class="cfg-range" min="1" max="20" step="1" value="' + dailyLimit + '" style="width:100%;accent-color:var(--primary);">' +
+        '</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px;">' +
+          '<div><label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Post Interval</label><select class="select-field" style="width:100%;"><option>Every 2 hours</option><option>Every 4 hours</option><option>Every 6 hours</option><option>Custom</option></select></div>' +
+          '<div><label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">On Queue Empty</label><select class="select-field" style="width:100%;"><option>Wait for new reels</option><option>Auto-fetch watchlist</option><option>Pause bot</option></select></div>' +
+          '<div><label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Retry Failed After</label><select class="select-field" style="width:100%;"><option>30 minutes</option><option>1 hour</option><option>3 hours</option><option>Don\'t retry</option></select></div>' +
+          '<div><label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Max Queue Slots</label><select class="select-field" style="width:100%;"><option>6 slots</option><option>10 slots</option><option>20 slots</option><option>Unlimited</option></select></div>' +
+        '</div>' +
+        '<div style="margin-top:20px;border-top:1px solid var(--card-border);padding-top:16px;">' +
+          '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">' +
+            '<div><div style="font-size:12px;font-weight:700;color:var(--text);">Instagram Credentials</div>' +
+            '<div style="font-size:11px;color:var(--text-muted);margin-top:2px;">Stored in database — survives redeployments</div></div>' +
+            '<button class="btn-icon save-creds-btn" style="background:var(--success-bg);color:var(--success);border-color:var(--success);">💾 Save Credentials</button>' +
+          '</div>' +
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
+            '<div><label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Username</label>' +
+            '<input class="input-field cred-username" type="text" placeholder="instagram_username" style="width:100%;font-family:var(--font-mono);font-size:12px;"></div>' +
+            '<div><label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Email</label>' +
+            '<input class="input-field cred-email" type="email" placeholder="account@email.com" style="width:100%;font-family:var(--font-mono);font-size:12px;"></div>' +
+            '<div><label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Password</label>' +
+            '<div style="position:relative;">' +
+            '<input class="input-field cred-password" type="password" placeholder="••••••••" style="width:100%;font-family:var(--font-mono);font-size:12px;padding-right:36px;">' +
+            '<button class="cred-eye-btn" type="button" tabindex="-1" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:13px;padding:0;">👁</button>' +
+            '</div></div>' +
+            '<div><label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Session ID</label>' +
+            '<input class="input-field cred-session" type="password" placeholder="••••••••" style="width:100%;font-family:var(--font-mono);font-size:12px;padding-right:36px;">' +
+            '</div>' +
+          '</div>' +
+          '<div class="cred-updated" style="margin-top:8px;font-size:10px;color:var(--text-dim);"></div>' +
+        '</div>';
+      const rangeInput = card.querySelector('.cfg-range');
+      rangeInput.oninput = function() {
+        setElText('limit-val-' + c.key, this.value);
+        setElText('limit-label-' + c.key, this.value + ' reels/day');
+      };
+      card.querySelector('.save-cfg-btn').onclick = () => triggerUpdateConfig(c.key, Number(rangeInput.value));
+      card.querySelector('.cred-eye-btn').onclick = function() {
+        const pwdInput = card.querySelector('.cred-password');
+        pwdInput.type = pwdInput.type === 'password' ? 'text' : 'password';
+        this.textContent = pwdInput.type === 'password' ? '👁' : '🙈';
+      };
+      card.querySelector('.save-creds-btn').onclick = () => triggerSaveCredentials(c.key, card);
+      loadCredentialsIntoCard(c.key, card);
+      container.appendChild(card);
+    });
+  }
+
+  /* ─── VIRAL ANALYTICS ─── */
+  function renderViralSection(viralData) {
+    if (!viralData) return;
+    const k = viralData.kpis || {};
+    setElText('kpi-total-views',  fmtNum(k.totalViews  || 584000));
+    setElText('kpi-total-reels',  String(k.totalReels  || 42));
+    setElText('kpi-avg-er',       (k.avgER             || 6.5) + '%');
+    setElText('kpi-total-shares', fmtNum(k.totalShares || 34200));
+    setElText('kpi-views-delta',  '↑ ' + (k.viewsDelta  || '23') + '% vs prev period');
+    setElText('kpi-shares-delta', '↑ ' + (k.sharesDelta || '18') + '% vs prev period');
+    setElText('kpi-reels-rate',   '↑ ' + ((k.totalReels || 42) / 30).toFixed(1) + ' avg/day');
+    setElText('viral-patterns-content', viralData.patternsText || 'No patterns logged yet.');
+    renderViralLeaderboard(viralData.leaderboard);
+    if (activeTab === 'viral') renderViralCharts(viralData);
+  }
+
+  function renderViralLeaderboard(leaderboard) {
+    const body = document.getElementById('viral-leaderboard-body');
+    if (!body) return;
+    if (!leaderboard || !leaderboard.length) {
+      body.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:20px;">No leaderboard data.</td></tr>';
+      return;
+    }
+    const filtered = selectedAnalyticsChannel === 'all' ? leaderboard : leaderboard.filter(r => (r.profileKey||'').toLowerCase() === selectedAnalyticsChannel.toLowerCase());
+    body.innerHTML = '';
+    filtered.forEach((r, idx) => {
+      const rank = idx===0?'🥇 #1':idx===1?'🥈 #2':idx===2?'🥉 #3':'#'+(idx+1);
+      const trendColor = r.trend==='↓'?'var(--danger)':r.trend==='→'?'var(--text-muted)':'var(--success)';
+      const srcUrl = r.sourceUrl || ('https://www.instagram.com/reel/' + r.shortcode + '/');
+      const tr = document.createElement('tr');
+      tr.innerHTML = '<td style="font-weight:800;color:var(--text-muted);">' + rank + '</td>' +
+        '<td><a href="' + srcUrl + '" target="_blank" style="color:var(--primary);font-weight:600;font-size:12px;text-decoration:none;">📷 Source Reel</a></td>' +
+        '<td><span style="font-weight:600;color:#fff;">' + esc(r.profileKey || '—') + '</span></td>' +
+        '<td style="font-family:var(--font-mono);font-weight:700;color:#fff;">' + fmtNum(r.playCount||0) + '</td>' +
+        '<td><span style="font-weight:700;color:' + (r.er>6?'var(--success)':r.er>4?'var(--warning)':'var(--text-muted)') + ';">' + r.er + '%</span></td>' +
+        '<td style="font-family:var(--font-mono);color:var(--text-muted);">' + fmtNum(r.shares||0) + '</td>' +
+        '<td><span style="font-weight:800;font-size:14px;color:' + trendColor + ';">' + (r.trend||'↑') + '</span></td>' +
+        '<td><a href="' + srcUrl + '" target="_blank" class="btn-icon" style="font-size:11px;">📷 Watch</a></td>';
+      body.appendChild(tr);
+    });
+  }
+
+  function filterAnalyticsChannel(key, btnEl) {
+    selectedAnalyticsChannel = key;
+    document.querySelectorAll('#viral-channel-pills .pill-btn').forEach(b => b.classList.remove('active'));
+    if (btnEl) btnEl.classList.add('active');
+    if (globalDashboardData && globalDashboardData.viralAnalytics) {
+      renderViralLeaderboard(globalDashboardData.viralAnalytics.leaderboard);
+      renderViralCharts(globalDashboardData.viralAnalytics);
+    }
+  }
+
+  function filterAnalyticsRange(rangeKey, btnEl) {
+    selectedAnalyticsRange = rangeKey;
+    document.querySelectorAll('#viral-range-pills .pill-btn').forEach(b => b.classList.remove('active'));
+    if (btnEl) btnEl.classList.add('active');
+    if (globalDashboardData && globalDashboardData.viralAnalytics) renderViralCharts(globalDashboardData.viralAnalytics);
+  }
+
+  function switchAnalyticsMetric(metricKey, btnEl) {
+    selectedAnalyticsMetric = metricKey;
+    document.querySelectorAll('[data-metric]').forEach(b => b.classList.remove('active'));
+    if (btnEl) btnEl.classList.add('active');
+    const labels = { views:'Views over time', reels:'Reels published over time', er:'Engagement rate (%) over time', shares:'Shares over time' };
+    setElText('main-chart-title', labels[metricKey] || 'Metric over time');
+    if (globalDashboardData && globalDashboardData.viralAnalytics) renderViralCharts(globalDashboardData.viralAnalytics);
+  }
+
+  function applyViralSearch() {
+    const q = (document.getElementById('viral-search-input').value || '').toLowerCase();
+    document.querySelectorAll('#viral-leaderboard-body tr').forEach(r => {
+      r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
+    });
+  }
+
+  function exportViralCsv() {
+    if (!globalDashboardData || !globalDashboardData.viralAnalytics) { showToast('No data to export','warn'); return; }
+    const items = globalDashboardData.viralAnalytics.leaderboard || [];
+    let csv = 'Rank,Shortcode,Channel,Views,EngRate,Shares,Trend,Url\n';
+    items.forEach((r, i) => { csv += [i+1,r.shortcode,r.profileKey,r.playCount,r.er+'%',r.shares,r.trend,r.sourceUrl].map(v=>'"'+v+'"').join(',') + '\n'; });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+    a.download = 'viral_analytics.csv';
+    a.click();
+  }
+
+  /* ─── CHARTS ─── */
+  function renderViralCharts(viralData) {
+    if (typeof Chart === 'undefined' || !viralData) return;
+    const ranges = viralData.timeSeriesRanges || {};
+    const rangeData = ranges[selectedAnalyticsRange] || ranges['30d'];
+    if (!rangeData) return;
+    const labels = rangeData.labels || [];
+    const allKeys = Object.keys(rangeData.series || {});
+    const channelKeys = selectedAnalyticsChannel === 'all' ? allKeys : allKeys.filter(k => k === selectedAnalyticsChannel);
+    const colors = ['#3fb950','#f78166','#d2a8ff','#58a6ff'];
+
+    function destroyAndCreate(ref, id, type, data, opts) {
+      if (ref) ref.destroy();
+      const ctx = document.getElementById(id);
+      if (!ctx) return null;
+      return new Chart(ctx.getContext('2d'), { type, data, options:{ responsive:true, maintainAspectRatio:false, ...opts } });
+    }
+
+    const axisStyle = { ticks:{color:'#8b949e'}, grid:{color:'#21262d'} };
+    const axisNoGrid = { ticks:{color:'#8b949e'}, grid:{display:false} };
+    const legend = { legend:{ labels:{ color:'#8b949e', font:{family:'Inter',size:11,weight:'600'}, boxWidth:10, boxHeight:10 } } };
+    const tooltip = { tooltip:{ backgroundColor:'#1c2128', borderColor:'#30363d', borderWidth:1, titleColor:'#8b949e', bodyColor:'#e6edf3', padding:10 } };
+
+    /* 1. Main metric */
+    chartMainMetric = destroyAndCreate(chartMainMetric, 'chart-main-metric', 'line', {
+      labels,
+      datasets: channelKeys.map((k,i) => ({
+        label: k, data: (rangeData.series[k] || {})[selectedAnalyticsMetric] || [],
+        borderColor: colors[i%colors.length], backgroundColor: colors[i%colors.length]+'1a',
+        borderWidth:2, fill:true, tension:.35, pointRadius: labels.length>20?0:3
+      }))
+    }, { plugins:{...legend,...tooltip}, scales:{ x:{...axisNoGrid,ticks:{color:'#8b949e',maxTicksLimit:8}}, y:{...axisStyle, ticks:{...axisStyle.ticks, callback:v=>fmtNum(v)}} } });
+
+    /* 2. Publishing cadence */
+    chartDailyCadence = destroyAndCreate(chartDailyCadence, 'chart-daily-cadence', 'bar', {
+      labels,
+      datasets: channelKeys.map((k,i) => ({
+        label: k, data: (rangeData.series[k]||{}).reels||[],
+        backgroundColor: colors[i%colors.length], borderRadius:4
+      }))
+    }, { plugins:{...legend,...tooltip}, scales:{ x:axisNoGrid, y:axisStyle } });
+
+    /* 3. Engagement rate */
+    chartERTrend = destroyAndCreate(chartERTrend, 'chart-er-trend', 'line', {
+      labels,
+      datasets: channelKeys.map((k,i) => ({
+        label: k+' ER', data: (rangeData.series[k]||{}).er||[],
+        borderColor: colors[i%colors.length], borderWidth:2, tension:.3, pointRadius:0
+      }))
+    }, { plugins:{...legend,...tooltip}, scales:{ x:axisNoGrid, y:{...axisStyle, min:0, max:12, ticks:{...axisStyle.ticks, callback:v=>v+'%'}} } });
+
+    /* 4. Doughnut */
+    const pieVals = channelKeys.map(k => ((rangeData.series[k]||{}).views||[]).reduce((a,b)=>a+b,0));
+    const pieTotal = pieVals.reduce((a,b)=>a+b,1);
+    const piePcts = pieVals.map(v=>Math.round((v/pieTotal)*100));
+    if (chartViewShare) chartViewShare.destroy();
+    const pieCtx = document.getElementById('chart-view-share');
+    if (pieCtx) {
+      chartViewShare = new Chart(pieCtx.getContext('2d'), {
+        type:'doughnut',
+        data:{ labels:channelKeys, datasets:[{ data:piePcts, backgroundColor:colors.slice(0,channelKeys.length), borderWidth:0, hoverOffset:6 }] },
+        options:{ responsive:true, maintainAspectRatio:false, cutout:'65%', plugins:{ legend:{display:false}, ...tooltip } }
+      });
+    }
+    const legendCont = document.getElementById('view-share-legend');
+    if (legendCont) {
+      legendCont.innerHTML = '';
+      channelKeys.forEach((k,i) => {
+        const d = document.createElement('div');
+        d.style.cssText='display:flex;align-items:center;gap:8px;font-size:12px;';
+        d.innerHTML='<div style="width:10px;height:10px;border-radius:2px;background:'+colors[i%colors.length]+'"></div><div><div style="font-weight:700;color:#fff;">'+piePcts[i]+'%</div><div style="color:var(--text-muted);font-size:10px;">'+k.toUpperCase()+'</div></div>';
+        legendCont.appendChild(d);
+      });
+    }
+
+    /* 5. Shares momentum */
+    chartSharesMomentum = destroyAndCreate(chartSharesMomentum, 'chart-shares-momentum', 'line', {
+      labels,
+      datasets: channelKeys.map((k,i) => ({
+        label: k, data: (rangeData.series[k]||{}).shares||[],
+        borderColor: colors[i%colors.length], backgroundColor: colors[i%colors.length]+'20',
+        fill:true, tension:.35, pointRadius:0
+      }))
+    }, { plugins:{...legend,...tooltip}, scales:{ x:axisNoGrid, y:{...axisStyle, ticks:{...axisStyle.ticks, callback:v=>fmtNum(v)}} } });
+  }
+
+  /* ─── API ACTIONS ─── */
+  async function triggerUpdateConfig(profileKey, limitVal) {
+    try {
+      const res = await fetch('/api/update-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({profile:profileKey,dailyLimit:limitVal})});
+      const data = await res.json();
+      showToast(data.message || 'Config saved');
+    } catch { showToast('Failed to save config','err'); }
+  }
+  async function triggerSaveCredentials(profileKey, card) {
+    const username = card.querySelector('.cred-username').value.trim();
+    const email = card.querySelector('.cred-email').value.trim();
+    const password = card.querySelector('.cred-password').value;
+    const sessionId = card.querySelector('.cred-session').value;
+    const isPlaceholder = (v) => !v || v.includes('••••');
+    try {
+      const payload = { profile: profileKey, instagramUsername: username, instagramEmail: email };
+      if (!isPlaceholder(password)) payload.instagramPassword = password;
+      if (!isPlaceholder(sessionId)) payload.instagramSessionId = sessionId;
+      const res = await fetch('/api/channel-credentials',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      const data = await res.json();
+      showToast(data.message || 'Credentials saved', data.success === false ? 'err' : 'ok');
+      if (data.success) loadCredentialsIntoCard(profileKey, card);
+    } catch { showToast('Failed to save credentials','err'); }
+  }
+  async function loadCredentialsIntoCard(profileKey, card) {
+    try {
+      const res = await fetch('/api/channel-credentials?profile=' + profileKey);
+      const data = await res.json();
+      if (!data.success) return;
+      card.querySelector('.cred-username').value = data.instagramUsername || '';
+      card.querySelector('.cred-email').value = data.instagramEmail || '';
+      if (data.instagramPassword) card.querySelector('.cred-password').value = data.instagramPassword;
+      if (data.instagramSessionId) card.querySelector('.cred-session').value = data.instagramSessionId;
+      const updEl = card.querySelector('.cred-updated');
+      if (updEl && data.updatedAt) updEl.textContent = 'Last saved: ' + new Date(data.updatedAt).toLocaleString();
+      else if (updEl && data.hasCredentials) updEl.textContent = 'Credentials stored in database';
+    } catch {}
+  }
+  async function triggerRetryFailed(shortcode, profileKey) {
+    try {
+      await fetch('/api/retry-failed',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({shortcode,profile:profileKey})});
+      showToast('Retrying reel #' + shortcode);
+      fetchDashboardData();
+    } catch { showToast('Retry failed','err'); }
+  }
+  async function triggerRemoveQueue(shortcode, profileKey) {
+    if (!confirm('Remove reel #' + shortcode + ' from queue?')) return;
+    try {
+      await fetch('/api/remove-queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({shortcode,profile:profileKey})});
+      showToast('Reel #' + shortcode + ' removed','warn');
+      fetchDashboardData();
+    } catch { showToast('Remove failed','err'); }
+  }
+  async function forceStartQueue() {
+    const pKey = (focusedChannel !== 'all' ? focusedChannel : null) || 'codeorcap';
+    showToast('Starting queue for ' + pKey + '...');
+    try {
+      const res = await fetch('/api/force-start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({profile:pKey})});
+      const data = await res.json();
+      showToast(data.message || '⚡ Queue force-started!', data.success===false?'warn':'ok');
+      setTimeout(fetchDashboardData, 1500);
+    } catch { showToast('Force start failed','err'); }
+  }
+  async function restartQueue() {
+    const pKey = (focusedChannel !== 'all' ? focusedChannel : null) || 'codeorcap';
+    showToast('Restarting queue for ' + pKey + '...');
+    try {
+      const res = await fetch('/api/restart-queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({profile:pKey})});
+      const data = await res.json();
+      showToast(data.message || '🔄 Queue restarted!');
+      setTimeout(fetchDashboardData, 1500);
+    } catch { showToast('Restart failed','err'); }
+  }
+
+  /* ─── LOG CONSOLE ─── */
+  function toggleAutoScroll() {
+    autoScroll = !autoScroll;
+    document.getElementById('scrollToggleBtn').textContent = 'Auto-scroll: ' + (autoScroll?'ON':'OFF');
+  }
+  function clearLogConsole() {
+    document.getElementById('log-container').innerHTML='';
+    logTotal=0; document.getElementById('log-count').textContent='0 entries';
+  }
+  function applyLogFilter() {
+    logFilterStr = (document.getElementById('log-filter').value||'').toLowerCase();
+    let vis=0;
+    document.querySelectorAll('#log-container > div').forEach(el => {
+      const txt = (el.dataset.text||'');
+      const chOk = focusedChannel==='all' || !(['codeorcap','storiyum','prompt_gag','promptgag'].filter(k=>k!==focusedChannel&&k!==focusedChannel.replace(/_/g,'')).some(k=>txt.includes(k)));
+      const qOk = !logFilterStr || txt.includes(logFilterStr);
+      el.style.display = (chOk && qOk) ? '' : 'none';
+      if (chOk && qOk) vis++;
+    });
+    document.getElementById('log-count').textContent = vis + ' entries';
+  }
+  function appendLogLine(raw) {
+    let o; try { o=JSON.parse(raw); } catch { return; }
+    const level=(o.level||'info').toLowerCase();
+    const ts=(o.timestamp||'').replace('T',' ').replace(/\.\d+Z$/,'');
+    const label=o.label||''; const msg=o.message||'';
+    const div=document.createElement('div');
+    div.style.cssText='display:flex;gap:10px;line-height:1.8;color:'+(level==='error'?'#f85149':level==='warn'?'#d29922':'#e6edf3');
+    div.dataset.text=(ts+' '+level+' '+label+' '+msg).toLowerCase();
+    div.innerHTML='<span style="color:#484f58;flex-shrink:0;">'+esc(ts)+'</span>'+
+      '<span style="font-weight:700;width:44px;flex-shrink:0;text-transform:uppercase;color:'+(level==='error'?'#f85149':level==='warn'?'#d29922':'#3fb950')+';">'+level.slice(0,4)+'</span>'+
+      '<span style="color:#58a6ff;flex-shrink:0;min-width:100px;">['+esc(label)+']</span>'+
+      '<span style="word-break:break-word;flex:1;">'+esc(msg)+'</span>';
+    const container=document.getElementById('log-container');
+    container.appendChild(div);
+    logTotal++;
+    document.getElementById('log-count').textContent=logTotal+' entries';
+    if (autoScroll && activeTab==='logs') container.scrollTop=container.scrollHeight;
+  }
+
+  function connectSSE() {
+    const es=new EventSource('/logs');
+    es.onmessage=e=>appendLogLine(e.data);
+    es.onerror=()=>{ es.close(); setTimeout(connectSSE,3000); };
+  }
+
+  /* ─── INIT ─── */
+  renderHeaderAudienceCards(null);
+  renderChannelsList(null);
+  fetchDashboardData();
+  connectSSE();
+  setInterval(fetchDashboardData, 10000);
+</script>
+</body>
+</html>
+
