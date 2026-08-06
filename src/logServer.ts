@@ -4,6 +4,7 @@ import path from "path";
 import { addLogClient, removeLogClient } from "./utils/logBroadcast";
 import { config } from "./config";
 import { getPool } from "./utils/pgClient";
+import { getChannelCredentials, saveChannelCredentials } from "./utils/credentialStore";
 import { activeWatchers } from "./instagram/channelWatcher";
 import { ViralAnalyzer } from "./utils/viral-analyzer";
 import { computeViralScore } from "./utils/viralScore";
@@ -1008,6 +1009,57 @@ export function startLogServer(): void {
             message: "Error updating profile configuration",
           }),
         );
+      }
+      return;
+    }
+
+    if (
+      req.method === "GET" &&
+      (url === "/api/channel-credentials" || url.startsWith("/api/channel-credentials?"))
+    ) {
+      try {
+        const pUrl = new URL(url, `http://${req.headers.host || "localhost"}`);
+        const pKey = (pUrl.searchParams.get("profile") || "codeorcap").toLowerCase();
+        const creds = await getChannelCredentials(pKey);
+        const maskSecret = (v?: string) => v ? v.slice(0, 4) + "••••••••" : "";
+        res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+        res.end(JSON.stringify({
+          success: true,
+          profileKey: pKey,
+          hasCredentials: !!creds,
+          instagramSessionId: creds?.instagramSessionId ? maskSecret(creds.instagramSessionId) : "",
+          instagramUsername: creds?.instagramUsername || "",
+          instagramPassword: creds?.instagramPassword ? maskSecret(creds.instagramPassword) : "",
+          instagramEmail: creds?.instagramEmail || "",
+          updatedAt: creds?.updatedAt || null,
+        }));
+      } catch (err: any) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: false, message: "Error fetching credentials" }));
+      }
+      return;
+    }
+
+    if (
+      req.method === "POST" &&
+      (url === "/api/channel-credentials" || url.startsWith("/api/channel-credentials?"))
+    ) {
+      try {
+        const body = await parseJsonBody(req);
+        const pKey = (body.profile || "codeorcap").toLowerCase();
+        await saveChannelCredentials({
+          profileKey: pKey,
+          instagramSessionId: body.instagramSessionId || undefined,
+          instagramUsername: body.instagramUsername || undefined,
+          instagramPassword: body.instagramPassword || undefined,
+          instagramEmail: body.instagramEmail || undefined,
+        });
+        pipelineLogger.info(`Credentials saved for profile [${pKey.toUpperCase()}]`, "ControlCenter");
+        res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+        res.end(JSON.stringify({ success: true, message: `Credentials saved for [${pKey.toUpperCase()}]` }));
+      } catch (err: any) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: false, message: "Error saving credentials" }));
       }
       return;
     }
