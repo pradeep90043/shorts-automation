@@ -90,7 +90,10 @@ jobs:
               rm -rf ~/shorts-automation/Caddyfile
             fi
             # Gracefully stop containers and clean up any stale container name conflicts
-            docker compose down --remove-orphans || true
-            docker rm -f codeorcap-bot 2>/dev/null || true
-            # Rebuild and restart container services
-            docker compose up --build -d --remove-orphans
+            docker compose down --remove-orphans --timeout 10 || true
+            # Force-remove all known containers (including stale/orphaned ones like ngrok)
+            docker rm -f codeorcap-bot freellmapi duckdns caddy-proxy ngrok-dashboard-tunnel 2>/dev/null || true
+            # Prune any dangling networks left by failed containers (fixes "No such container" link errors)
+            docker network prune -f 2>/dev/null || true
+            # Rebuild and restart container services (force-recreate avoids stale container ID references)
+            docker compose up --build -d --remove-orphans --force-recreate
