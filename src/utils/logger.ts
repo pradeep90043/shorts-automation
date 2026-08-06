@@ -10,7 +10,7 @@ if (!fs.existsSync(config.paths.logDir)) {
 }
 
 const logFormat = winston.format.combine(
-  winston.format.timestamp(),
+  winston.format.timestamp({ format: "YYYY-MM-DD HH:mm:ss" }),
   winston.format.errors({ stack: true }),
   winston.format.splat(),
   winston.format.json(),
