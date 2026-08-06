@@ -95,16 +95,26 @@ def get_client(force_login=False):
 
     cl = Client()
     cl.delay_range = [1, 3]  # 1–3 s random pause between API calls
+    try:
+        cl.set_app_version("315.0.0.35.109")
+        cl.set_user_agent("Instagram 315.0.0.35.109 Android (33/13; 480dpi; 1080x2400; Xiaomi; Redmi Note 11; sweet; qcom; en_US; 563548981)")
+    except Exception:
+        pass
 
     # Attempt to reuse a previously saved session.
     session_loaded = False
     if not force_login and os.path.exists(session_file):
         try:
             cl.load_settings(session_file)
+            cl.get_timeline_feed()
             session_loaded = True
-            print(f"INFO: Loaded saved instagrapi session from {session_file}.", file=sys.stderr)
+            print(f"INFO: Loaded valid saved instagrapi session from {session_file}.", file=sys.stderr)
         except Exception as exc:
-            print(f"WARN: Could not reuse saved session file: {exc}", file=sys.stderr)
+            session_loaded = False
+            if os.path.exists(session_file):
+                try: os.remove(session_file)
+                except Exception: pass
+            print(f"WARN: Saved session file is invalid/expired ({exc}). Removing and re-authenticating...", file=sys.stderr)
 
     def _do_login(client: "Client") -> None:
         """Login, injecting a TOTP code when 2FA is configured, or login by session ID."""
