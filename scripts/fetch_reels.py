@@ -135,6 +135,9 @@ def get_client(force_login=False):
         try:
             _do_login(cl)
         except TwoFactorRequired:
+            if os.path.exists(session_file):
+                try: os.remove(session_file)
+                except Exception: pass
             print(
                 "ERROR: 2FA required.\n"
                 "  Set INSTAGRAM_TOTP_SECRET=<your_totp_secret> in .env\n"
@@ -143,16 +146,25 @@ def get_client(force_login=False):
             )
             sys.exit(1)
         except ChallengeRequired:
+            if os.path.exists(session_file):
+                try: os.remove(session_file)
+                except Exception: pass
             print(
                 "ERROR: Instagram challenge required (suspicious login detected).\n"
-                "  Open the Instagram app or website, complete the security check, then retry.",
+                "  Update INSTAGRAM_SESSION_ID in .env with a fresh browser sessionid cookie.",
                 file=sys.stderr,
             )
             sys.exit(1)
         except LoginRequired:
-            print("ERROR: Instagram login failed (LoginRequired).", file=sys.stderr)
+            if os.path.exists(session_file):
+                try: os.remove(session_file)
+                except Exception: pass
+            print("ERROR: Instagram login failed (LoginRequired). Update INSTAGRAM_SESSION_ID in .env.", file=sys.stderr)
             sys.exit(1)
         except Exception as exc:
+            if os.path.exists(session_file):
+                try: os.remove(session_file)
+                except Exception: pass
             if _is_rate_limit(exc):
                 _rate_limited = True
                 print(f"RATE_LIMITED: 429 during login: {exc}", file=sys.stderr)
