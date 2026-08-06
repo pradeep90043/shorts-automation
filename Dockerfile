@@ -51,6 +51,6 @@ RUN mkdir -p temp output logs
 COPY .env .env
 COPY cookies.txt* ./
 
-EXPOSE 3000
+EXPOSE 3000 3002
 
 CMD ["node", "dist/index.js"]

@@ -11,8 +11,16 @@ const TAIL_LINES = 300;
 function readLastLines(filePath: string, n: number): string[] {
   try {
     if (!fs.existsSync(filePath)) return [];
-    const content = fs.readFileSync(filePath, "utf8");
-    return content.split("\n").filter((l) => l.trim()).slice(-n);
+    const stats = fs.statSync(filePath);
+    const maxBytes = 256 * 1024; // Read last 256KB max to prevent OOM on large logs
+    const readSize = Math.min(stats.size, maxBytes);
+    const buffer = Buffer.alloc(readSize);
+    const fd = fs.openSync(filePath, "r");
+    fs.readSync(fd, buffer, 0, readSize, stats.size - readSize);
+    fs.closeSync(fd);
+    const content = buffer.toString("utf8");
+    const lines = content.split("\n").filter((l) => l.trim());
+    return stats.size > maxBytes ? lines.slice(1).slice(-n) : lines.slice(-n);
   } catch {
     return [];
   }
@@ -116,7 +124,8 @@ const HTML = `<!DOCTYPE html>
 
 export function startLogServer(): void {
   const server = http.createServer((req, res) => {
-    if (req.url === "/logs") {
+    const url = req.url || "/";
+    if (url === "/logs" || url.startsWith("/logs?") || url.startsWith("/logs/")) {
       res.writeHead(200, {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
