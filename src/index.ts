@@ -120,9 +120,17 @@ async function bootstrap() {
     // isn't configured for this profile). Force an immediate run any time
     // via the /runwatchnow Telegram command instead of waiting for the
     // scheduled time.
-    const watcher = new ChannelWatcher(profile, telegramService, config.profiles.indexOf(profile));
-    telegramService.registerWatcher(watcher);
-    await watcher.start();
+    try {
+      const watcher = new ChannelWatcher(profile, telegramService, config.profiles.indexOf(profile));
+      telegramService.registerWatcher(watcher);
+      await watcher.start();
+    } catch (watcherErr) {
+      pipelineLogger.error(
+        `[${profile.brandName}] ChannelWatcher encountered startup error: ${watcherErr}`,
+        watcherErr,
+        "Bootstrap"
+      );
+    }
   }
 
   pipelineLogger.info(
@@ -162,10 +170,18 @@ async function bootstrap() {
   process.once("SIGUSR2", () => gracefulShutdown("SIGUSR2"));
 }
 
+// Global unhandled error guards so system & LogServer stay alive
+process.on("unhandledRejection", (reason) => {
+  pipelineLogger.error(`Unhandled Rejection detected: ${reason}`, reason, "ProcessGuard");
+});
+
+process.on("uncaughtException", (err) => {
+  pipelineLogger.error(`Uncaught Exception detected: ${err.message}`, err, "ProcessGuard");
+});
+
 // Run bootstrap
 bootstrap().catch((err) => {
   console.error("Fatal crash during bootstrap:", err);
-  process.exit(1);
 });
 // Nodemon trigger change (exclusive mood filters)
 
