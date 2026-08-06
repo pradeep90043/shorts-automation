@@ -40,7 +40,7 @@ function readLastLines(filePath: string, n: number): string[] {
   }
 }
 
-function generateTimeSeriesData(days: number, channels: string[]) {
+function generateTimeSeriesData(days: number, channels: string[], reelHistory: any[] = [], reelInsights: any[] = []) {
   const labels: string[] = [];
   const now = new Date();
   for (let i = days - 1; i >= 0; i--) {
@@ -53,13 +53,57 @@ function generateTimeSeriesData(days: number, channels: string[]) {
   }
 
   const series: Record<string, { views: number[]; reels: number[]; er: number[]; shares: number[] }> = {};
-  channels.forEach((ch, cIdx) => {
-    const baseViews = 25000 + cIdx * 15000;
-    const views = labels.map((_, i) => Math.max(1000, Math.round(baseViews + (i / days) * baseViews * 0.5 + (Math.random() - 0.4) * 12000)));
-    const reels = labels.map(() => Math.max(1, Math.round(3 + Math.random() * 4)));
-    const er = labels.map(() => +(3.5 + Math.random() * 3.8).toFixed(2));
-    const shares = views.map(v => Math.round(v * (0.04 + Math.random() * 0.03)));
-    series[ch] = { views, reels, er, shares };
+  channels.forEach((ch) => {
+    const viewsArr: number[] = [];
+    const reelsArr: number[] = [];
+    const erArr: number[] = [];
+    const sharesArr: number[] = [];
+
+    const chHistory = reelHistory.filter(r => (r.profile_key || r.channel || "").toLowerCase().includes(ch.toLowerCase()));
+    const chInsights = reelInsights.filter(i => (i.profile_key || "").toLowerCase().includes(ch.toLowerCase()));
+
+    for (let i = days - 1; i >= 0; i--) {
+      const dayStart = new Date(now);
+      dayStart.setDate(dayStart.getDate() - i);
+      dayStart.setHours(0, 0, 0, 0);
+
+      const dayEnd = new Date(dayStart);
+      dayEnd.setHours(23, 59, 59, 999);
+
+      const dayReels = chHistory.filter(r => {
+        if (!r.published_at && !r.picked_at) return false;
+        const pDate = new Date(r.published_at || r.picked_at);
+        return pDate >= dayStart && pDate <= dayEnd;
+      });
+
+      const dayCount = dayReels.length;
+      let dayViews = dayReels.reduce((sum, r) => sum + (Number(r.views) || 0), 0);
+      let dayLikes = dayReels.reduce((sum, r) => sum + (Number(r.likes) || 0), 0);
+      let dayComments = dayReels.reduce((sum, r) => sum + (Number(r.comments) || 0), 0);
+      let dayShares = dayReels.reduce((sum, r) => sum + (Number(r.shares) || 0), 0);
+
+      const dayInsights = chInsights.filter(ins => {
+        if (!ins.recorded_at) return false;
+        const rDate = new Date(ins.recorded_at);
+        return rDate >= dayStart && rDate <= dayEnd;
+      });
+
+      if (dayInsights.length > 0) {
+        dayViews = Math.max(dayViews, dayInsights.reduce((sum, ins) => sum + (Number(ins.views) || 0), 0));
+        dayLikes = Math.max(dayLikes, dayInsights.reduce((sum, ins) => sum + (Number(ins.likes) || 0), 0));
+        dayComments = Math.max(dayComments, dayInsights.reduce((sum, ins) => sum + (Number(ins.comments) || 0), 0));
+        dayShares = Math.max(dayShares, dayInsights.reduce((sum, ins) => sum + (Number(ins.shares) || 0), 0));
+      }
+
+      const dayEr = dayViews > 0 ? +(((dayLikes + dayComments + dayShares) / dayViews) * 100).toFixed(2) : 0;
+
+      viewsArr.push(dayViews);
+      reelsArr.push(dayCount);
+      erArr.push(dayEr);
+      sharesArr.push(dayShares);
+    }
+
+    series[ch] = { views: viewsArr, reels: reelsArr, er: erArr, shares: sharesArr };
   });
 
   return { labels, series };
@@ -183,7 +227,7 @@ async function getDashboardData() {
     { key: "prompt_gag", name: "PromptGag", handle: "@prompt_gag", niche: "humor", initials: "PG", color: "amber", dailyLimit: 6, active: true },
   ];
 
-  defaultFallbackProfiles.forEach((fb, idx) => {
+  defaultFallbackProfiles.forEach((fb) => {
     if (!channels.some(c => c.key === fb.key)) {
       const wState = watchStates.find(w => w.profile_key === fb.key);
       const profileHistory = reelHistory.filter(r => r.profile_key === fb.key || r.channel?.toLowerCase().includes(fb.key));
@@ -195,7 +239,7 @@ async function getDashboardData() {
       const totalSlots = fb.dailyLimit;
       const progressPct = Math.min(100, Math.round((currentSlot / totalSlots) * 100));
 
-      const publishedCount = profileHistory.filter(r => !r.failed).length || (idx === 1 ? 12 : idx === 2 ? 18 : 24);
+      const publishedCount = profileHistory.filter(r => !r.failed).length;
       const failedCount = profileHistory.filter(r => r.failed).length;
 
       channels.push({
@@ -212,7 +256,7 @@ async function getDashboardData() {
         dailyLimit: fb.dailyLimit,
         scheduleTime: "09:00",
         gapHours: 3,
-        queueCount: queue.length || (idx === 1 ? 2 : idx === 2 ? 3 : 1),
+        queueCount: queue.length,
         currentSlot,
         totalSlots,
         progressPct,
@@ -231,7 +275,7 @@ async function getDashboardData() {
         stats: {
           publishedCount,
           failedCount,
-          viralCount: Math.round(publishedCount * 0.4)
+          viralCount: profileHistory.filter(r => r.views && Number(r.views) > 10000).length
         }
       });
     }
@@ -254,9 +298,9 @@ async function getDashboardData() {
         addedAt: q.pickedAt || new Date().toISOString(),
         status: idx === 0 ? "processing" : "queued",
         slot: idx + 1,
-        playCount: q.playCount || q.play_count || 14500,
-        likeCount: q.likeCount || q.like_count || 1620,
-        commentCount: q.commentCount || q.comment_count || 110
+        playCount: Number(q.playCount || q.play_count || 0),
+        likeCount: Number(q.likeCount || q.like_count || 0),
+        commentCount: Number(q.commentCount || q.comment_count || 0)
       });
     });
   });
@@ -272,30 +316,18 @@ async function getDashboardData() {
       addedAt: rh.published_at || rh.picked_at,
       status: rh.failed ? "failed" : "published",
       slot: (idx % 6) + 1,
-      playCount: rh.views || 24500,
-      likeCount: rh.likes || 2980,
-      commentCount: rh.comments || 215
+      playCount: Number(rh.views || 0),
+      likeCount: Number(rh.likes || 0),
+      commentCount: Number(rh.comments || 0)
     });
   });
 
-  // Sample queue items if empty in dev mode
-  if (compiledQueue.length < 5) {
-    const sampleQueue = [
-      { id: "q1", shortcode: "Cx9K1001", channel: "codeorcap", source: "https://www.instagram.com/reel/Cx9K1001/", addedAt: new Date(Date.now() - 1000 * 60 * 12).toISOString(), status: "queued", slot: 1, playCount: 284000, likeCount: 21400, commentCount: 1650 },
-      { id: "q2", shortcode: "Cx9K1002", channel: "codeorcap", source: "https://www.instagram.com/reel/Cx9K1002/", addedAt: new Date(Date.now() - 1000 * 60 * 35).toISOString(), status: "processing", slot: 2, playCount: 196000, likeCount: 15200, commentCount: 980 },
-      { id: "q3", shortcode: "Cx9K1004", channel: "tech_insights", source: "https://www.instagram.com/reel/Cx9K1004/", addedAt: new Date(Date.now() - 1000 * 60 * 58).toISOString(), status: "published", slot: 1, playCount: 143000, likeCount: 10800, commentCount: 620 },
-      { id: "q4", shortcode: "Cx9K1006", channel: "storytelling", source: "https://www.instagram.com/reel/Cx9K1006/", addedAt: new Date(Date.now() - 1000 * 60 * 90).toISOString(), status: "published", slot: 1, playCount: 98000, likeCount: 6800, commentCount: 410 },
-      { id: "q5", shortcode: "Cx9K1007", channel: "codeorcap", source: "https://www.instagram.com/reel/Cx9K1007/", addedAt: new Date(Date.now() - 1000 * 60 * 130).toISOString(), status: "failed", slot: 3, playCount: 71000, likeCount: 4900, commentCount: 280 }
-    ];
-    compiledQueue.push(...sampleQueue);
-  }
-
-  // Analytics time-series generator for ranges 7d, 14d, 30d, 90d
+  // Analytics time-series computed directly from PostgreSQL reelHistory & reelInsights
   const timeSeriesRanges = {
-    "7d": generateTimeSeriesData(7, channelKeys),
-    "14d": generateTimeSeriesData(14, channelKeys),
-    "30d": generateTimeSeriesData(30, channelKeys),
-    "90d": generateTimeSeriesData(90, channelKeys)
+    "7d": generateTimeSeriesData(7, channelKeys, reelHistory, reelInsights),
+    "14d": generateTimeSeriesData(14, channelKeys, reelHistory, reelInsights),
+    "30d": generateTimeSeriesData(30, channelKeys, reelHistory, reelInsights),
+    "90d": generateTimeSeriesData(90, channelKeys, reelHistory, reelInsights)
   };
 
   // Collect & compile viral analytics data
@@ -343,7 +375,7 @@ async function getDashboardData() {
       { playCount: playC, likeCount: likeC, commentCount: commC },
       { playCount: maxPlays, likeCount: maxLikes, commentCount: maxComments }
     );
-    const er = playC > 0 ? +(((likeC + commC) / playC) * 100).toFixed(1) : 6.2;
+    const er = playC > 0 ? +(((likeC + commC) / playC) * 100).toFixed(1) : 0;
     const shares = Math.round(playC * 0.045);
     let trend = "→";
     if (calculatedScore >= 80) trend = "↑";
@@ -363,7 +395,7 @@ async function getDashboardData() {
     kpis: {
       totalViews: scoredReels.reduce((s, r) => s + (r.playCount || 0), 0),
       totalReels: scoredReels.length,
-      avgER: scoredReels.length > 0 ? +(scoredReels.reduce((s, r) => s + r.er, 0) / scoredReels.length).toFixed(1) : 6.5,
+      avgER: scoredReels.length > 0 ? +(scoredReels.reduce((s, r) => s + r.er, 0) / scoredReels.length).toFixed(1) : 0,
       totalShares: scoredReels.reduce((s, r) => s + r.shares, 0),
       viewsDelta: 24,
       sharesDelta: 18
