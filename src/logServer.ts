@@ -219,8 +219,8 @@ async function getDashboardData() {
         status: lastPublished.failed ? "failed" : "published",
         failedReason: lastPublished.failed_reason
       } : null,
-      igFollowers: (profile as any).igFollowers || 14500,
-      ytSubscribers: (profile as any).ytSubscribers || 9800,
+      igFollowers: (profile as any).igFollowers || null,
+      ytSubscribers: (profile as any).ytSubscribers || null,
       stats: {
         publishedCount,
         failedCount,
@@ -230,9 +230,9 @@ async function getDashboardData() {
   });
 
   const defaultFallbackProfiles = [
-    { key: "codeorcap", name: "CodeOrCap", handle: "@codeorcap", niche: "tech", initials: "CO", color: "teal", dailyLimit: 6, active: true, igFollowers: 14500, ytSubscribers: 9800 },
-    { key: "storiyum", name: "Storiyum", handle: "@storiyum", niche: "stories", initials: "ST", color: "purple", dailyLimit: 6, active: true, igFollowers: 18200, ytSubscribers: 12400 },
-    { key: "prompt_gag", name: "PromptGag", handle: "@prompt_gag", niche: "humor", initials: "PG", color: "amber", dailyLimit: 6, active: true, igFollowers: 9400, ytSubscribers: 6100 },
+    { key: "codeorcap", name: "CodeOrCap", handle: "@codeorcap", niche: "tech", initials: "CO", color: "teal", dailyLimit: 6, active: true, igFollowers: null, ytSubscribers: null },
+    { key: "storiyum", name: "Storiyum", handle: "@storiyum", niche: "stories", initials: "ST", color: "purple", dailyLimit: 6, active: true, igFollowers: null, ytSubscribers: null },
+    { key: "prompt_gag", name: "PromptGag", handle: "@prompt_gag", niche: "humor", initials: "PG", color: "amber", dailyLimit: 6, active: true, igFollowers: null, ytSubscribers: null },
   ];
 
   defaultFallbackProfiles.forEach((fb) => {
@@ -1334,22 +1334,26 @@ const HTML = `<!DOCTYPE html>
     container.innerHTML = '';
 
     const defaultChannels = [
-      { key: 'codeorcap', name: 'CodeOrCap', handle: '@codeorcap', color: 'primary', initials: 'CO', igFollowers: 14500, ytSubscribers: 9800 },
-      { key: 'storiyum', name: 'Storiyum', handle: '@storiyum', color: 'purple', initials: 'ST', igFollowers: 18200, ytSubscribers: 12400 },
-      { key: 'prompt_gag', name: 'PromptGag', handle: '@prompt_gag', color: 'warning', initials: 'PG', igFollowers: 9400, ytSubscribers: 6100 }
+      { key: 'codeorcap', name: 'CodeOrCap', handle: '@codeorcap', color: 'primary', initials: 'CO', igFollowers: null, ytSubscribers: null },
+      { key: 'storiyum', name: 'Storiyum', handle: '@storiyum', color: 'purple', initials: 'ST', igFollowers: null, ytSubscribers: null },
+      { key: 'prompt_gag', name: 'PromptGag', handle: '@prompt_gag', color: 'warning', initials: 'PG', igFollowers: null, ytSubscribers: null }
     ];
     const rawList = (channels && channels.length > 0) ? channels : defaultChannels;
 
-    const defaultIgMap = { codeorcap: 14500, storiyum: 18200, prompt_gag: 9400 };
-    const defaultYtMap = { codeorcap: 9800, storiyum: 12400, prompt_gag: 6100 };
-
     let totalIg = 0;
     let totalYt = 0;
+    let hasRealIg = false;
+    let hasRealYt = false;
+
     rawList.forEach((c) => {
-      const ig = (c.igFollowers && c.igFollowers > 0) ? c.igFollowers : (defaultIgMap[c.key] || 12400);
-      const yt = (c.ytSubscribers && c.ytSubscribers > 0) ? c.ytSubscribers : (defaultYtMap[c.key] || 8500);
-      totalIg += ig;
-      totalYt += yt;
+      if (c.igFollowers && typeof c.igFollowers === 'number' && c.igFollowers > 0) {
+        totalIg += c.igFollowers;
+        hasRealIg = true;
+      }
+      if (c.ytSubscribers && typeof c.ytSubscribers === 'number' && c.ytSubscribers > 0) {
+        totalYt += c.ytSubscribers;
+        hasRealYt = true;
+      }
     });
 
     const allObj = {
@@ -1358,8 +1362,8 @@ const HTML = `<!DOCTYPE html>
       handle: 'Combined Network',
       color: 'blue',
       initials: 'ALL',
-      igFollowers: totalIg,
-      ytSubscribers: totalYt,
+      igFollowers: hasRealIg ? totalIg : null,
+      ytSubscribers: hasRealYt ? totalYt : null,
       isAll: true
     };
 
@@ -1394,8 +1398,8 @@ const HTML = `<!DOCTYPE html>
 
       card.onclick = () => focusChannelProfile(c.key);
 
-      const igVal = c.isAll ? totalIg : ((c.igFollowers && c.igFollowers > 0) ? c.igFollowers : (defaultIgMap[c.key] || 12400));
-      const ytVal = c.isAll ? totalYt : ((c.ytSubscribers && c.ytSubscribers > 0) ? c.ytSubscribers : (defaultYtMap[c.key] || 8500));
+      const igVal = c.isAll ? (hasRealIg ? totalIg : null) : (c.igFollowers || null);
+      const ytVal = c.isAll ? (hasRealYt ? totalYt : null) : (c.ytSubscribers || null);
 
       const statusBadge = isFocused
         ? '<span style="font-size: 10px; font-weight: 800; color: #388bfd; background: rgba(56,139,253,0.2); border: 1px solid rgba(56,139,253,0.5); padding: 3px 8px; border-radius: 12px; letter-spacing: 0.5px;">✔ ACTIVE FOCUS</span>'
@@ -1414,12 +1418,12 @@ const HTML = `<!DOCTYPE html>
         '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; text-align: center; background: var(--bg); padding: 12px; border-radius: 10px; border: 1px solid var(--card-border);">' +
           '<div>' +
             '<div style="font-size: 10px; color: #e1306c; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">📷 Instagram</div>' +
-            '<div style="font-size: 20px; font-weight: 800; color: #fff; font-family: var(--font-mono); margin-top: 3px;">' + fmtNum(igVal) + '</div>' +
+            '<div style="font-size: ' + (igVal ? '20px' : '14px') + '; font-weight: 800; color: ' + (igVal ? '#fff' : 'var(--text-muted)') + '; font-family: var(--font-mono); margin-top: 3px;">' + fmtAudience(igVal) + '</div>' +
             '<div style="font-size: 9px; color: var(--text-muted); font-weight: 600;">Followers</div>' +
           '</div>' +
           '<div style="border-left: 1px solid var(--card-border); padding-left: 6px;">' +
             '<div style="font-size: 10px; color: #ff4e4e; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">▶ YouTube</div>' +
-            '<div style="font-size: 20px; font-weight: 800; color: #fff; font-family: var(--font-mono); margin-top: 3px;">' + fmtNum(ytVal) + '</div>' +
+            '<div style="font-size: ' + (ytVal ? '20px' : '14px') + '; font-weight: 800; color: ' + (ytVal ? '#fff' : 'var(--text-muted)') + '; font-family: var(--font-mono); margin-top: 3px;">' + fmtAudience(ytVal) + '</div>' +
             '<div style="font-size: 9px; color: var(--text-muted); font-weight: 600;">Subscribers</div>' +
           '</div>' +
         '</div>';
