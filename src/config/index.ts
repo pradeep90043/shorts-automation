@@ -60,6 +60,8 @@ export interface ChannelProfile {
   isDefault: boolean;
   telegramToken: string;
   isWatchOnly?: boolean;
+  igFollowers?: number;
+  ytSubscribers?: number;
   youtube: YoutubeConfig;
   instagram: {
     accounts: InstagramAccount[];

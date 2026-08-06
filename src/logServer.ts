@@ -673,7 +673,7 @@ const HTML = `<!DOCTYPE html>
 </head>
 <body>
 
-<div id="topbar">
+<div id="topbar">dfdfdfdfdf
   <div class="brand">
     <div class="brand-dot"></div>
     <span class="brand-name">Shorts Automation</span>
@@ -691,6 +691,9 @@ const HTML = `<!DOCTYPE html>
     <div class="nav-section-label">Control</div>
     <div class="nav-item active" data-tab="overview" onclick="switchTab('overview', this)">
       <span>📊</span> Overview & Control
+    </div>
+    <div class="nav-item" data-tab="channels" onclick="switchTab('channels', this)">
+      <span>📺</span> Channel Cards
     </div>
     <div class="nav-item" data-tab="queue" onclick="switchTab('queue', this)">
       <span>⏳</span> Queue Manager <span class="nav-badge" id="nav-badge-queued">0</span>
@@ -712,22 +715,22 @@ const HTML = `<!DOCTYPE html>
     <div class="nav-section-label">Channels</div>
     <div id="sidebar-channels-list"></div>
   </div>
-
+dfdfdfdfdfdf
   <!-- MAIN CONTENT AREA -->
   <div class="main-content">
     
     <!-- AUDIENCE & CHANNEL GROWTH INTERACTIVE FILTER CARDS BAR -->
-    <div class="section-stats" style="margin-bottom: 20px;">
+    <div class="section-stats" style="margin-bottom: 20px;">dfffdfdfdfdfdfddfd
       <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
         <div>
           <div style="font-size: 15px; font-weight: 800; color: #fff; display: flex; align-items: center; gap: 8px;">
             <span>🌐 Channel Audience & Active Filter</span>
             <span style="font-size: 10px; background: rgba(56, 139, 253, 0.15); color: var(--primary); border: 1px solid rgba(56, 139, 253, 0.4); padding: 2px 9px; border-radius: 12px; font-weight: 700;">Click Any Card to Focus</span>
           </div>
-          <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">Click on any channel card below to view followers, focus metrics, filter queue, and analyze viral performance</div>
+          <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">hjkghjkhjklyze viral performance</div>
         </div>
       </div>
-      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px;" id="header-channel-growth-grid"></div>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; width: 100%; min-height: 120px;" id="header-channel-growth-grid"></div>
     </div>
 
     <!-- DEDICATED CHANNEL FOCUS CONTROL & NAVIGATION TABS BAR -->
@@ -749,6 +752,15 @@ const HTML = `<!DOCTYPE html>
     <div id="tab-overview" class="tab-pane active">
       <div id="alerts-container" style="margin-bottom: 20px;"></div>
 
+      <!-- ACTIVE CHANNEL CARDS GRID -->
+      <div style="margin-bottom: 24px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+          <div style="font-size: 16px; font-weight: 800; color: #fff;">📺 Active Channel Profiles</div>
+          <div style="font-size: 11px; color: var(--text-muted);">Overview of followers, subscribers, queue status & target limits</div>
+        </div>
+        <div id="overview-channels-cards-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px;"></div>
+      </div>
+
       <!-- INJECT REEL LINK & LIVE STEPPER -->
       <div id="inject-workflow-section" class="table-card" style="margin-bottom: 24px; border: 1px solid var(--card-border);">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 10px;">
@@ -766,13 +778,13 @@ const HTML = `<!DOCTYPE html>
           <input class="input-field" style="font-family: var(--font-mono); font-size: 13px;" id="inject-url-input" placeholder="https://www.instagram.com/reel/XXXXXXXX/" onkeydown="if(event.key==='Enter') triggerInjectLink()">
           <button class="btn-primary" style="white-space: nowrap; padding: 10px 20px; font-weight: 700;" onclick="triggerInjectLink()">⚡ Ingest & Process Reel</button>
         </div>
-
+rtgretghrtghdr ths t g
         <!-- LIVE 6-STEP PIPELINE STEPPER -->
         <div id="live-workflow-stepper" style="background: var(--bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 14px;">
           <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
             <span style="font-weight: 700; font-size: 12px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px;">Live 6-Step Processing Pipeline</span>
             <span id="stepper-status-badge" class="status-badge status-published">System Ready</span>
-          </div>
+          </div>rtgrtgrt
           <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; text-align: center;">
             <div class="step-card" id="step-1" style="background: var(--card); padding: 10px 6px; border-radius: 6px; border: 1px solid var(--card-border); transition: all 0.3s;">
               <div style="font-size: 16px; margin-bottom: 2px;">📥</div>
@@ -1130,6 +1142,13 @@ const HTML = `<!DOCTYPE html>
       </div>
     </div>
 
+    <!-- TAB: CHANNEL CARDS -->
+    <div id="tab-channels" class="tab-pane">
+      <div style="font-size: 18px; font-weight: 800; color: #fff; margin-bottom: 4px;">📺 Managed Channel Profiles & Audience Stats</div>
+      <div style="color: var(--text-muted); margin-bottom: 20px;">Detailed metrics, follower & subscriber audience data, queue status, and channel configuration for all profiles.</div>
+      <div id="channels-cards-container" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px;"></div>
+    </div>
+
     <!-- TAB: CONFIGURATION -->
     <div id="tab-config" class="tab-pane">
       <div style="max-width: 760px;">
@@ -1184,6 +1203,16 @@ const HTML = `<!DOCTYPE html>
   function fmtNum(n) {
     if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
     if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+    return String(n);
+  }
+
+  function fmtAudience(n) {
+    if (n === null || n === undefined) return '0';
+    if (typeof n === 'number') {
+      if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+      if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+      return String(n);
+    }
     return String(n);
   }
 
@@ -1313,18 +1342,22 @@ const HTML = `<!DOCTYPE html>
   }
 
   function renderDashboard(data) {
-    const qPending = data.queue ? data.queue.filter((q) => q.status === 'queued').length : 0;
-    const badgeEl = document.getElementById('nav-badge-queued');
-    if (badgeEl) badgeEl.textContent = String(qPending);
+    try {
+      const qPending = (data && data.queue) ? data.queue.filter((q) => q.status === 'queued').length : 0;
+      const badgeEl = document.getElementById('nav-badge-queued');
+      if (badgeEl) badgeEl.textContent = String(qPending);
 
-    renderHeaderAudienceCards(data.channels);
-    renderChannelsList(data.channels);
-    renderActivityTable(data.recentHistory);
-    renderQueueTable(data.queue);
-    renderConfigTab(data.channels);
+      try { renderHeaderAudienceCards(data ? data.channels : null); } catch(e) { console.error('Error rendering header audience cards:', e); }
+      try { renderChannelsList(data ? data.channels : null); } catch(e) { console.error('Error rendering channels list:', e); }
+      try { renderActivityTable(data ? data.recentHistory : null); } catch(e) { console.error('Error rendering activity table:', e); }
+      try { renderQueueTable(data ? data.queue : null); } catch(e) { console.error('Error rendering queue table:', e); }
+      try { renderConfigTab(data ? data.channels : null); } catch(e) { console.error('Error rendering config tab:', e); }
 
-    if (data.viralAnalytics) {
-      renderViralSection(data.viralAnalytics);
+      if (data && data.viralAnalytics) {
+        try { renderViralSection(data.viralAnalytics); } catch(e) { console.error('Error rendering viral section:', e); }
+      }
+    } catch(e) {
+      console.error('Error in renderDashboard:', e);
     }
   }
 
@@ -1398,8 +1431,8 @@ const HTML = `<!DOCTYPE html>
 
       card.onclick = () => focusChannelProfile(c.key);
 
-      const igVal = c.isAll ? (hasRealIg ? totalIg : null) : (c.igFollowers || null);
-      const ytVal = c.isAll ? (hasRealYt ? totalYt : null) : (c.ytSubscribers || null);
+      const igVal = c.isAll ? totalIg : (c.igFollowers !== undefined && c.igFollowers !== null ? c.igFollowers : 0);
+      const ytVal = c.isAll ? totalYt : (c.ytSubscribers !== undefined && c.ytSubscribers !== null ? c.ytSubscribers : 0);
 
       const statusBadge = isFocused
         ? '<span style="font-size: 10px; font-weight: 800; color: #388bfd; background: rgba(56,139,253,0.2); border: 1px solid rgba(56,139,253,0.5); padding: 3px 8px; border-radius: 12px; letter-spacing: 0.5px;">✔ ACTIVE FOCUS</span>'
@@ -1418,12 +1451,12 @@ const HTML = `<!DOCTYPE html>
         '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; text-align: center; background: var(--bg); padding: 12px; border-radius: 10px; border: 1px solid var(--card-border);">' +
           '<div>' +
             '<div style="font-size: 10px; color: #e1306c; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">📷 Instagram</div>' +
-            '<div style="font-size: ' + (igVal ? '20px' : '14px') + '; font-weight: 800; color: ' + (igVal ? '#fff' : 'var(--text-muted)') + '; font-family: var(--font-mono); margin-top: 3px;">' + fmtAudience(igVal) + '</div>' +
+            '<div style="font-size: 18px; font-weight: 800; color: ' + (igVal > 0 ? '#fff' : 'var(--text-muted)') + '; font-family: var(--font-mono); margin-top: 3px;">' + fmtAudience(igVal) + '</div>' +
             '<div style="font-size: 9px; color: var(--text-muted); font-weight: 600;">Followers</div>' +
           '</div>' +
           '<div style="border-left: 1px solid var(--card-border); padding-left: 6px;">' +
             '<div style="font-size: 10px; color: #ff4e4e; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">▶ YouTube</div>' +
-            '<div style="font-size: ' + (ytVal ? '20px' : '14px') + '; font-weight: 800; color: ' + (ytVal ? '#fff' : 'var(--text-muted)') + '; font-family: var(--font-mono); margin-top: 3px;">' + fmtAudience(ytVal) + '</div>' +
+            '<div style="font-size: 18px; font-weight: 800; color: ' + (ytVal > 0 ? '#fff' : 'var(--text-muted)') + '; font-family: var(--font-mono); margin-top: 3px;">' + fmtAudience(ytVal) + '</div>' +
             '<div style="font-size: 9px; color: var(--text-muted); font-weight: 600;">Subscribers</div>' +
           '</div>' +
         '</div>';
@@ -1480,7 +1513,59 @@ const HTML = `<!DOCTYPE html>
     }
 
     const cardsContainer = document.getElementById('channels-cards-container');
-    if (cardsContainer) cardsContainer.innerHTML = '';
+    const overviewContainer = document.getElementById('overview-channels-cards-grid');
+
+    [cardsContainer, overviewContainer].forEach(container => {
+      if (!container) return;
+      container.innerHTML = '';
+      list.forEach(c => {
+        const card = document.createElement('div');
+        card.className = 'table-card channel-select-card';
+        const cardColor = c.color || 'primary';
+        const borderColor = cardColor === 'purple' ? '#a855f7' : cardColor === 'warning' || cardColor === 'amber' ? '#f59e0b' : '#388bfd';
+        
+        card.style.cssText = 'border-top: 4px solid ' + borderColor + '; padding: 18px 20px; border-radius: 12px; margin-bottom: 0; background: var(--card);';
+        
+        const igVal = c.igFollowers !== undefined && c.igFollowers !== null ? c.igFollowers : 0;
+        const ytVal = c.ytSubscribers !== undefined && c.ytSubscribers !== null ? c.ytSubscribers : 0;
+        const pubCount = (c.stats && c.stats.publishedCount) || 0;
+        const qCount = c.queueCount || 0;
+
+        card.innerHTML = '<div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;">' +
+            '<div style="display: flex; align-items: center; gap: 10px;">' +
+              '<div class="avatar-box avatar-' + cardColor + '" style="width: 38px; height: 38px; font-size: 14px; font-weight: 800; border-radius: 10px;">' + (c.initials || 'CO') + '</div>' +
+              '<div>' +
+                '<div style="font-weight: 800; color: #fff; font-size: 16px; line-height: 1.2;">' + c.name + ' <span class="code-badge" style="font-size: 9px; vertical-align: middle; margin-left: 4px;">' + (c.niche || 'ACTIVE').toUpperCase() + '</span></div>' +
+                '<div style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); margin-top: 2px;">' + (c.handle || ('@' + c.key)) + '</div>' +
+              '</div>' +
+            '</div>' +
+            '<button class="btn-icon" style="font-size: 11px; font-weight: 700; background: rgba(56,139,253,0.1); border-color: rgba(56,139,253,0.3); color: var(--primary);" onclick="focusChannelProfile(\'' + c.key + '\')">🎯 Focus Channel</button>' +
+          '</div>' +
+          '<div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; background: var(--bg); padding: 12px; border-radius: 10px; text-align: center; border: 1px solid var(--card-border);">' +
+            '<div>' +
+              '<div style="font-size: 10px; color: #e1306c; font-weight: 800;">📷 Instagram</div>' +
+              '<div style="font-size: 16px; font-weight: 800; color: ' + (igVal > 0 ? '#fff' : 'var(--text-muted)') + '; font-family: var(--font-mono); margin-top: 2px;">' + fmtAudience(igVal) + '</div>' +
+              '<div style="font-size: 9px; color: var(--text-muted);">Followers</div>' +
+            '</div>' +
+            '<div>' +
+              '<div style="font-size: 10px; color: #ff4e4e; font-weight: 800;">▶ YouTube</div>' +
+              '<div style="font-size: 16px; font-weight: 800; color: ' + (ytVal > 0 ? '#fff' : 'var(--text-muted)') + '; font-family: var(--font-mono); margin-top: 2px;">' + fmtAudience(ytVal) + '</div>' +
+              '<div style="font-size: 9px; color: var(--text-muted);">Subscribers</div>' +
+            '</div>' +
+            '<div>' +
+              '<div style="font-size: 10px; color: var(--warning); font-weight: 800;">⏳ In Queue</div>' +
+              '<div style="font-size: 16px; font-weight: 800; color: #fff; font-family: var(--font-mono); margin-top: 2px;">' + qCount + '</div>' +
+              '<div style="font-size: 9px; color: var(--text-muted);">pending reels</div>' +
+            '</div>' +
+            '<div>' +
+              '<div style="font-size: 10px; color: var(--success); font-weight: 800;">🚀 Published</div>' +
+              '<div style="font-size: 16px; font-weight: 800; color: #fff; font-family: var(--font-mono); margin-top: 2px;">' + pubCount + '</div>' +
+              '<div style="font-size: 9px; color: var(--text-muted);">total uploads</div>' +
+            '</div>' +
+          '</div>';
+        container.appendChild(card);
+      });
+    });
   }
 
   function renderActivityTable(history) {
@@ -1858,15 +1943,21 @@ const HTML = `<!DOCTYPE html>
     }
   }
 
+  function setElText(id, text) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = String(text);
+  }
+
   /* VIRAL ANALYTICS TAB RENDERER */
   function renderViralSection(viralData) {
+    if (!viralData) return;
     const k = viralData.kpis || {};
-    document.getElementById('kpi-total-views').textContent = fmtNum(k.totalViews || 584000);
-    document.getElementById('kpi-total-reels').textContent = k.totalReels || 42;
-    document.getElementById('kpi-avg-er').textContent = (k.avgER || 6.5) + '%';
-    document.getElementById('kpi-total-shares').textContent = fmtNum(k.totalShares || 34200);
+    setElText('kpi-total-views', fmtNum(k.totalViews || 584000));
+    setElText('kpi-total-reels', String(k.totalReels || 42));
+    setElText('kpi-avg-er', (k.avgER || 6.5) + '%');
+    setElText('kpi-total-shares', fmtNum(k.totalShares || 34200));
 
-    document.getElementById('viral-patterns-content').textContent = viralData.patternsText || 'No viral patterns logged yet.';
+    setElText('viral-patterns-content', viralData.patternsText || 'No viral patterns logged yet.');
     renderViralLeaderboard(viralData.leaderboard);
 
     if (activeTab === 'viral') {
@@ -1876,6 +1967,7 @@ const HTML = `<!DOCTYPE html>
 
   function renderViralLeaderboard(leaderboard) {
     const body = document.getElementById('viral-leaderboard-body');
+    if (!body) return;
     body.innerHTML = '';
 
     if (!leaderboard || leaderboard.length === 0) {
@@ -1947,7 +2039,7 @@ const HTML = `<!DOCTYPE html>
     if (btnEl) btnEl.classList.add('active');
 
     const labelsMap = { views: 'Views over time', reels: 'Reels published over time', er: 'Engagement rate (%) over time', shares: 'Shares over time' };
-    document.getElementById('main-chart-title').textContent = labelsMap[metricKey] || 'Metric over time';
+    setElText('main-chart-title', labelsMap[metricKey] || 'Metric over time');
 
     if (globalDashboardData && globalDashboardData.viralAnalytics) {
       renderViralCharts(globalDashboardData.viralAnalytics);
@@ -1955,7 +2047,9 @@ const HTML = `<!DOCTYPE html>
   }
 
   function applyViralSearch() {
-    const q = document.getElementById('viral-search-input').value.toLowerCase();
+    const qEl = document.getElementById('viral-search-input');
+    if (!qEl) return;
+    const q = qEl.value.toLowerCase();
     const rows = document.querySelectorAll('#viral-leaderboard-body tr');
     rows.forEach(r => {
       r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
@@ -1965,13 +2059,29 @@ const HTML = `<!DOCTYPE html>
   function exportViralCsv() {
     if (!globalDashboardData || !globalDashboardData.viralAnalytics) return;
     const items = globalDashboardData.viralAnalytics.leaderboard;
-    let csv = 'Rank,Shortcode,Channel,Views,EngRate,Shares,Trend,Url\\n';
+    let csv = 'Rank,Shortcode,Channel,Views,EngRate,Shares,Trend,Url\n';
     items.forEach((r, i) => {
-      csv += '"' + (i + 1) + '","' + r.shortcode + '","' + r.profileKey + '","' + r.playCount + '","' + r.er + '%","' + r.shares + '","' + r.trend + '","' + r.sourceUrl + '"\\n';
+      csv += '"' + (i + 1) + '","' + r.shortcode + '","' + r.profileKey + '","' + r.playCount + '","' + r.er + '%","' + r.shares + '","' + r.trend + '","' + r.sourceUrl + '"\n';
     });
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
+    a.href = url;
+    a.download = 'viral_analytics_report.csv';
+    a.click();
+  }
+
+  /* CHART.JS VISUALIZATIONS */
+  function renderViralCharts(viralData) {
+    if (typeof Chart === 'undefined' || !viralData) return;
+
+    const elMain = document.getElementById('chart-main-metric');
+    const elCadence = document.getElementById('chart-daily-cadence');
+    const elER = document.getElementById('chart-er-trend');
+    const elPie = document.getElementById('chart-view-share');
+    const elShares = document.getElementById('chart-shares-momentum');
+
+    if (!elMain || !elCadence || !elER || !elPie || !elShares) return;const a = document.createElement('a');
     a.href = url;
     a.download = 'viral_analytics_report.csv';
     a.click();
