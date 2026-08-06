@@ -390,15 +390,31 @@ async function getDashboardData() {
     };
   }).sort((a, b) => b.viralScore - a.viralScore);
 
+  const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+  const nowMs = Date.now();
+  const recent7Views = reelHistory.filter(r => (nowMs - new Date(r.published_at || r.picked_at || 0).getTime()) <= sevenDaysMs).reduce((s, r) => s + (Number(r.views) || 0), 0);
+  const prev7Views = reelHistory.filter(r => {
+    const age = nowMs - new Date(r.published_at || r.picked_at || 0).getTime();
+    return age > sevenDaysMs && age <= 14 * 24 * 60 * 60 * 1000;
+  }).reduce((s, r) => s + (Number(r.views) || 0), 0);
+  const viewsDelta = prev7Views > 0 ? Math.round(((recent7Views - prev7Views) / prev7Views) * 100) : (recent7Views > 0 ? 100 : 0);
+
+  const recent7Shares = reelHistory.filter(r => (nowMs - new Date(r.published_at || r.picked_at || 0).getTime()) <= sevenDaysMs).reduce((s, r) => s + (Number(r.shares) || 0), 0);
+  const prev7Shares = reelHistory.filter(r => {
+    const age = nowMs - new Date(r.published_at || r.picked_at || 0).getTime();
+    return age > sevenDaysMs && age <= 14 * 24 * 60 * 60 * 1000;
+  }).reduce((s, r) => s + (Number(r.shares) || 0), 0);
+  const sharesDelta = prev7Shares > 0 ? Math.round(((recent7Shares - prev7Shares) / prev7Shares) * 100) : (recent7Shares > 0 ? 100 : 0);
+
   const viralAnalytics = {
     timeSeriesRanges,
     kpis: {
       totalViews: scoredReels.reduce((s, r) => s + (r.playCount || 0), 0),
       totalReels: scoredReels.length,
       avgER: scoredReels.length > 0 ? +(scoredReels.reduce((s, r) => s + r.er, 0) / scoredReels.length).toFixed(1) : 0,
-      totalShares: scoredReels.reduce((s, r) => s + r.shares, 0),
-      viewsDelta: 24,
-      sharesDelta: 18
+      totalShares: scoredReels.reduce((s, r) => s + (r.shares || 0), 0),
+      viewsDelta,
+      sharesDelta
     },
     leaderboard: scoredReels.slice(0, 25),
     patternsText: viralPatternsText
