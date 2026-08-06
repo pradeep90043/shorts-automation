@@ -554,26 +554,6 @@ export class ChannelWatcher {
             err,
             "ChannelWatcher",
           );
-
-          const staggeredScheduledMs = this.todayScheduleUtcMs() + (this.profileIndex * 5 * 60 * 1000);
-          const skippedAtStr = new Date(
-            queue.length === 0
-              ? (this.isForcedRun ? now : staggeredScheduledMs)
-              : new Date(queue[queue.length - 1].scheduledAt).getTime() + this.profile.watch.gapHours * 60 * 60 * 1000
-          ).toISOString();
-
-          await this.store.setQueue([...queue, {
-            shortcode: `failed-fetch-${Date.now()}`,
-            url: "",
-            channel,
-            scheduledAt: skippedAtStr,
-            fired: true,
-            published: false,
-            failed: true,
-            failedReason: `Failed to fetch reels: ${err instanceof Error ? err.message : String(err)}`,
-            addedAt: new Date().toISOString()
-          }]);
-          await this.store.advanceSlot();
           return;
         }
 
@@ -583,26 +563,6 @@ export class ChannelWatcher {
             `[${this.profile.brandName}] No unseen reels from @${channel} during ingestion — skipping slot ${queue.length + 1}/${sequence.length}`,
             "ChannelWatcher",
           );
-
-          const staggeredScheduledMs = this.todayScheduleUtcMs() + (this.profileIndex * 5 * 60 * 1000);
-          const skippedAtStr = new Date(
-            queue.length === 0
-              ? (this.isForcedRun ? now : staggeredScheduledMs)
-              : new Date(queue[queue.length - 1].scheduledAt).getTime() + this.profile.watch.gapHours * 60 * 60 * 1000
-          ).toISOString();
-
-          await this.store.setQueue([...queue, {
-            shortcode: `no-unseen-${Date.now()}`,
-            url: "",
-            channel,
-            scheduledAt: skippedAtStr,
-            fired: true,
-            published: false,
-            failed: true,
-            failedReason: "No unseen reels found",
-            addedAt: new Date().toISOString()
-          }]);
-          await this.store.advanceSlot();
           return;
         }
 
