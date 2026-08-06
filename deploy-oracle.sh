@@ -22,6 +22,7 @@ if [ "$OS" = "ubuntu" ] || [ "$OS" = "debian" ]; then
     echo "==> Configuring firewall (iptables)..."
     sudo iptables -I INPUT 6 -p tcp --dport 3000 -j ACCEPT || true
     sudo iptables -I INPUT 6 -p tcp --dport 3001 -j ACCEPT || true
+    sudo iptables -I INPUT 6 -p tcp --dport 3002 -j ACCEPT || true
     sudo netfilter-persistent save || true
     
 elif [ "$OS" = "ol" ] || [ "$OS" = "rhel" ] || [ "$OS" = "centos" ] || [ "$OS" = "rocky" ] || [ "$OS" = "almalinux" ]; then
@@ -38,10 +39,12 @@ elif [ "$OS" = "ol" ] || [ "$OS" = "rhel" ] || [ "$OS" = "centos" ] || [ "$OS" =
     echo "==> Configuring VM firewall (firewalld & iptables)..."
     sudo firewall-cmd --zone=public --add-port=3000/tcp --permanent || true
     sudo firewall-cmd --zone=public --add-port=3001/tcp --permanent || true
+    sudo firewall-cmd --zone=public --add-port=3002/tcp --permanent || true
     sudo firewall-cmd --reload || true
     
     sudo iptables -I INPUT -p tcp --dport 3000 -j ACCEPT || true
     sudo iptables -I INPUT -p tcp --dport 3001 -j ACCEPT || true
+    sudo iptables -I INPUT -p tcp --dport 3002 -j ACCEPT || true
 else
     echo "❌ Unsupported OS: $OS. Please install Docker manually."
     exit 1

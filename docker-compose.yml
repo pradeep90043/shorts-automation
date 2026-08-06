@@ -18,9 +18,10 @@ services:
       - ./assets/stickers:/app/assets/stickers
       - ./logs:/app/logs
       - ./cookies.txt:/app/cookies.txt
-    # Port only needed during YouTube OAuth auth flow
+    # Ports: 3000 (OAuth flow), 3002 (Live Logs server)
     ports:
       - "3000:3000"
+      - "3002:3002"
 
   freellmapi:
     image: ghcr.io/tashfeenahmed/freellmapi:latest
