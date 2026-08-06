@@ -438,7 +438,7 @@ export const config: AppConfig = {
     ffmpeg: process.env.FFMPEG_PATH || "ffmpeg",
     ffprobe: process.env.FFPROBE_PATH || "ffprobe",
     ytdlp: process.env.YTDLP_PATH || "yt-dlp",
-    python3: process.env.PYTHON_PATH || "python3",
+    python3: process.env.PYTHON_PATH || (process.platform === "win32" ? "python" : "python3"),
     chrome:
       process.env.PUPPETEER_EXECUTABLE_PATH ||
       (process.platform === "win32"

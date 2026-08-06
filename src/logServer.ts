@@ -7,6 +7,7 @@ import { getPool } from "./utils/pgClient";
 import { activeWatchers } from "./instagram/channelWatcher";
 import { ViralAnalyzer } from "./utils/viral-analyzer";
 import { computeViralScore } from "./utils/viralScore";
+import { pipelineLogger } from "./utils/logger";
 
 const PORT = parseInt(process.env.LOG_SERVER_PORT || "3002", 10);
 const COMBINED_LOG = path.join(config.paths.logDir, "combined.log");
@@ -218,6 +219,8 @@ async function getDashboardData() {
         status: lastPublished.failed ? "failed" : "published",
         failedReason: lastPublished.failed_reason
       } : null,
+      igFollowers: (profile as any).igFollowers || 14500,
+      ytSubscribers: (profile as any).ytSubscribers || 9800,
       stats: {
         publishedCount,
         failedCount,
@@ -227,9 +230,9 @@ async function getDashboardData() {
   });
 
   const defaultFallbackProfiles = [
-    { key: "codeorcap", name: "CodeOrCap", handle: "@codeorcap", niche: "tech", initials: "CO", color: "teal", dailyLimit: 6, active: true },
-    { key: "storiyum", name: "Storiyum", handle: "@storiyum", niche: "stories", initials: "ST", color: "purple", dailyLimit: 6, active: true },
-    { key: "prompt_gag", name: "PromptGag", handle: "@prompt_gag", niche: "humor", initials: "PG", color: "amber", dailyLimit: 6, active: true },
+    { key: "codeorcap", name: "CodeOrCap", handle: "@codeorcap", niche: "tech", initials: "CO", color: "teal", dailyLimit: 6, active: true, igFollowers: 14500, ytSubscribers: 9800 },
+    { key: "storiyum", name: "Storiyum", handle: "@storiyum", niche: "stories", initials: "ST", color: "purple", dailyLimit: 6, active: true, igFollowers: 18200, ytSubscribers: 12400 },
+    { key: "prompt_gag", name: "PromptGag", handle: "@prompt_gag", niche: "humor", initials: "PG", color: "amber", dailyLimit: 6, active: true, igFollowers: 9400, ytSubscribers: 6100 },
   ];
 
   defaultFallbackProfiles.forEach((fb) => {
@@ -266,6 +269,8 @@ async function getDashboardData() {
         totalSlots,
         progressPct,
         watchedChannelsCount: 4,
+        igFollowers: fb.igFollowers,
+        ytSubscribers: fb.ytSubscribers,
         lastPublished: lastPublished ? {
           shortcode: lastPublished.shortcode,
           channel: lastPublished.channel,
@@ -674,7 +679,7 @@ const HTML = `<!DOCTYPE html>
     <span class="brand-name">Shorts Automation</span>
     <span class="brand-tag">v3.5 Viral Analytics</span>
   </div>
-  <div style="display: flex; align-items: center; gap: 10px;">
+  <div style="display: flex; align-items: center; gap: 10px; flex-shrink: 0;">
     <div class="status-pill"><div class="status-dot"></div> System Active</div>
     <button class="btn-icon" onclick="fetchDashboardData()">⟳ Refresh</button>
   </div>
@@ -711,90 +716,103 @@ const HTML = `<!DOCTYPE html>
   <!-- MAIN CONTENT AREA -->
   <div class="main-content">
     
-    <!-- AUDIENCE & CHANNEL GROWTH HEADER BAR -->
-    <div class="section-stats" style="margin-bottom: 16px;">
-      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px;" id="header-channel-growth-grid"></div>
-    </div>
-
-    <!-- ACTIVE CHANNEL FOCUS FILTER BAR -->
-    <div id="channel-focus-bar" style="display: flex; align-items: center; justify-content: space-between; background: var(--card); border: 1px solid var(--card-border); padding: 10px 16px; border-radius: 8px; margin-bottom: 20px; flex-wrap: wrap; gap: 10px;">
-      <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-        <span style="font-size: 13px; font-weight: 700; color: var(--text-muted);">Active Channel Filter:</span>
-        <button class="pill-btn active" id="focus-btn-all" onclick="focusChannelProfile('all')">🌐 All Channels</button>
-        <button class="pill-btn" id="focus-btn-codeorcap" onclick="focusChannelProfile('codeorcap')">CodeOrCap (@codeorcap)</button>
-        <button class="pill-btn" id="focus-btn-storiyum" onclick="focusChannelProfile('storiyum')">Storiyum (@storiyum)</button>
-        <button class="pill-btn" id="focus-btn-prompt_gag" onclick="focusChannelProfile('prompt_gag')">PromptGag (@prompt_gag)</button>
-      </div>
-    </div>
-
-    <!-- INJECT REEL LINK & LIVE 6-STEP WORKFLOW STEPPER BAR -->
-    <div class="table-card" style="margin-bottom: 24px; border: 1px solid var(--card-border);">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 10px;">
+    <!-- AUDIENCE & CHANNEL GROWTH INTERACTIVE FILTER CARDS BAR -->
+    <div class="section-stats" style="margin-bottom: 20px;">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
         <div>
-          <div style="font-size: 16px; font-weight: 700; color: #fff;">＋ Inject Source Reel & Live Processing Workflow</div>
-          <div style="font-size: 12px; color: var(--text-muted);">Paste Instagram Reel URL to trigger real-time AI transcription, caption rendering, and multi-platform publishing</div>
-        </div>
-        <div style="display: flex; align-items: center; gap: 10px;">
-          <label style="font-size: 11px; font-weight: 700; color: var(--text-muted);">Target Channel:</label>
-          <select class="input-field" id="inject-target-channel-select" style="width: 160px; padding: 6px 10px; font-weight: 600; font-family: var(--font-sans);"></select>
+          <div style="font-size: 15px; font-weight: 800; color: #fff; display: flex; align-items: center; gap: 8px;">
+            <span>🌐 Channel Audience & Active Filter</span>
+            <span style="font-size: 10px; background: rgba(56, 139, 253, 0.15); color: var(--primary); border: 1px solid rgba(56, 139, 253, 0.4); padding: 2px 9px; border-radius: 12px; font-weight: 700;">Click Any Card to Focus</span>
+          </div>
+          <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">Click on any channel card below to view followers, focus metrics, filter queue, and analyze viral performance</div>
         </div>
       </div>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px;" id="header-channel-growth-grid"></div>
+    </div>
 
-      <div style="display: flex; gap: 10px; margin-bottom: 16px;">
-        <input class="input-field" style="font-family: var(--font-mono); font-size: 13px;" id="inject-url-input" placeholder="https://www.instagram.com/reel/XXXXXXXX/" onkeydown="if(event.key==='Enter') triggerInjectLink()">
-        <button class="btn-primary" style="white-space: nowrap; padding: 10px 20px; font-weight: 700;" onclick="triggerInjectLink()">⚡ Ingest & Process Reel</button>
+    <!-- DEDICATED CHANNEL FOCUS CONTROL & NAVIGATION TABS BAR -->
+    <div id="channel-focus-tabs-bar" style="display: none; align-items: center; justify-content: space-between; background: var(--card); border: 1px solid var(--card-border); padding: 12px 18px; border-radius: 10px; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.4);">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="font-size: 11px; font-weight: 700; color: var(--primary); text-transform: uppercase; letter-spacing: 0.8px; background: rgba(56, 139, 253, 0.15); border: 1px solid rgba(56, 139, 253, 0.3); padding: 3px 8px; border-radius: 6px;">Focused Channel</span>
+        <span style="font-size: 16px; font-weight: 800; color: #fff;" id="channel-focus-title">CodeOrCap (@codeorcap)</span>
       </div>
-
-      <!-- LIVE 6-STEP PIPELINE STEPPER -->
-      <div id="live-workflow-stepper" style="background: var(--bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 14px;">
-        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
-          <span style="font-weight: 700; font-size: 12px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px;">Live 6-Step Processing Pipeline</span>
-          <span id="stepper-status-badge" class="status-badge status-published">System Ready</span>
-        </div>
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; text-align: center;">
-          <div class="step-card" id="step-1" style="background: var(--card); padding: 10px 6px; border-radius: 6px; border: 1px solid var(--card-border); transition: all 0.3s;">
-            <div style="font-size: 16px; margin-bottom: 2px;">📥</div>
-            <div style="font-size: 11px; font-weight: 700; color: #fff;">1. Fetch Reel</div>
-            <div style="font-size: 9px; color: var(--text-muted);">Downloading HD</div>
-          </div>
-          <div class="step-card" id="step-2" style="background: var(--card); padding: 10px 6px; border-radius: 6px; border: 1px solid var(--card-border); transition: all 0.3s;">
-            <div style="font-size: 16px; margin-bottom: 2px;">🧠</div>
-            <div style="font-size: 11px; font-weight: 700; color: #fff;">2. AI Analysis</div>
-            <div style="font-size: 9px; color: var(--text-muted);">Hook & Sentiment</div>
-          </div>
-          <div class="step-card" id="step-3" style="background: var(--card); padding: 10px 6px; border-radius: 6px; border: 1px solid var(--card-border); transition: all 0.3s;">
-            <div style="font-size: 16px; margin-bottom: 2px;">🎨</div>
-            <div style="font-size: 11px; font-weight: 700; color: #fff;">3. Captions</div>
-            <div style="font-size: 9px; color: var(--text-muted);">Word Overlays</div>
-          </div>
-          <div class="step-card" id="step-4" style="background: var(--card); padding: 10px 6px; border-radius: 6px; border: 1px solid var(--card-border); transition: all 0.3s;">
-            <div style="font-size: 16px; margin-bottom: 2px;">🎵</div>
-            <div style="font-size: 11px; font-weight: 700; color: #fff;">4. Audio & Check</div>
-            <div style="font-size: 9px; color: var(--text-muted);">AcoustID & BGM</div>
-          </div>
-          <div class="step-card" id="step-5" style="background: var(--card); padding: 10px 6px; border-radius: 6px; border: 1px solid var(--card-border); transition: all 0.3s;">
-            <div style="font-size: 16px; margin-bottom: 2px;">🚀</div>
-            <div style="font-size: 11px; font-weight: 700; color: #fff;">5. Dispatch</div>
-            <div style="font-size: 9px; color: var(--text-muted);">Insta / YT / FB</div>
-          </div>
-          <div class="step-card" id="step-6" style="background: var(--card); padding: 10px 6px; border-radius: 6px; border: 1px solid var(--card-border); transition: all 0.3s;">
-            <div style="font-size: 16px; margin-bottom: 2px;">✅</div>
-            <div style="font-size: 11px; font-weight: 700; color: #fff;">6. Published</div>
-            <div style="font-size: 9px; color: var(--text-muted);">Live Multi-Links</div>
-          </div>
-        </div>
+      <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+        <button class="pill-btn active" id="focused-tab-queue-btn" onclick="switchFocusedChannelTab('queue', this)">⏳ Queue Manager</button>
+        <button class="pill-btn" id="focused-tab-logs-btn" onclick="switchFocusedChannelTab('logs', this)">📜 Console Logs</button>
+        <button class="pill-btn" id="focused-tab-config-btn" onclick="switchFocusedChannelTab('config', this)">⚙️ Channel Config</button>
+        <button class="btn-primary" style="padding: 5px 12px; font-size: 11px; font-weight: 700; background: linear-gradient(135deg, #238636, #2ea043);" onclick="forceStartQueue()">⚡ Force Start Queue</button>
+        <button class="btn-primary" style="padding: 5px 12px; font-size: 11px; font-weight: 700; background: linear-gradient(135deg, #8957e5, #ab7df6);" onclick="restartQueue()">🔄 Restart Queue</button>
       </div>
     </div>
 
-    <!-- MAIN DASHBOARD CONTENT (DEFAULT HOME VIEW) -->
+    <!-- TAB: OVERVIEW & CONTROL -->
     <div id="tab-overview" class="tab-pane active">
       <div id="alerts-container" style="margin-bottom: 20px;"></div>
 
+      <!-- INJECT REEL LINK & LIVE STEPPER -->
+      <div id="inject-workflow-section" class="table-card" style="margin-bottom: 24px; border: 1px solid var(--card-border);">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 10px;">
+          <div>
+            <div style="font-size: 16px; font-weight: 700; color: #fff;">＋ Inject Source Reel & Live Processing Workflow</div>
+            <div style="font-size: 12px; color: var(--text-muted);">Paste Instagram Reel URL to trigger real-time AI transcription, caption rendering, and multi-platform publishing</div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <label style="font-size: 11px; font-weight: 700; color: var(--text-muted);">Target Channel:</label>
+            <select class="input-field" id="inject-target-channel-select" style="width: 160px; padding: 6px 10px; font-weight: 600; font-family: var(--font-sans);"></select>
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 10px; margin-bottom: 16px;">
+          <input class="input-field" style="font-family: var(--font-mono); font-size: 13px;" id="inject-url-input" placeholder="https://www.instagram.com/reel/XXXXXXXX/" onkeydown="if(event.key==='Enter') triggerInjectLink()">
+          <button class="btn-primary" style="white-space: nowrap; padding: 10px 20px; font-weight: 700;" onclick="triggerInjectLink()">⚡ Ingest & Process Reel</button>
+        </div>
+
+        <!-- LIVE 6-STEP PIPELINE STEPPER -->
+        <div id="live-workflow-stepper" style="background: var(--bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 14px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+            <span style="font-weight: 700; font-size: 12px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px;">Live 6-Step Processing Pipeline</span>
+            <span id="stepper-status-badge" class="status-badge status-published">System Ready</span>
+          </div>
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; text-align: center;">
+            <div class="step-card" id="step-1" style="background: var(--card); padding: 10px 6px; border-radius: 6px; border: 1px solid var(--card-border); transition: all 0.3s;">
+              <div style="font-size: 16px; margin-bottom: 2px;">📥</div>
+              <div style="font-size: 11px; font-weight: 700; color: #fff;">1. Fetch Reel</div>
+              <div style="font-size: 9px; color: var(--text-muted);">Downloading HD</div>
+            </div>
+            <div class="step-card" id="step-2" style="background: var(--card); padding: 10px 6px; border-radius: 6px; border: 1px solid var(--card-border); transition: all 0.3s;">
+              <div style="font-size: 16px; margin-bottom: 2px;">🧠</div>
+              <div style="font-size: 11px; font-weight: 700; color: #fff;">2. AI Analysis</div>
+              <div style="font-size: 9px; color: var(--text-muted);">Hook & Sentiment</div>
+            </div>
+            <div class="step-card" id="step-3" style="background: var(--card); padding: 10px 6px; border-radius: 6px; border: 1px solid var(--card-border); transition: all 0.3s;">
+              <div style="font-size: 16px; margin-bottom: 2px;">🎨</div>
+              <div style="font-size: 11px; font-weight: 700; color: #fff;">3. Captions</div>
+              <div style="font-size: 9px; color: var(--text-muted);">Word Overlays</div>
+            </div>
+            <div class="step-card" id="step-4" style="background: var(--card); padding: 10px 6px; border-radius: 6px; border: 1px solid var(--card-border); transition: all 0.3s;">
+              <div style="font-size: 16px; margin-bottom: 2px;">🎵</div>
+              <div style="font-size: 11px; font-weight: 700; color: #fff;">4. Audio & Check</div>
+              <div style="font-size: 9px; color: var(--text-muted);">AcoustID & BGM</div>
+            </div>
+            <div class="step-card" id="step-5" style="background: var(--card); padding: 10px 6px; border-radius: 6px; border: 1px solid var(--card-border); transition: all 0.3s;">
+              <div style="font-size: 16px; margin-bottom: 2px;">🚀</div>
+              <div style="font-size: 11px; font-weight: 700; color: #fff;">5. Dispatch</div>
+              <div style="font-size: 9px; color: var(--text-muted);">Insta / YT / FB</div>
+            </div>
+            <div class="step-card" id="step-6" style="background: var(--card); padding: 10px 6px; border-radius: 6px; border: 1px solid var(--card-border); transition: all 0.3s;">
+              <div style="font-size: 16px; margin-bottom: 2px;">✅</div>
+              <div style="font-size: 11px; font-weight: 700; color: #fff;">6. Published</div>
+              <div style="font-size: 9px; color: var(--text-muted);">Live Multi-Links</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- VIRAL ANALYTICS SECTION -->
-      <div style="margin-bottom: 28px;">
+      <div id="viral-analytics-section" style="margin-bottom: 28px;">
         <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
           <div>
-            <div style="font-size: 18px; font-weight: 700; color: #fff;">🔥 Viral Analytics & Channel Performance</div>
+            <div style="font-size: 18px; font-weight: 800; color: #fff;">🔥 Viral Analytics & Channel Performance</div>
             <div style="font-size: 12px; color: var(--text-muted);">Performance, publishing cadence, and engagement rate metrics</div>
           </div>
           <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
@@ -914,38 +932,9 @@ const HTML = `<!DOCTYPE html>
         </div>
       </div>
 
-      <!-- INGESTION QUEUE TABLE -->
-      <div class="table-card" style="margin-bottom: 24px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 10px;">
-          <div style="font-size: 15px; font-weight: 700; color: #fff;">⏳ Ingestion Queue Manager</div>
-          <div style="display: flex; gap: 6px;">
-            <button class="pill-btn active" data-status="all" onclick="filterQueueStatus('all', this)">All Statuses</button>
-            <button class="pill-btn" data-status="queued" onclick="filterQueueStatus('queued', this)">Queued</button>
-            <button class="pill-btn" data-status="processing" onclick="filterQueueStatus('processing', this)">Processing</button>
-            <button class="pill-btn" data-status="published" onclick="filterQueueStatus('published', this)">Published</button>
-            <button class="pill-btn" data-status="failed" onclick="filterQueueStatus('failed', this)">Failed</button>
-          </div>
-        </div>
-        <div class="table-responsive">
-          <table>
-            <thead>
-              <tr>
-                <th>Source Reel & Time</th>
-                <th>Channel</th>
-                <th>Status & Links</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="queue-table-body">
-              <tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 30px;">Loading queue items...</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- RECENT ACTIVITY LOG TABLE -->
+      <!-- RECENT PROCESSING ACTIVITY LOG TABLE -->
       <div class="table-card">
-        <div style="font-size: 15px; font-weight: 700; color: #fff; margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center;">
+        <div style="font-size: 16px; font-weight: 800; color: #fff; margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center;">
           <span>Recent Processing Activity</span>
           <input class="input-field" style="width: 220px; padding: 6px 12px;" id="activity-search" placeholder="Search activity..." oninput="filterActivityTable()">
         </div>
@@ -966,17 +955,194 @@ const HTML = `<!DOCTYPE html>
       </div>
     </div>
 
+    <!-- TAB: QUEUE MANAGER -->
+    <div id="tab-queue" class="tab-pane">
+      <div class="table-card" style="margin-bottom: 24px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 10px;">
+          <div>
+            <div style="font-size: 18px; font-weight: 800; color: #fff;">⏳ Ingestion Queue Manager</div>
+            <div style="font-size: 12px; color: var(--text-muted);">View, re-order, and manage pending or processed video ingestion items</div>
+          </div>
+          <div style="display: flex; gap: 6px; flex-wrap: wrap; align-items: center;">
+            <button class="pill-btn active" data-status="all" onclick="filterQueueStatus('all', this)">All Statuses</button>
+            <button class="pill-btn" data-status="queued" onclick="filterQueueStatus('queued', this)">Queued</button>
+            <button class="pill-btn" data-status="processing" onclick="filterQueueStatus('processing', this)">Processing</button>
+            <button class="pill-btn" data-status="published" onclick="filterQueueStatus('published', this)">Published</button>
+            <button class="pill-btn" data-status="failed" onclick="filterQueueStatus('failed', this)">Failed</button>
+            <button class="btn-primary" style="padding: 5px 12px; font-size: 11px; font-weight: 700; background: linear-gradient(135deg, #238636, #2ea043);" onclick="forceStartQueue()">⚡ Force Start Queue</button>
+            <button class="btn-primary" style="padding: 5px 12px; font-size: 11px; font-weight: 700; background: linear-gradient(135deg, #8957e5, #ab7df6);" onclick="restartQueue()">🔄 Restart Queue</button>
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th>Source Reel & Time</th>
+                <th>Channel</th>
+                <th>Status & Links</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="queue-table-body">
+              <tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 30px;">Loading queue items...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB: INJECT LINK -->
+    <div id="tab-inject" class="tab-pane">
+      <div class="table-card" style="margin-bottom: 24px;">
+        <div style="font-size: 18px; font-weight: 800; color: #fff; margin-bottom: 6px;">＋ Direct Reel Ingest & Pipeline Execution</div>
+        <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 18px;">Paste Instagram Reel URL directly to trigger real-time AI transcription, caption overlay, and publishing</div>
+        
+        <div style="display: flex; gap: 10px; margin-bottom: 16px;">
+          <input class="input-field" style="font-family: var(--font-mono); font-size: 13px;" id="inject-tab-url-input" placeholder="https://www.instagram.com/reel/XXXXXXXX/" onkeydown="if(event.key==='Enter') triggerInjectLink('inject-tab-url-input')">
+          <button class="btn-primary" style="white-space: nowrap; padding: 10px 20px; font-weight: 700;" onclick="triggerInjectLink('inject-tab-url-input')">⚡ Ingest Reel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB: VIRAL ANALYTICS -->
+    <div id="tab-viral" class="tab-pane">
+      <div style="margin-bottom: 28px;" id="viral-analytics-section">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
+          <div>
+            <div style="font-size: 18px; font-weight: 800; color: #fff;">🔥 Viral Analytics & Channel Performance</div>
+            <div style="font-size: 12px; color: var(--text-muted);">Performance, publishing cadence, and engagement rate metrics</div>
+          </div>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+            <div id="viral-range-pills" style="display: flex; gap: 6px;">
+              <button class="pill-btn" data-range="7d" onclick="filterAnalyticsRange('7d', this)">7d</button>
+              <button class="pill-btn" data-range="14d" onclick="filterAnalyticsRange('14d', this)">14d</button>
+              <button class="pill-btn active" data-range="30d" onclick="filterAnalyticsRange('30d', this)">30d</button>
+              <button class="pill-btn" data-range="90d" onclick="filterAnalyticsRange('90d', this)">90d</button>
+            </div>
+            <button class="btn-icon" onclick="exportViralCsv()">📥 Export CSV</button>
+          </div>
+        </div>
+
+        <!-- 4 ANALYTICS KPI CARDS -->
+        <div class="analytics-kpi-grid" style="margin-bottom: 16px;">
+          <div class="analytics-kpi-card" style="border-top: 2px solid var(--primary);">
+            <div class="analytics-kpi-val" id="kpi-total-views">0</div>
+            <div class="analytics-kpi-lbl">Total Views</div>
+            <div class="analytics-kpi-delta delta-pos" id="kpi-views-delta">↑ 0% vs prev period</div>
+          </div>
+          <div class="analytics-kpi-card" style="border-top: 2px solid var(--success);">
+            <div class="analytics-kpi-val" id="kpi-total-reels">0</div>
+            <div class="analytics-kpi-lbl">Reels Published</div>
+            <div class="analytics-kpi-delta delta-pos" id="kpi-reels-rate">↑ 0 avg/day</div>
+          </div>
+          <div class="analytics-kpi-card" style="border-top: 2px solid var(--warning);">
+            <div class="analytics-kpi-val" id="kpi-avg-er">0%</div>
+            <div class="analytics-kpi-lbl">Avg Engagement Rate</div>
+            <div class="analytics-kpi-delta delta-pos">↑ 0% vs prev period</div>
+          </div>
+          <div class="analytics-kpi-card" style="border-top: 2px solid var(--purple);">
+            <div class="analytics-kpi-val" id="kpi-total-shares">0</div>
+            <div class="analytics-kpi-lbl">Total Shares</div>
+            <div class="analytics-kpi-delta delta-pos" id="kpi-shares-delta">↑ 0% vs prev period</div>
+          </div>
+        </div>
+
+        <!-- MAIN METRIC TREND AREA CHART -->
+        <div class="chart-card" style="margin-bottom: 16px;">
+          <div style="display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 14px; flex-wrap: wrap; gap: 10px;">
+            <div>
+              <div class="chart-title" id="main-chart-title">Views over time</div>
+              <div class="chart-sub">Daily breakdown by channel profile</div>
+            </div>
+            <div style="display: flex; gap: 6px;">
+              <button class="pill-btn active" data-metric="views" onclick="switchAnalyticsMetric('views', this)">Views</button>
+              <button class="pill-btn" data-metric="reels" onclick="switchAnalyticsMetric('reels', this)">Reels</button>
+              <button class="pill-btn" data-metric="er" onclick="switchAnalyticsMetric('er', this)">Eng. Rate</button>
+              <button class="pill-btn" data-metric="shares" onclick="switchAnalyticsMetric('shares', this)">Shares</button>
+            </div>
+          </div>
+          <div class="chart-container"><canvas id="chart-main-metric"></canvas></div>
+        </div>
+
+        <!-- GRID 2: CADENCE BAR CHART & ER LINE CHART -->
+        <div class="graphs-grid-2" style="margin-bottom: 16px;">
+          <div class="chart-card">
+            <div class="chart-title">Reels published per day</div>
+            <div class="chart-sub">Publishing cadence by channel profile</div>
+            <div class="chart-container-sm"><canvas id="chart-daily-cadence"></canvas></div>
+          </div>
+          <div class="chart-card">
+            <div class="chart-title">Engagement rate trend</div>
+            <div class="chart-sub">Likes + comments + saves ÷ total views</div>
+            <div class="chart-container-sm"><canvas id="chart-er-trend"></canvas></div>
+          </div>
+        </div>
+
+        <!-- GRID 2: VIEW SHARE PIE CHART & SHARES MOMENTUM CHART -->
+        <div class="graphs-grid-2" style="margin-bottom: 16px;">
+          <div class="chart-card">
+            <div class="chart-title">View share by channel</div>
+            <div class="chart-sub">Proportion of total views across profiles</div>
+            <div style="display: flex; align-items: center; justify-content: space-around; height: 180px;">
+              <div style="width: 170px; height: 170px; position: relative;"><canvas id="chart-view-share"></canvas></div>
+              <div id="view-share-legend" style="display: flex; flex-direction: column; gap: 10px;"></div>
+            </div>
+          </div>
+          <div class="chart-card">
+            <div class="chart-title">Shares momentum</div>
+            <div class="chart-sub">Viral amplification and social reach over time</div>
+            <div class="chart-container-sm"><canvas id="chart-shares-momentum"></canvas></div>
+          </div>
+        </div>
+
+        <!-- AI INSIGHTS & TOP PERFORMING REELS LEADERBOARD -->
+        <div class="table-card" style="margin-bottom: 16px;">
+          <div style="font-size: 15px; font-weight: 700; color: var(--purple); margin-bottom: 10px;">💡 AI Copywriting Insights & High-CTR Hooks</div>
+          <div id="viral-patterns-content" style="font-family: var(--font-mono); font-size: 12px; color: var(--text); white-space: pre-wrap; background: var(--bg); padding: 14px; border-radius: 8px; border: 1px solid var(--card-border);">Loading AI feedback loop...</div>
+        </div>
+
+        <div class="table-card">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 10px;">
+            <div>
+              <div style="font-size: 15px; font-weight: 700; color: #fff;">🏆 Top Performing Reels Leaderboard</div>
+              <div style="font-size: 11px; color: var(--text-muted);">Ranked by views and viral score in selected period</div>
+            </div>
+            <input class="input-field" style="width: 220px; padding: 6px 12px;" id="viral-search-input" placeholder="Search reels..." oninput="applyViralSearch()">
+          </div>
+          <div class="table-responsive">
+            <table>
+              <thead>
+                <tr>
+                  <th>Rank</th>
+                  <th>Source Reel</th>
+                  <th>Channel</th>
+                  <th>Views</th>
+                  <th>Eng. Rate</th>
+                  <th>Shares</th>
+                  <th>Trend</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="viral-leaderboard-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- TAB: CONFIGURATION -->
     <div id="tab-config" class="tab-pane">
-      <div style="max-width: 720px;">
-        <div style="font-size: 16px; font-weight: 700; color: #fff; margin-bottom: 4px;">Channel Automation Configuration</div>
-        <div style="color: var(--text-muted); margin-bottom: 20px;">Set daily reel limits, posting schedules, and automated retry policies per channel.</div>
+      <div style="max-width: 760px;">
+        <div style="font-size: 18px; font-weight: 800; color: #fff; margin-bottom: 4px;">⚙️ Channel Automation Configuration</div>
+        <div style="color: var(--text-muted); margin-bottom: 20px;">Set daily reel limits, posting schedules, and automated retry policies per channel profile.</div>
         <div id="config-cards-list"></div>
       </div>
     </div>
 
     <!-- TAB: CONSOLE LOGS -->
     <div id="tab-logs" class="tab-pane">
+      <div style="font-size: 18px; font-weight: 800; color: #fff; margin-bottom: 4px;">▶ Console Logs & Real-Time Output</div>
+      <div style="color: var(--text-muted); margin-bottom: 16px;">Live log output from watcher jobs, AI rendering engines, and uploader services</div>
       <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap; gap: 10px;">
         <div style="display: flex; align-items: center; gap: 10px;">
           <input class="input-field" style="width: 260px; padding: 6px 12px;" id="log-filter" placeholder="Filter console logs..." oninput="applyLogFilter()">
@@ -1083,33 +1249,71 @@ const HTML = `<!DOCTYPE html>
     selectedAnalyticsChannel = key;
     queueFilterChannel = key;
 
-    ['all', 'codeorcap', 'storiyum', 'prompt_gag'].forEach(k => {
-      const btn = document.getElementById('focus-btn-' + k);
-      if (btn) {
-        if (k === key) btn.classList.add('active');
-        else btn.classList.remove('active');
-      }
-    });
+    const injectSec = document.getElementById('inject-workflow-section');
+    const viralSec = document.getElementById('viral-analytics-section');
+    const focusedTabsBar = document.getElementById('channel-focus-tabs-bar');
+    const focusedChanTitle = document.getElementById('channel-focus-title');
 
-    const injectSelect: any = document.getElementById('inject-target-channel-select');
+    const channelNames = {
+      all: '🌐 All Channels Network',
+      codeorcap: 'CodeOrCap (@codeorcap)',
+      storiyum: 'Storiyum (@storiyum)',
+      prompt_gag: 'PromptGag (@prompt_gag)'
+    };
+
+    const injectSelect = document.getElementById('inject-target-channel-select');
     if (injectSelect && key !== 'all') {
       injectSelect.value = key;
     }
 
+    if (key === 'all') {
+      if (injectSec) injectSec.style.display = 'block';
+      if (viralSec) viralSec.style.display = 'block';
+      if (focusedTabsBar) focusedTabsBar.style.display = 'none';
+      switchTab('overview');
+    } else {
+      // HIDE Inject Reel & Viral Analytics when focusing on specific channel
+      if (injectSec) injectSec.style.display = 'none';
+      if (viralSec) viralSec.style.display = 'none';
+      if (focusedTabsBar) focusedTabsBar.style.display = 'flex';
+      if (focusedChanTitle) {
+        focusedChanTitle.textContent = channelNames[key] || (key.toUpperCase() + ' Channel');
+      }
+      switchFocusedChannelTab('queue');
+    }
+
+    renderHeaderAudienceCards(globalDashboardData ? globalDashboardData.channels : null);
     if (globalDashboardData) {
-      renderHeaderAudienceCards(globalDashboardData.channels);
       renderQueueTable(globalDashboardData.queue);
       renderActivityTable(globalDashboardData.recentHistory);
-      if (globalDashboardData.viralAnalytics) {
-        renderViralSection(globalDashboardData.viralAnalytics);
-      }
+      renderConfigTab(globalDashboardData.channels);
+    }
+  }
+
+  function switchFocusedChannelTab(subTab, btnEl) {
+    if (btnEl) {
+      document.querySelectorAll('#channel-focus-tabs-bar .pill-btn').forEach(b => b.classList.remove('active'));
+      btnEl.classList.add('active');
     } else {
-      renderHeaderAudienceCards(null);
+      const defaultBtn = document.getElementById('focused-tab-' + subTab + '-btn');
+      if (defaultBtn) {
+        document.querySelectorAll('#channel-focus-tabs-bar .pill-btn').forEach(b => b.classList.remove('active'));
+        defaultBtn.classList.add('active');
+      }
+    }
+
+    if (subTab === 'queue') {
+      switchTab('overview');
+      filterQueueChannel(focusedChannel);
+    } else if (subTab === 'logs') {
+      switchTab('logs');
+    } else if (subTab === 'config') {
+      switchTab('config');
     }
   }
 
   function renderDashboard(data) {
-    const qPending = data.queue ? data.queue.filter((q: any) => q.status === 'queued').length : 0;
+    const qPending = data.queue ? data.queue.filter((q) => q.status === 'queued').length : 0;
     const badgeEl = document.getElementById('nav-badge-queued');
     if (badgeEl) badgeEl.textContent = String(qPending);
 
@@ -1134,12 +1338,37 @@ const HTML = `<!DOCTYPE html>
       { key: 'storiyum', name: 'Storiyum', handle: '@storiyum', color: 'purple', initials: 'ST', igFollowers: 18200, ytSubscribers: 12400 },
       { key: 'prompt_gag', name: 'PromptGag', handle: '@prompt_gag', color: 'warning', initials: 'PG', igFollowers: 9400, ytSubscribers: 6100 }
     ];
-    const list = (channels && channels.length > 0) ? channels : defaultChannels;
+    const rawList = (channels && channels.length > 0) ? channels : defaultChannels;
 
-    const injectSelect: any = document.getElementById('inject-target-channel-select');
+    const defaultIgMap = { codeorcap: 14500, storiyum: 18200, prompt_gag: 9400 };
+    const defaultYtMap = { codeorcap: 9800, storiyum: 12400, prompt_gag: 6100 };
+
+    let totalIg = 0;
+    let totalYt = 0;
+    rawList.forEach((c) => {
+      const ig = (c.igFollowers && c.igFollowers > 0) ? c.igFollowers : (defaultIgMap[c.key] || 12400);
+      const yt = (c.ytSubscribers && c.ytSubscribers > 0) ? c.ytSubscribers : (defaultYtMap[c.key] || 8500);
+      totalIg += ig;
+      totalYt += yt;
+    });
+
+    const allObj = {
+      key: 'all',
+      name: '🌐 All Channels',
+      handle: 'Combined Network',
+      color: 'blue',
+      initials: 'ALL',
+      igFollowers: totalIg,
+      ytSubscribers: totalYt,
+      isAll: true
+    };
+
+    const fullList = [allObj, ...rawList];
+
+    const injectSelect = document.getElementById('inject-target-channel-select');
     if (injectSelect && injectSelect.children.length === 0) {
       injectSelect.innerHTML = '';
-      list.forEach((c: any) => {
+      rawList.forEach((c) => {
         const opt = document.createElement('option');
         opt.value = c.key;
         opt.textContent = c.name + ' (@' + c.key + ')';
@@ -1148,31 +1377,50 @@ const HTML = `<!DOCTYPE html>
       if (focusedChannel !== 'all') injectSelect.value = focusedChannel;
     }
 
-    list.forEach((c: any) => {
+    fullList.forEach((c) => {
       const card = document.createElement('div');
-      card.className = 'table-card';
+      card.className = 'table-card channel-card-item';
+      card.id = 'focus-btn-' + c.key;
       const isFocused = focusedChannel === c.key;
-      card.style.cssText = 'border-top: 3px solid var(--' + (c.color || 'primary') + '); padding: 12px 16px; margin-bottom: 0; cursor: pointer; transition: all 0.2s; ' + (isFocused ? 'box-shadow: 0 0 0 2px var(--primary); background: rgba(88,166,255,0.08);' : '');
+
+      const cardColor = c.color || 'primary';
+      const borderColor = c.isAll ? '#388bfd' : (cardColor === 'purple' ? '#a855f7' : cardColor === 'warning' || cardColor === 'amber' ? '#f59e0b' : '#388bfd');
+      const nicheText = c.isAll ? 'GLOBAL NETWORK' : (c.niche || (c.key === 'codeorcap' ? 'TECH/AI' : c.key === 'storiyum' ? 'STORIES' : 'HUMOR')).toUpperCase();
+
+      card.style.cssText = 'border-top: 4px solid ' + borderColor + '; padding: 18px 20px; margin-bottom: 0; cursor: pointer; transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); position: relative; border-radius: 14px; ' +
+        (isFocused
+          ? 'box-shadow: 0 0 0 2px ' + borderColor + ', 0 12px 32px rgba(56, 139, 253, 0.3); background: rgba(13, 32, 51, 0.98); transform: translateY(-2px);'
+          : 'background: var(--card); opacity: 0.9;');
+
       card.onclick = () => focusChannelProfile(c.key);
 
-      const igVal = c.igFollowers !== undefined ? c.igFollowers : (c.stats?.publishedCount ? (c.stats.publishedCount * 450 + 1200) : 12400);
-      const ytVal = c.ytSubscribers !== undefined ? c.ytSubscribers : (c.stats?.publishedCount ? (c.stats.publishedCount * 310 + 850) : 8500);
+      const igVal = c.isAll ? totalIg : ((c.igFollowers && c.igFollowers > 0) ? c.igFollowers : (defaultIgMap[c.key] || 12400));
+      const ytVal = c.isAll ? totalYt : ((c.ytSubscribers && c.ytSubscribers > 0) ? c.ytSubscribers : (defaultYtMap[c.key] || 8500));
 
-      card.innerHTML = '<div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">' +
-          '<div style="display: flex; align-items: center; gap: 8px;">' +
-            '<div class="avatar-box avatar-' + c.color + '" style="width: 24px; height: 24px; font-size: 10px;">' + c.initials + '</div>' +
-            '<div style="font-weight: 700; color: #fff; font-size: 14px;">' + c.name + '</div>' +
+      const statusBadge = isFocused
+        ? '<span style="font-size: 10px; font-weight: 800; color: #388bfd; background: rgba(56,139,253,0.2); border: 1px solid rgba(56,139,253,0.5); padding: 3px 8px; border-radius: 12px; letter-spacing: 0.5px;">✔ ACTIVE FOCUS</span>'
+        : '<span style="font-size: 10px; font-weight: 600; color: var(--text-dim); background: var(--bg); padding: 3px 8px; border-radius: 12px; border: 1px solid var(--card-border);">Click to Focus</span>';
+
+      card.innerHTML = '<div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;">' +
+          '<div style="display: flex; align-items: center; gap: 10px;">' +
+            '<div class="avatar-box avatar-' + cardColor + '" style="width: 38px; height: 38px; font-size: 14px; font-weight: 800; border-radius: 10px;">' + (c.initials || 'CO') + '</div>' +
+            '<div>' +
+              '<div style="font-weight: 800; color: #fff; font-size: 16px; line-height: 1.2;">' + c.name + ' <span class="code-badge" style="font-size: 9px; vertical-align: middle; margin-left: 4px;">' + nicheText + '</span></div>' +
+              '<div style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); margin-top: 2px;">' + c.handle + '</div>' +
+            '</div>' +
           '</div>' +
-          '<div style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);">' + c.handle + '</div>' +
+          statusBadge +
         '</div>' +
-        '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; text-align: center; background: var(--bg); padding: 8px; border-radius: 6px;">' +
+        '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; text-align: center; background: var(--bg); padding: 12px; border-radius: 10px; border: 1px solid var(--card-border);">' +
           '<div>' +
-            '<div style="font-size: 10px; color: #e1306c; font-weight: 700;">📷 Instagram Followers</div>' +
-            '<div style="font-size: 16px; font-weight: 800; color: #fff; font-family: var(--font-mono); margin-top: 2px;">' + fmtNum(igVal) + '</div>' +
+            '<div style="font-size: 10px; color: #e1306c; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">📷 Instagram</div>' +
+            '<div style="font-size: 20px; font-weight: 800; color: #fff; font-family: var(--font-mono); margin-top: 3px;">' + fmtNum(igVal) + '</div>' +
+            '<div style="font-size: 9px; color: var(--text-muted); font-weight: 600;">Followers</div>' +
           '</div>' +
-          '<div>' +
-            '<div style="font-size: 10px; color: #ff4e4e; font-weight: 700;">▶ YouTube Subscribers</div>' +
-            '<div style="font-size: 16px; font-weight: 800; color: #fff; font-family: var(--font-mono); margin-top: 2px;">' + fmtNum(ytVal) + '</div>' +
+          '<div style="border-left: 1px solid var(--card-border); padding-left: 6px;">' +
+            '<div style="font-size: 10px; color: #ff4e4e; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">▶ YouTube</div>' +
+            '<div style="font-size: 20px; font-weight: 800; color: #fff; font-family: var(--font-mono); margin-top: 3px;">' + fmtNum(ytVal) + '</div>' +
+            '<div style="font-size: 9px; color: var(--text-muted); font-weight: 600;">Subscribers</div>' +
           '</div>' +
         '</div>';
       container.appendChild(card);
@@ -1180,72 +1428,55 @@ const HTML = `<!DOCTYPE html>
   }
 
   function renderChannelsList(channels) {
+    const defaultChannels = [
+      { key: 'codeorcap', name: 'CodeOrCap', color: 'primary', initials: 'CO', queueCount: 0, niche: 'TECH/AI', handle: '@codeorcap', dailyLimit: 6 },
+      { key: 'storiyum', name: 'Storiyum', color: 'purple', initials: 'ST', queueCount: 0, niche: 'STORIES', handle: '@storiyum', dailyLimit: 6 },
+      { key: 'prompt_gag', name: 'PromptGag', color: 'warning', initials: 'PG', queueCount: 0, niche: 'HUMOR', handle: '@prompt_gag', dailyLimit: 6 }
+    ];
+    const list = (channels && channels.length > 0) ? channels : defaultChannels;
+
     const sideList = document.getElementById('sidebar-channels-list');
-    sideList.innerHTML = '';
-    
+    if (sideList) {
+      sideList.innerHTML = '';
+      list.forEach(c => {
+        const item = document.createElement('div');
+        item.className = 'nav-item';
+        item.onclick = () => focusChannelProfile(c.key);
+        item.innerHTML = '<div class="avatar-box avatar-' + (c.color || 'primary') + '" style="width: 20px; height: 20px; font-size: 8px; border-radius: 4px;">' + (c.initials || 'CO') + '</div>' +
+          '<span>' + c.name + '</span>' +
+          '<span class="nav-badge">' + (c.queueCount || 0) + '</span>';
+        sideList.appendChild(item);
+      });
+    }
+
     const pillsList = document.getElementById('queue-channel-pills');
-    pillsList.innerHTML = '<button class="pill-btn ' + (queueFilterChannel === 'all' ? 'active' : '') + '" data-filter="all" onclick="filterQueueChannel(this.dataset.filter, this)">All Channels</button>';
+    if (pillsList) {
+      pillsList.innerHTML = '<button class="pill-btn ' + (queueFilterChannel === 'all' ? 'active' : '') + '" data-filter="all" onclick="filterQueueChannel(this.dataset.filter, this)">All Channels</button>';
+      list.forEach(c => {
+        const pill = document.createElement('button');
+        pill.className = 'pill-btn ' + (queueFilterChannel === c.key ? 'active' : '');
+        pill.dataset.filter = c.key;
+        pill.textContent = c.name;
+        pill.onclick = function() { filterQueueChannel(this.dataset.filter, this); };
+        pillsList.appendChild(pill);
+      });
+    }
 
     const viralChanPills = document.getElementById('viral-channel-pills');
-    viralChanPills.innerHTML = '<button class="pill-btn ' + (selectedAnalyticsChannel === 'all' ? 'active' : '') + '" data-channel="all" onclick="filterAnalyticsChannel(this.dataset.channel, this)">All Channels</button>';
+    if (viralChanPills) {
+      viralChanPills.innerHTML = '<button class="pill-btn ' + (selectedAnalyticsChannel === 'all' ? 'active' : '') + '" data-channel="all" onclick="filterAnalyticsChannel(this.dataset.channel, this)">All Channels</button>';
+      list.forEach(c => {
+        const vPill = document.createElement('button');
+        vPill.className = 'pill-btn ' + (selectedAnalyticsChannel === c.key ? 'active' : '');
+        vPill.dataset.channel = c.key;
+        vPill.textContent = c.name;
+        vPill.onclick = function() { filterAnalyticsChannel(this.dataset.channel, this); };
+        viralChanPills.appendChild(vPill);
+      });
+    }
 
     const cardsContainer = document.getElementById('channels-cards-container');
-    cardsContainer.innerHTML = '';
-
-    channels.forEach(c => {
-      // Sidebar Item
-      const item = document.createElement('div');
-      item.className = 'nav-item';
-      item.onclick = () => { switchTab('queue'); filterQueueChannel(c.key); };
-      item.innerHTML = '<div class="avatar-box avatar-' + c.color + '" style="width: 20px; height: 20px; font-size: 8px; border-radius: 4px;">' + c.initials + '</div>' +
-        '<span>' + c.name + '</span>' +
-        '<span class="nav-badge">' + c.queueCount + '</span>';
-      sideList.appendChild(item);
-
-      // Queue Pill
-      const pill = document.createElement('button');
-      pill.className = 'pill-btn ' + (queueFilterChannel === c.key ? 'active' : '');
-      pill.dataset.filter = c.key;
-      pill.textContent = c.name;
-      pill.onclick = function() { filterQueueChannel(this.dataset.filter, this); };
-      pillsList.appendChild(pill);
-
-      // Viral Channel Pill
-      const vPill = document.createElement('button');
-      vPill.className = 'pill-btn ' + (selectedAnalyticsChannel === c.key ? 'active' : '');
-      vPill.dataset.channel = c.key;
-      vPill.textContent = c.name;
-      vPill.onclick = function() { filterAnalyticsChannel(this.dataset.channel, this); };
-      viralChanPills.appendChild(vPill);
-
-      // Overview Card
-      const card = document.createElement('div');
-      card.className = 'table-card';
-      card.innerHTML = '<div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">' +
-          '<div style="display: flex; align-items: center; gap: 10px;">' +
-            '<div class="avatar-box avatar-' + c.color + '">' + c.initials + '</div>' +
-            '<div>' +
-              '<div style="font-weight: 700; color: #fff; font-size: 15px;">' + c.name + ' <span class="code-badge">' + c.niche + '</span></div>' +
-              '<div style="color: var(--text-muted); font-size: 11px;">' + c.handle + ' · Daily Limit: ' + c.dailyLimit + '/day</div>' +
-            '</div>' +
-          '</div>' +
-          '<button class="btn-icon" data-tab="config" onclick="switchTab(this.dataset.tab, this)">⚙️ Config</button>' +
-        '</div>' +
-        '<div style="background: var(--bg); padding: 12px; border-radius: 8px; margin-bottom: 12px;">' +
-          '<div style="display: flex; justify-content: space-between; font-weight: 600; margin-bottom: 6px;">' +
-            '<span>Batch Progress</span><span>Slot ' + c.currentSlot + ' / ' + c.totalSlots + ' (' + c.progressPct + '%)</span>' +
-          '</div>' +
-          '<div style="height: 8px; background: #21262d; border-radius: 6px; overflow: hidden;">' +
-            '<div style="height: 100%; width: ' + c.progressPct + '%; background: linear-gradient(90deg, var(--primary), var(--purple));"></div>' +
-          '</div>' +
-        '</div>' +
-        '<div style="display: flex; justify-content: space-around; text-align: center;">' +
-          '<div><div style="font-size: 18px; font-weight: 800; font-family: var(--font-mono); color: var(--success);">' + c.stats.publishedCount + '</div><div style="font-size: 10px; color: var(--text-muted);">Published</div></div>' +
-          '<div><div style="font-size: 18px; font-weight: 800; font-family: var(--font-mono); color: var(--warning);">' + c.queueCount + '</div><div style="font-size: 10px; color: var(--text-muted);">In Queue</div></div>' +
-          '<div><div style="font-size: 18px; font-weight: 800; font-family: var(--font-mono); color: var(--purple);">' + c.stats.viralCount + '</div><div style="font-size: 10px; color: var(--text-muted);">Viral Highs</div></div>' +
-        '</div>';
-      cardsContainer.appendChild(card);
-    });
+    if (cardsContainer) cardsContainer.innerHTML = '';
   }
 
   function renderActivityTable(history) {
@@ -1257,7 +1488,17 @@ const HTML = `<!DOCTYPE html>
       return;
     }
 
-    history.forEach(item => {
+    const filtered = history.filter(item => {
+      const pKey = (item.profile_key || item.channel || 'default');
+      return focusedChannel === 'all' || pKey === focusedChannel;
+    });
+
+    if (filtered.length === 0) {
+      tableBody.innerHTML = '<tr><td colspan="3" style="text-align: center; color: var(--text-muted); padding: 20px;">No processing activity records logged for this channel yet.</td></tr>';
+      return;
+    }
+
+    filtered.forEach(item => {
       const tr = document.createElement('tr');
       const ts = fmtDate(item.published_at || item.picked_at);
       const origUrl = item.originalUrl || ('https://www.instagram.com/reel/' + item.shortcode + '/');
@@ -1300,7 +1541,14 @@ const HTML = `<!DOCTYPE html>
     tableBody.innerHTML = '';
 
     if (!queue || queue.length === 0) {
-      tableBody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 30px;">Queue is currently empty. Use "Inject Link" tab to add source reels.</td></tr>';
+      tableBody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 36px 20px;">' +
+        '<div style="font-size: 15px; font-weight: 700; color: #fff; margin-bottom: 6px;">Queue is currently empty</div>' +
+        '<div style="font-size: 12px; margin-bottom: 16px;">Use controls below to trigger immediate execution or restart queue after code updates.</div>' +
+        '<div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">' +
+          '<button class="btn-primary" style="padding: 7px 16px; font-weight: 700; background: linear-gradient(135deg, #238636, #2ea043);" onclick="forceStartQueue()">⚡ Force Start Queue</button>' +
+          '<button class="btn-primary" style="padding: 7px 16px; font-weight: 700; background: linear-gradient(135deg, #8957e5, #ab7df6);" onclick="restartQueue()">🔄 Reset & Restart Queue</button>' +
+        '</div>' +
+      '</td></tr>';
       return;
     }
 
@@ -1311,7 +1559,14 @@ const HTML = `<!DOCTYPE html>
     });
 
     if (filtered.length === 0) {
-      tableBody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 30px;">No queue items match selected filters.</td></tr>';
+      tableBody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 36px 20px;">' +
+        '<div style="font-size: 15px; font-weight: 700; color: #fff; margin-bottom: 6px;">No queue items match selected filters (' + (queueFilterChannel === 'all' ? 'All Channels' : queueFilterChannel) + ')</div>' +
+        '<div style="font-size: 12px; margin-bottom: 16px;">You can force start execution or reset failed items to restart the pipeline cleanly.</div>' +
+        '<div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">' +
+          '<button class="btn-primary" style="padding: 7px 16px; font-weight: 700; background: linear-gradient(135deg, #238636, #2ea043);" onclick="forceStartQueue()">⚡ Force Start Queue</button>' +
+          '<button class="btn-primary" style="padding: 7px 16px; font-weight: 700; background: linear-gradient(135deg, #8957e5, #ab7df6);" onclick="restartQueue()">🔄 Reset & Restart Queue</button>' +
+        '</div>' +
+      '</td></tr>';
       return;
     }
 
@@ -1428,8 +1683,8 @@ const HTML = `<!DOCTYPE html>
   }
 
   async function triggerInjectLink() {
-    const input: any = document.getElementById('inject-url-input');
-    const select: any = document.getElementById('inject-target-channel-select');
+    const input = document.getElementById('inject-url-input');
+    const select = document.getElementById('inject-target-channel-select');
     const url = input ? input.value.trim() : '';
     const targetChannel = select ? select.value : (focusedChannel !== 'all' ? focusedChannel : 'codeorcap');
 
@@ -1461,7 +1716,9 @@ const HTML = `<!DOCTYPE html>
     const container = document.getElementById('config-cards-list');
     container.innerHTML = '';
 
-    channels.forEach(c => {
+    const filtered = channels.filter(c => focusedChannel === 'all' || c.key === focusedChannel);
+
+    filtered.forEach(c => {
       const card = document.createElement('div');
       card.className = 'config-card';
       card.innerHTML = '<div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">' +
@@ -1560,6 +1817,40 @@ const HTML = `<!DOCTYPE html>
       fetchDashboardData();
     } catch {
       showToast('Remove action failed', 'err');
+    }
+  }
+
+  async function forceStartQueue(channelKey) {
+    const pKey = channelKey || queueFilterChannel || focusedChannel || 'codeorcap';
+    showToast('⚡ Initiating force start for queue (' + pKey + ')...', 'info');
+    try {
+      const res = await fetch('/api/force-start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile: pKey })
+      });
+      const data = await res.json();
+      showToast(data.message || '⚡ Queue force-started!', data.success !== false ? 'ok' : 'warn');
+      setTimeout(fetchDashboardData, 1500);
+    } catch {
+      showToast('❌ Failed to force start queue', 'err');
+    }
+  }
+
+  async function restartQueue(channelKey) {
+    const pKey = channelKey || queueFilterChannel || focusedChannel || 'codeorcap';
+    showToast('🔄 Resetting and restarting queue (' + pKey + ')...', 'info');
+    try {
+      const res = await fetch('/api/restart-queue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile: pKey })
+      });
+      const data = await res.json();
+      showToast(data.message || '🔄 Queue restarted successfully!', 'ok');
+      setTimeout(fetchDashboardData, 1500);
+    } catch {
+      showToast('❌ Failed to restart queue', 'err');
     }
   }
 
@@ -1838,8 +2129,6 @@ const HTML = `<!DOCTYPE html>
       data: { labels, datasets: sharesDatasets },
       options: {
         responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { labels: { color: '#8b949e' } } },
         scales: {
           x: { ticks: { color: '#8b949e' }, grid: { display: false } },
           y: { ticks: { color: '#8b949e', callback: v => fmtNum(v) }, grid: { color: '#21262d' } }
@@ -1858,19 +2147,43 @@ const HTML = `<!DOCTYPE html>
     logTotal = 0;
     document.getElementById('log-count').textContent = '0 entries';
   }
+  function isLogMatchingFocusedChannel(text) {
+    if (focusedChannel === 'all') return true;
+    const key = (focusedChannel || '').toLowerCase();
+    const cleanKey = key.replace(/_/g, '');
+    const textLower = (text || '').toLowerCase();
+
+    const allChannelKeys = ['codeorcap', 'storiyum', 'prompt_gag', 'promptgag'];
+    const otherKeys = allChannelKeys.filter(k => k !== key && k !== cleanKey);
+    const isOtherChannel = otherKeys.some(k => textLower.includes(k));
+
+    if (isOtherChannel) return false;
+    return true;
+  }
+
   function applyLogFilter() {
     logFilterStr = document.getElementById('log-filter').value.toLowerCase();
     const container = document.getElementById('log-container');
+    let visibleCount = 0;
     for (const el of container.children) {
-      el.style.display = logFilterStr && !el.dataset.text.includes(logFilterStr) ? 'none' : '';
+      const text = el.dataset.text || '';
+      const matchSearch = !logFilterStr || text.includes(logFilterStr);
+      const matchChannel = isLogMatchingFocusedChannel(text);
+      if (matchSearch && matchChannel) {
+        el.style.display = '';
+        visibleCount++;
+      } else {
+        el.style.display = 'none';
+      }
     }
+    document.getElementById('log-count').textContent = visibleCount + ' entries';
   }
   function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
   function appendLogLine(raw) {
     let o; try { o = JSON.parse(raw); } catch { return; }
     const level = (o.level || 'info').toLowerCase();
-    const ts = (o.timestamp || '').replace('T',' ').replace(/\\.\\d+Z$/, '');
+    const ts = (o.timestamp || '').replace('T',' ').replace(/\.\d+Z$/, '');
     const label = o.label || '';
     const msg = o.message || '';
     const div = document.createElement('div');
@@ -1881,7 +2194,12 @@ const HTML = `<!DOCTYPE html>
       '<span style="font-weight: 700; width: 44px; flex-shrink: 0; text-transform: uppercase; color: ' + (level === 'error' ? '#f85149' : level === 'warn' ? '#d29922' : '#3fb950') + ';">' + level.slice(0,4) + '</span>' +
       '<span style="color: #58a6ff; flex-shrink: 0; min-width: 110px;">[' + esc(label) + ']</span>' +
       '<span style="word-break: break-word; flex: 1;">' + esc(msg) + '</span>';
-    if (logFilterStr && !div.dataset.text.includes(logFilterStr)) div.style.display = 'none';
+    
+    const matchSearch = !logFilterStr || div.dataset.text.includes(logFilterStr);
+    const matchChannel = isLogMatchingFocusedChannel(div.dataset.text);
+    if (!matchSearch || !matchChannel) {
+      div.style.display = 'none';
+    }
     
     const container = document.getElementById('log-container');
     container.appendChild(div);
@@ -1897,6 +2215,7 @@ const HTML = `<!DOCTYPE html>
   }
 
   renderHeaderAudienceCards(null);
+  renderChannelsList(null);
   fetchDashboardData();
   connectSSE();
   setInterval(fetchDashboardData, 10000);
@@ -2033,18 +2352,75 @@ export function startLogServer(): void {
         const pUrl = new URL(url, `http://${req.headers.host || "localhost"}`);
         const pKey = (body.profile || pUrl.searchParams.get("profile") || "codeorcap").toLowerCase();
 
-        const watcher = activeWatchers.get(pKey);
-        if (watcher) {
-          (watcher as any).checkAndRunMissedBatch?.();
+        pipelineLogger.info(
+          `⚡ Real /runwatchnow channel automation pipeline force-started from Control Center UI for profile [${pKey.toUpperCase()}]`,
+          "ControlCenter"
+        );
+
+        if (pKey === 'all') {
+          for (const [k, watcher] of activeWatchers.entries()) {
+            watcher.forceStart().catch((err) => {
+              pipelineLogger.error(`[${k.toUpperCase()}] forceStart workflow failed`, err, "ChannelWatcher");
+            });
+          }
           res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
-          res.end(JSON.stringify({ success: true, message: `⚡ Force-start initiated for [${pKey.toUpperCase()}]!` }));
+          res.end(JSON.stringify({ success: true, message: `⚡ Real /runwatch automation pipeline force-started for ALL profiles network!` }));
         } else {
-          res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
-          res.end(JSON.stringify({ success: false, message: `Watcher for [${pKey}] is not active.` }));
+          const watcher = activeWatchers.get(pKey);
+          if (watcher) {
+            watcher.forceStart().catch((err) => {
+              pipelineLogger.error(`[${pKey.toUpperCase()}] forceStart workflow failed`, err, "ChannelWatcher");
+            });
+            res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+            res.end(JSON.stringify({ success: true, message: `⚡ Real /runwatch automation pipeline force-started for [${pKey.toUpperCase()}]!` }));
+          } else {
+            res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+            res.end(JSON.stringify({ success: false, message: `No active watcher registered for profile [${pKey}].` }));
+          }
         }
-      } catch {
+      } catch (err) {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ success: false, message: "Error triggering force start" }));
+      }
+      return;
+    }
+
+    if (req.method === "POST" && (url === "/api/restart-queue" || url.startsWith("/api/restart-queue?"))) {
+      try {
+        const body = await parseJsonBody(req);
+        const pUrl = new URL(url, `http://${req.headers.host || "localhost"}`);
+        const pKey = (body.profile || pUrl.searchParams.get("profile") || "codeorcap").toLowerCase();
+
+        pipelineLogger.info(
+          `🔄 Ingestion queue reset & real /runwatch automation restarted from Control Center UI for profile [${pKey.toUpperCase()}]`,
+          "ControlCenter"
+        );
+
+        const pool = await getPool();
+        if (pKey === 'all') {
+          await pool.query(`UPDATE reel_history SET failed = false, failed_reason = null`);
+          await pool.query(`UPDATE watch_state SET current_slot = 0`);
+          for (const [k, watcher] of activeWatchers.entries()) {
+            watcher.forceStart().catch((err) => {
+              pipelineLogger.error(`[${k.toUpperCase()}] restartQueue workflow failed`, err, "ChannelWatcher");
+            });
+          }
+        } else {
+          await pool.query(`UPDATE reel_history SET failed = false, failed_reason = null WHERE profile_key = $1 OR channel ILIKE $2`, [pKey, `%${pKey}%`]);
+          await pool.query(`UPDATE watch_state SET current_slot = 0 WHERE profile_key = $1`, [pKey]);
+          const watcher = activeWatchers.get(pKey);
+          if (watcher) {
+            watcher.forceStart().catch((err) => {
+              pipelineLogger.error(`[${pKey.toUpperCase()}] restartQueue workflow failed`, err, "ChannelWatcher");
+            });
+          }
+        }
+
+        res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+        res.end(JSON.stringify({ success: true, message: `🔄 Queue reset & real /runwatch automation restarted for [${pKey.toUpperCase()}]!` }));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: false, message: "Error restarting queue" }));
       }
       return;
     }
@@ -2089,6 +2465,6 @@ export function startLogServer(): void {
   });
 
   server.listen(PORT, "0.0.0.0", () => {
-    console.log(`[LogServer] Production Control Center & Live Logs → http://0.0.0.0:${PORT}`);
+    console.log(`[LogServer] Production Control Center & Live Logs → http://127.0.0.1:${PORT}`);
   });
 }
