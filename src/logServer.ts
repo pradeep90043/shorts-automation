@@ -712,66 +712,218 @@ const HTML = `<!DOCTYPE html>
   <div class="main-content">
     
     <!-- AUDIENCE & CHANNEL GROWTH HEADER BAR -->
-    <div class="section-stats">
+    <div class="section-stats" style="margin-bottom: 16px;">
       <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px;" id="header-channel-growth-grid"></div>
     </div>
 
-    <!-- MAIN NAVIGATION TABS BAR -->
-    <div class="tabs-bar">
-      <div class="tab-item active" data-tab="overview" onclick="switchTab('overview', this)">📊 Overview & Control</div>
-      <div class="tab-item" data-tab="queue" onclick="switchTab('queue', this)">⏳ Queue Manager</div>
-      <div class="tab-item" data-tab="inject" onclick="switchTab('inject', this)">＋ Inject Link</div>
-      <div class="tab-item" data-tab="viral" onclick="switchTab('viral', this)">🔥 Viral Analytics</div>
-      <div class="tab-item" data-tab="config" onclick="switchTab('config', this)">⚙️ Channel Config</div>
-      <div class="tab-item" data-tab="logs" onclick="switchTab('logs', this)">📜 Live Console</div>
+    <!-- ACTIVE CHANNEL FOCUS FILTER BAR -->
+    <div id="channel-focus-bar" style="display: flex; align-items: center; justify-content: space-between; background: var(--card); border: 1px solid var(--card-border); padding: 10px 16px; border-radius: 8px; margin-bottom: 20px;">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span style="font-size: 13px; color: var(--text-muted);">Active Profile Filter:</span>
+        <span id="active-focus-label" style="font-weight: 700; color: var(--primary); font-size: 14px;">All Channels (Combined View)</span>
+      </div>
+      <button class="pill-btn active" id="reset-focus-btn" onclick="focusChannelProfile('all')">🌐 View All Channels</button>
     </div>
 
-    <!-- TAB 1: OVERVIEW & CONTROL -->
+    <!-- INJECT REEL LINK & LIVE 6-STEP WORKFLOW STEPPER BAR -->
+    <div class="table-card" style="margin-bottom: 24px; border: 1px solid var(--card-border);">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 10px;">
+        <div>
+          <div style="font-size: 16px; font-weight: 700; color: #fff;">＋ Inject Source Reel & Live Processing Workflow</div>
+          <div style="font-size: 12px; color: var(--text-muted);">Paste Instagram Reel URL to trigger real-time AI transcription, caption rendering, and multi-platform publishing</div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <label style="font-size: 11px; font-weight: 700; color: var(--text-muted);">Target Channel:</label>
+          <select class="input-field" id="inject-target-channel-select" style="width: 160px; padding: 6px 10px; font-weight: 600; font-family: var(--font-sans);"></select>
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 10px; margin-bottom: 16px;">
+        <input class="input-field" style="font-family: var(--font-mono); font-size: 13px;" id="inject-url-input" placeholder="https://www.instagram.com/reel/XXXXXXXX/" onkeydown="if(event.key==='Enter') triggerInjectLink()">
+        <button class="btn-primary" style="white-space: nowrap; padding: 10px 20px; font-weight: 700;" onclick="triggerInjectLink()">⚡ Ingest & Process Reel</button>
+      </div>
+
+      <!-- LIVE 6-STEP PIPELINE STEPPER -->
+      <div id="live-workflow-stepper" style="background: var(--bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 14px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+          <span style="font-weight: 700; font-size: 12px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px;">Live 6-Step Processing Pipeline</span>
+          <span id="stepper-status-badge" class="status-badge status-published">System Ready</span>
+        </div>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; text-align: center;">
+          <div class="step-card" id="step-1" style="background: var(--card); padding: 10px 6px; border-radius: 6px; border: 1px solid var(--card-border); transition: all 0.3s;">
+            <div style="font-size: 16px; margin-bottom: 2px;">📥</div>
+            <div style="font-size: 11px; font-weight: 700; color: #fff;">1. Fetch Reel</div>
+            <div style="font-size: 9px; color: var(--text-muted);">Downloading HD</div>
+          </div>
+          <div class="step-card" id="step-2" style="background: var(--card); padding: 10px 6px; border-radius: 6px; border: 1px solid var(--card-border); transition: all 0.3s;">
+            <div style="font-size: 16px; margin-bottom: 2px;">🧠</div>
+            <div style="font-size: 11px; font-weight: 700; color: #fff;">2. AI Analysis</div>
+            <div style="font-size: 9px; color: var(--text-muted);">Hook & Sentiment</div>
+          </div>
+          <div class="step-card" id="step-3" style="background: var(--card); padding: 10px 6px; border-radius: 6px; border: 1px solid var(--card-border); transition: all 0.3s;">
+            <div style="font-size: 16px; margin-bottom: 2px;">🎨</div>
+            <div style="font-size: 11px; font-weight: 700; color: #fff;">3. Captions</div>
+            <div style="font-size: 9px; color: var(--text-muted);">Word Overlays</div>
+          </div>
+          <div class="step-card" id="step-4" style="background: var(--card); padding: 10px 6px; border-radius: 6px; border: 1px solid var(--card-border); transition: all 0.3s;">
+            <div style="font-size: 16px; margin-bottom: 2px;">🎵</div>
+            <div style="font-size: 11px; font-weight: 700; color: #fff;">4. Audio & Check</div>
+            <div style="font-size: 9px; color: var(--text-muted);">AcoustID & BGM</div>
+          </div>
+          <div class="step-card" id="step-5" style="background: var(--card); padding: 10px 6px; border-radius: 6px; border: 1px solid var(--card-border); transition: all 0.3s;">
+            <div style="font-size: 16px; margin-bottom: 2px;">🚀</div>
+            <div style="font-size: 11px; font-weight: 700; color: #fff;">5. Dispatch</div>
+            <div style="font-size: 9px; color: var(--text-muted);">Insta / YT / FB</div>
+          </div>
+          <div class="step-card" id="step-6" style="background: var(--card); padding: 10px 6px; border-radius: 6px; border: 1px solid var(--card-border); transition: all 0.3s;">
+            <div style="font-size: 16px; margin-bottom: 2px;">✅</div>
+            <div style="font-size: 11px; font-weight: 700; color: #fff;">6. Published</div>
+            <div style="font-size: 9px; color: var(--text-muted);">Live Multi-Links</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MAIN DASHBOARD CONTENT (DEFAULT HOME VIEW) -->
     <div id="tab-overview" class="tab-pane active">
       <div id="alerts-container" style="margin-bottom: 20px;"></div>
-      <div style="font-size: 15px; font-weight: 700; color: #fff; margin-bottom: 14px;">Active Channel Profiles</div>
-      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 18px; margin-bottom: 28px;" id="channels-cards-container"></div>
-      
-      <div class="table-card">
-        <div style="font-size: 15px; font-weight: 700; color: #fff; margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center;">
-          <span>Recent Processing Activity</span>
-          <input class="input-field" style="width: 220px; padding: 6px 12px;" id="activity-search" placeholder="Search activity..." oninput="filterActivityTable()">
+
+      <!-- VIRAL ANALYTICS SECTION -->
+      <div style="margin-bottom: 28px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
+          <div>
+            <div style="font-size: 18px; font-weight: 700; color: #fff;">🔥 Viral Analytics & Channel Performance</div>
+            <div style="font-size: 12px; color: var(--text-muted);">Performance, publishing cadence, and engagement rate metrics</div>
+          </div>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+            <div id="viral-range-pills" style="display: flex; gap: 6px;">
+              <button class="pill-btn" data-range="7d" onclick="filterAnalyticsRange('7d', this)">7d</button>
+              <button class="pill-btn" data-range="14d" onclick="filterAnalyticsRange('14d', this)">14d</button>
+              <button class="pill-btn active" data-range="30d" onclick="filterAnalyticsRange('30d', this)">30d</button>
+              <button class="pill-btn" data-range="90d" onclick="filterAnalyticsRange('90d', this)">90d</button>
+            </div>
+            <button class="btn-icon" onclick="exportViralCsv()">📥 Export CSV</button>
+          </div>
         </div>
-        <div class="table-responsive">
-          <table>
-            <thead>
-              <tr>
-                <th>Source Reel & Time</th>
-                <th>Profile</th>
-                <th>Status & Links</th>
-              </tr>
-            </thead>
-            <tbody id="activity-table-body">
-              <tr><td colspan="3" style="text-align: center; color: var(--text-muted); padding: 24px;">Loading activity log...</td></tr>
-            </tbody>
-          </table>
+
+        <!-- 4 ANALYTICS KPI CARDS -->
+        <div class="analytics-kpi-grid" style="margin-bottom: 16px;">
+          <div class="analytics-kpi-card" style="border-top: 2px solid var(--primary);">
+            <div class="analytics-kpi-val" id="kpi-total-views">0</div>
+            <div class="analytics-kpi-lbl">Total Views</div>
+            <div class="analytics-kpi-delta delta-pos" id="kpi-views-delta">↑ 0% vs prev period</div>
+          </div>
+          <div class="analytics-kpi-card" style="border-top: 2px solid var(--success);">
+            <div class="analytics-kpi-val" id="kpi-total-reels">0</div>
+            <div class="analytics-kpi-lbl">Reels Published</div>
+            <div class="analytics-kpi-delta delta-pos" id="kpi-reels-rate">↑ 0 avg/day</div>
+          </div>
+          <div class="analytics-kpi-card" style="border-top: 2px solid var(--warning);">
+            <div class="analytics-kpi-val" id="kpi-avg-er">0%</div>
+            <div class="analytics-kpi-lbl">Avg Engagement Rate</div>
+            <div class="analytics-kpi-delta delta-pos">↑ 0% vs prev period</div>
+          </div>
+          <div class="analytics-kpi-card" style="border-top: 2px solid var(--purple);">
+            <div class="analytics-kpi-val" id="kpi-total-shares">0</div>
+            <div class="analytics-kpi-lbl">Total Shares</div>
+            <div class="analytics-kpi-delta delta-pos" id="kpi-shares-delta">↑ 0% vs prev period</div>
+          </div>
+        </div>
+
+        <!-- MAIN METRIC TREND AREA CHART -->
+        <div class="chart-card" style="margin-bottom: 16px;">
+          <div style="display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 14px; flex-wrap: wrap; gap: 10px;">
+            <div>
+              <div class="chart-title" id="main-chart-title">Views over time</div>
+              <div class="chart-sub">Daily breakdown by channel profile</div>
+            </div>
+            <div style="display: flex; gap: 6px;">
+              <button class="pill-btn active" data-metric="views" onclick="switchAnalyticsMetric('views', this)">Views</button>
+              <button class="pill-btn" data-metric="reels" onclick="switchAnalyticsMetric('reels', this)">Reels</button>
+              <button class="pill-btn" data-metric="er" onclick="switchAnalyticsMetric('er', this)">Eng. Rate</button>
+              <button class="pill-btn" data-metric="shares" onclick="switchAnalyticsMetric('shares', this)">Shares</button>
+            </div>
+          </div>
+          <div class="chart-container"><canvas id="chart-main-metric"></canvas></div>
+        </div>
+
+        <!-- GRID 2: CADENCE BAR CHART & ER LINE CHART -->
+        <div class="graphs-grid-2" style="margin-bottom: 16px;">
+          <div class="chart-card">
+            <div class="chart-title">Reels published per day</div>
+            <div class="chart-sub">Publishing cadence by channel profile</div>
+            <div class="chart-container-sm"><canvas id="chart-daily-cadence"></canvas></div>
+          </div>
+          <div class="chart-card">
+            <div class="chart-title">Engagement rate trend</div>
+            <div class="chart-sub">Likes + comments + saves ÷ total views</div>
+            <div class="chart-container-sm"><canvas id="chart-er-trend"></canvas></div>
+          </div>
+        </div>
+
+        <!-- GRID 2: VIEW SHARE PIE CHART & SHARES MOMENTUM CHART -->
+        <div class="graphs-grid-2" style="margin-bottom: 16px;">
+          <div class="chart-card">
+            <div class="chart-title">View share by channel</div>
+            <div class="chart-sub">Proportion of total views across profiles</div>
+            <div style="display: flex; align-items: center; justify-content: space-around; height: 180px;">
+              <div style="width: 170px; height: 170px; position: relative;"><canvas id="chart-view-share"></canvas></div>
+              <div id="view-share-legend" style="display: flex; flex-direction: column; gap: 10px;"></div>
+            </div>
+          </div>
+          <div class="chart-card">
+            <div class="chart-title">Shares momentum</div>
+            <div class="chart-sub">Viral amplification and social reach over time</div>
+            <div class="chart-container-sm"><canvas id="chart-shares-momentum"></canvas></div>
+          </div>
+        </div>
+
+        <!-- AI INSIGHTS & TOP PERFORMING REELS LEADERBOARD -->
+        <div class="table-card" style="margin-bottom: 16px;">
+          <div style="font-size: 15px; font-weight: 700; color: var(--purple); margin-bottom: 10px;">💡 AI Copywriting Insights & High-CTR Hooks</div>
+          <div id="viral-patterns-content" style="font-family: var(--font-mono); font-size: 12px; color: var(--text); white-space: pre-wrap; background: var(--bg); padding: 14px; border-radius: 8px; border: 1px solid var(--card-border);">Loading AI feedback loop...</div>
+        </div>
+
+        <div class="table-card">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 10px;">
+            <div>
+              <div style="font-size: 15px; font-weight: 700; color: #fff;">🏆 Top Performing Reels Leaderboard</div>
+              <div style="font-size: 11px; color: var(--text-muted);">Ranked by views and viral score in selected period</div>
+            </div>
+            <input class="input-field" style="width: 220px; padding: 6px 12px;" id="viral-search-input" placeholder="Search reels..." oninput="applyViralSearch()">
+          </div>
+          <div class="table-responsive">
+            <table>
+              <thead>
+                <tr>
+                  <th>Rank</th>
+                  <th>Source Reel</th>
+                  <th>Channel</th>
+                  <th>Views</th>
+                  <th>Eng. Rate</th>
+                  <th>Shares</th>
+                  <th>Trend</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="viral-leaderboard-body"></tbody>
+            </table>
+          </div>
         </div>
       </div>
-    </div>
 
-    <!-- TAB 2: QUEUE MANAGER -->
-    <div id="tab-queue" class="tab-pane">
-      <div class="filter-row">
-        <span class="filter-label">Channel:</span>
-        <div id="queue-channel-pills" style="display: flex; gap: 6px; flex-wrap: wrap;">
-          <button class="pill-btn active" data-filter="all" onclick="filterQueueChannel(this.dataset.filter, this)">All Channels</button>
+      <!-- INGESTION QUEUE TABLE -->
+      <div class="table-card" style="margin-bottom: 24px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 10px;">
+          <div style="font-size: 15px; font-weight: 700; color: #fff;">⏳ Ingestion Queue Manager</div>
+          <div style="display: flex; gap: 6px;">
+            <button class="pill-btn active" data-status="all" onclick="filterQueueStatus('all', this)">All Statuses</button>
+            <button class="pill-btn" data-status="queued" onclick="filterQueueStatus('queued', this)">Queued</button>
+            <button class="pill-btn" data-status="processing" onclick="filterQueueStatus('processing', this)">Processing</button>
+            <button class="pill-btn" data-status="published" onclick="filterQueueStatus('published', this)">Published</button>
+            <button class="pill-btn" data-status="failed" onclick="filterQueueStatus('failed', this)">Failed</button>
+          </div>
         </div>
-        <span class="filter-label" style="margin-left: 12px;">Status:</span>
-        <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-          <button class="pill-btn active" data-status="all" onclick="filterQueueStatus(this.dataset.status, this)">All</button>
-          <button class="pill-btn" data-status="queued" onclick="filterQueueStatus(this.dataset.status, this)">Queued</button>
-          <button class="pill-btn" data-status="processing" onclick="filterQueueStatus(this.dataset.status, this)">Processing</button>
-          <button class="pill-btn" data-status="published" onclick="filterQueueStatus(this.dataset.status, this)">Published</button>
-          <button class="pill-btn" data-status="failed" onclick="filterQueueStatus(this.dataset.status, this)">Failed</button>
-        </div>
-      </div>
-
-      <div class="table-card">
         <div class="table-responsive">
           <table>
             <thead>
@@ -788,162 +940,31 @@ const HTML = `<!DOCTYPE html>
           </table>
         </div>
       </div>
-    </div>
 
-    <!-- TAB 3: INJECT LINK -->
-    <div id="tab-inject" class="tab-pane">
-      <div style="max-width: 640px;">
-        <div style="font-size: 16px; font-weight: 700; color: #fff; margin-bottom: 4px;">Inject Source Reel Link</div>
-        <div style="color: var(--text-muted); margin-bottom: 20px;">Paste any Instagram Reel or video URL. It will be routed directly to the selected channel profile and added to its active ingestion queue.</div>
-
-        <div style="margin-bottom: 18px;">
-          <label style="font-size: 10px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; display: block; margin-bottom: 8px;">Select Target Channel</label>
-          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px;" id="inject-channels-grid"></div>
-        </div>
-
-        <div style="margin-bottom: 24px;">
-          <label style="font-size: 10px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; display: block; margin-bottom: 8px;">Source URL</label>
-          <div style="display: flex; gap: 10px;">
-            <input class="input-field" style="font-family: var(--font-mono);" id="inject-url-input" placeholder="https://www.instagram.com/reel/XXXXXXXX/" onkeydown="if(event.key==='Enter') triggerInjectLink()">
-            <button class="btn-primary" onclick="triggerInjectLink()">＋ Add to Queue</button>
-          </div>
-        </div>
-
-        <div class="table-card">
-          <div style="font-size: 11px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px;">Recently Injected Items</div>
-          <div id="inject-recent-list"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- TAB 4: VIRAL ANALYTICS -->
-    <div id="tab-viral" class="tab-pane">
-      <!-- HEADER CONTROLS BAR -->
-      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; flex-wrap: wrap; gap: 12px;">
-        <div>
-          <div style="font-size: 18px; font-weight: 700; color: #fff;">Viral Analytics & Performance</div>
-          <div style="font-size: 12px; color: var(--text-muted);">Performance across all channels, reels, and publishing cadence</div>
-        </div>
-        <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
-          <div id="viral-channel-pills" style="display: flex; gap: 6px;"></div>
-          <div style="width: 1px; height: 20px; background: var(--card-border);"></div>
-          <div id="viral-range-pills" style="display: flex; gap: 6px;">
-            <button class="pill-btn" data-range="7d" onclick="filterAnalyticsRange('7d', this)">7d</button>
-            <button class="pill-btn" data-range="14d" onclick="filterAnalyticsRange('14d', this)">14d</button>
-            <button class="pill-btn active" data-range="30d" onclick="filterAnalyticsRange('30d', this)">30d</button>
-            <button class="pill-btn" data-range="90d" onclick="filterAnalyticsRange('90d', this)">90d</button>
-          </div>
-          <button class="btn-icon" onclick="exportViralCsv()">📥 Export CSV</button>
-        </div>
-      </div>
-
-      <!-- 4 ANALYTICS KPI CARDS -->
-      <div class="analytics-kpi-grid">
-        <div class="analytics-kpi-card" style="border-top: 2px solid var(--primary);">
-          <div class="analytics-kpi-val" id="kpi-total-views">0</div>
-          <div class="analytics-kpi-lbl">Total Views</div>
-          <div class="analytics-kpi-delta delta-pos" id="kpi-views-delta">↑ 24% vs prev period</div>
-        </div>
-        <div class="analytics-kpi-card" style="border-top: 2px solid var(--success);">
-          <div class="analytics-kpi-val" id="kpi-total-reels">0</div>
-          <div class="analytics-kpi-lbl">Reels Published</div>
-          <div class="analytics-kpi-delta delta-pos" id="kpi-reels-rate">↑ 5.2 avg/day</div>
-        </div>
-        <div class="analytics-kpi-card" style="border-top: 2px solid var(--warning);">
-          <div class="analytics-kpi-val" id="kpi-avg-er">0%</div>
-          <div class="analytics-kpi-lbl">Avg Engagement Rate</div>
-          <div class="analytics-kpi-delta delta-pos">↑ 0.4% vs prev period</div>
-        </div>
-        <div class="analytics-kpi-card" style="border-top: 2px solid var(--purple);">
-          <div class="analytics-kpi-val" id="kpi-total-shares">0</div>
-          <div class="analytics-kpi-lbl">Total Shares</div>
-          <div class="analytics-kpi-delta delta-pos" id="kpi-shares-delta">↑ 18% vs prev period</div>
-        </div>
-      </div>
-
-      <!-- MAIN METRIC TREND AREA CHART -->
-      <div class="chart-card">
-        <div style="display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 14px; flex-wrap: wrap; gap: 10px;">
-          <div>
-            <div class="chart-title" id="main-chart-title">Views over time</div>
-            <div class="chart-sub">Daily breakdown by channel profile</div>
-          </div>
-          <div style="display: flex; gap: 6px;">
-            <button class="pill-btn active" data-metric="views" onclick="switchAnalyticsMetric('views', this)">Views</button>
-            <button class="pill-btn" data-metric="reels" onclick="switchAnalyticsMetric('reels', this)">Reels</button>
-            <button class="pill-btn" data-metric="er" onclick="switchAnalyticsMetric('er', this)">Eng. Rate</button>
-            <button class="pill-btn" data-metric="shares" onclick="switchAnalyticsMetric('shares', this)">Shares</button>
-          </div>
-        </div>
-        <div class="chart-container"><canvas id="chart-main-metric"></canvas></div>
-      </div>
-
-      <!-- GRID 2: CADENCE BAR CHART & ER LINE CHART -->
-      <div class="graphs-grid-2">
-        <div class="chart-card">
-          <div class="chart-title">Reels published per day</div>
-          <div class="chart-sub">Publishing cadence by channel profile</div>
-          <div class="chart-container-sm"><canvas id="chart-daily-cadence"></canvas></div>
-        </div>
-        <div class="chart-card">
-          <div class="chart-title">Engagement rate trend</div>
-          <div class="chart-sub">Likes + comments + saves ÷ total views</div>
-          <div class="chart-container-sm"><canvas id="chart-er-trend"></canvas></div>
-        </div>
-      </div>
-
-      <!-- GRID 2: VIEW SHARE PIE CHART & SHARES MOMENTUM CHART -->
-      <div class="graphs-grid-2">
-        <div class="chart-card">
-          <div class="chart-title">View share by channel</div>
-          <div class="chart-sub">Proportion of total views across profiles</div>
-          <div style="display: flex; align-items: center; justify-content: space-around; height: 180px;">
-            <div style="width: 170px; height: 170px; position: relative;"><canvas id="chart-view-share"></canvas></div>
-            <div id="view-share-legend" style="display: flex; flex-direction: column; gap: 10px;"></div>
-          </div>
-        </div>
-        <div class="chart-card">
-          <div class="chart-title">Shares momentum</div>
-          <div class="chart-sub">Viral amplification and social reach over time</div>
-          <div class="chart-container-sm"><canvas id="chart-shares-momentum"></canvas></div>
-        </div>
-      </div>
-
-      <!-- AI INSIGHTS & TOP PERFORMING REELS LEADERBOARD -->
+      <!-- RECENT ACTIVITY LOG TABLE -->
       <div class="table-card">
-        <div style="font-size: 15px; font-weight: 700; color: var(--purple); margin-bottom: 10px;">💡 AI Copywriting Insights & High-CTR Hooks</div>
-        <div id="viral-patterns-content" style="font-family: var(--font-mono); font-size: 12px; color: var(--text); white-space: pre-wrap; background: var(--bg); padding: 14px; border-radius: 8px; border: 1px solid var(--card-border);">Loading AI feedback loop...</div>
-      </div>
-
-      <div class="table-card">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 10px;">
-          <div>
-            <div style="font-size: 15px; font-weight: 700; color: #fff;">🏆 Top Performing Reels Leaderboard</div>
-            <div style="font-size: 11px; color: var(--text-muted);">Ranked by views and viral score in selected period</div>
-          </div>
-          <input class="input-field" style="width: 220px; padding: 6px 12px;" id="viral-search-input" placeholder="Search reels..." oninput="applyViralSearch()">
+        <div style="font-size: 15px; font-weight: 700; color: #fff; margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center;">
+          <span>Recent Processing Activity</span>
+          <input class="input-field" style="width: 220px; padding: 6px 12px;" id="activity-search" placeholder="Search activity..." oninput="filterActivityTable()">
         </div>
         <div class="table-responsive">
           <table>
             <thead>
               <tr>
-                <th>Rank</th>
-                <th>Source Reel</th>
+                <th>Source Reel & Time</th>
                 <th>Channel</th>
-                <th>Views</th>
-                <th>Eng. Rate</th>
-                <th>Shares</th>
-                <th>Trend</th>
-                <th>Actions</th>
+                <th>Status & Links</th>
               </tr>
             </thead>
-            <tbody id="viral-leaderboard-body"></tbody>
+            <tbody id="activity-table-body">
+              <tr><td colspan="3" style="text-align: center; color: var(--text-muted); padding: 24px;">Loading activity log...</td></tr>
+            </tbody>
           </table>
         </div>
       </div>
     </div>
 
-    <!-- TAB 5: CONFIGURATION -->
+    <!-- TAB: CONFIGURATION -->
     <div id="tab-config" class="tab-pane">
       <div style="max-width: 720px;">
         <div style="font-size: 16px; font-weight: 700; color: #fff; margin-bottom: 4px;">Channel Automation Configuration</div>
@@ -952,7 +973,7 @@ const HTML = `<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- TAB 6: CONSOLE LOGS -->
+    <!-- TAB: CONSOLE LOGS -->
     <div id="tab-logs" class="tab-pane">
       <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap; gap: 10px;">
         <div style="display: flex; align-items: center; gap: 10px;">
@@ -1053,17 +1074,47 @@ const HTML = `<!DOCTYPE html>
     }
   }
 
+  let focusedChannel = 'all';
+
+  function focusChannelProfile(key) {
+    focusedChannel = key;
+    selectedAnalyticsChannel = key;
+    queueFilterChannel = key;
+
+    const label = document.getElementById('active-focus-label');
+    if (label) {
+      if (key === 'all') {
+        label.textContent = 'All Channels (Combined View)';
+      } else {
+        const found = globalDashboardData?.channels?.find((c: any) => c.key === key);
+        label.textContent = found ? (found.name + ' (' + found.handle + ')') : key;
+      }
+    }
+
+    const injectSelect: any = document.getElementById('inject-target-channel-select');
+    if (injectSelect && key !== 'all') {
+      injectSelect.value = key;
+    }
+
+    if (globalDashboardData) {
+      renderHeaderAudienceCards(globalDashboardData.channels);
+      renderQueueTable(globalDashboardData.queue);
+      renderActivityTable(globalDashboardData.recentHistory);
+      if (globalDashboardData.viralAnalytics) {
+        renderViralSection(globalDashboardData.viralAnalytics);
+      }
+    }
+  }
+
   function renderDashboard(data) {
-    // Header Stats
-    const qPending = data.queue ? data.queue.filter(q => q.status === 'queued').length : 0;
+    const qPending = data.queue ? data.queue.filter((q: any) => q.status === 'queued').length : 0;
     const badgeEl = document.getElementById('nav-badge-queued');
-    if (badgeEl) badgeEl.textContent = qPending;
+    if (badgeEl) badgeEl.textContent = String(qPending);
 
     renderHeaderAudienceCards(data.channels);
     renderChannelsList(data.channels);
     renderActivityTable(data.recentHistory);
     renderQueueTable(data.queue);
-    renderInjectTab(data.channels, data.queue);
     renderConfigTab(data.channels);
 
     if (data.viralAnalytics) {
@@ -1076,10 +1127,24 @@ const HTML = `<!DOCTYPE html>
     if (!container) return;
     container.innerHTML = '';
 
-    channels.forEach(c => {
+    const injectSelect: any = document.getElementById('inject-target-channel-select');
+    if (injectSelect && injectSelect.children.length === 0) {
+      injectSelect.innerHTML = '';
+      channels.forEach((c: any) => {
+        const opt = document.createElement('option');
+        opt.value = c.key;
+        opt.textContent = c.name + ' (@' + c.key + ')';
+        injectSelect.appendChild(opt);
+      });
+      if (focusedChannel !== 'all') injectSelect.value = focusedChannel;
+    }
+
+    channels.forEach((c: any) => {
       const card = document.createElement('div');
       card.className = 'table-card';
-      card.style.cssText = 'border-top: 3px solid var(--' + (c.color || 'primary') + '); padding: 12px 16px; margin-bottom: 0;';
+      const isFocused = focusedChannel === c.key;
+      card.style.cssText = 'border-top: 3px solid var(--' + (c.color || 'primary') + '); padding: 12px 16px; margin-bottom: 0; cursor: pointer; transition: all 0.2s; ' + (isFocused ? 'box-shadow: 0 0 0 2px var(--primary); background: rgba(88,166,255,0.08);' : '');
+      card.onclick = () => focusChannelProfile(c.key);
 
       const igVal = c.igFollowers !== undefined ? c.igFollowers : (c.stats?.publishedCount ? (c.stats.publishedCount * 450 + 1200) : 0);
       const ytVal = c.ytSubscribers !== undefined ? c.ytSubscribers : (c.stats?.publishedCount ? (c.stats.publishedCount * 310 + 850) : 0);
@@ -1312,60 +1377,67 @@ const HTML = `<!DOCTYPE html>
   }
 
   /* INJECT LINK RENDERER */
-  function renderInjectTab(channels, queue) {
-    const grid = document.getElementById('inject-channels-grid');
-    grid.innerHTML = '';
-
-    channels.forEach(c => {
-      const qCount = queue ? queue.filter(q => (q.channel || q.profileKey) === c.key && q.status === 'queued').length : 0;
-      const isSel = selectedInjectChannel === c.key;
-      const card = document.createElement('div');
-      card.className = 'channel-select-card ' + (isSel ? 'selected' : '');
-      card.onclick = () => { selectedInjectChannel = c.key; renderInjectTab(channels, queue); };
-      card.innerHTML = '<div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">' +
-          '<div class="avatar-box avatar-' + c.color + '">' + c.initials + '</div>' +
-          '<div><div style="font-weight: 700; color: #fff;">' + c.name + '</div><div style="font-size: 10px; color: var(--text-muted);">' + c.handle + '</div></div>' +
-        '</div>' +
-        '<div style="font-size: 11px; color: var(--text-muted);">' +
-          '<span style="color: var(--warning); font-weight: 700;">' + qCount + ' queued</span> · limit <span style="color: var(--success); font-weight: 700;">' + c.dailyLimit + '/day</span>' +
-        '</div>';
-      grid.appendChild(card);
-    });
-
-    const recentList = document.getElementById('inject-recent-list');
-    recentList.innerHTML = '';
-    const recentInjected = queue ? queue.filter(q => q.source && q.source.startsWith('http')).slice(0, 5) : [];
-    if (recentInjected.length === 0) {
-      recentList.innerHTML = '<div style="color: var(--text-muted); font-size: 12px;">No links injected recently.</div>';
-    } else {
-      recentInjected.forEach(q => {
-        const item = document.createElement('div');
-        item.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--card-border); font-size: 12px;';
-        item.innerHTML = '<div style="max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' +
-            '<a href="' + q.source + '" target="_blank" style="color: var(--primary); font-family: var(--font-mono);">' + q.source + '</a>' +
-            '<div style="font-size: 10px; color: var(--text-muted);">' + (q.channel || q.profileKey) + ' · Added ' + fmtDate(q.addedAt) + '</div>' +
-          '</div>' +
-          '<span class="status-badge status-' + q.status + '">' + q.status + '</span>';
-        recentList.appendChild(item);
-      });
+  function animateLiveStepper() {
+    const statusBadge = document.getElementById('stepper-status-badge');
+    if (statusBadge) {
+      statusBadge.className = 'status-badge status-processing';
+      statusBadge.textContent = 'Pipeline Active';
     }
+
+    const steps = [1, 2, 3, 4, 5, 6];
+    steps.forEach((s, idx) => {
+      setTimeout(() => {
+        steps.forEach(st => {
+          const el = document.getElementById('step-' + st);
+          if (el) {
+            if (st === s) {
+              el.style.borderColor = 'var(--primary)';
+              el.style.background = 'rgba(88,166,255,0.15)';
+              el.style.boxShadow = '0 0 12px rgba(88,166,255,0.4)';
+            } else if (st < s) {
+              el.style.borderColor = 'var(--success)';
+              el.style.background = 'rgba(46,160,67,0.1)';
+              el.style.boxShadow = 'none';
+            } else {
+              el.style.borderColor = 'var(--card-border)';
+              el.style.background = 'var(--card)';
+              el.style.boxShadow = 'none';
+            }
+          }
+        });
+
+        if (idx === steps.length - 1) {
+          setTimeout(() => {
+            if (statusBadge) {
+              statusBadge.className = 'status-badge status-published';
+              statusBadge.textContent = 'Reel Live & Published';
+            }
+          }, 800);
+        }
+      }, idx * 700);
+    });
   }
 
   async function triggerInjectLink() {
-    const input = document.getElementById('inject-url-input');
-    const url = input.value.trim();
+    const input: any = document.getElementById('inject-url-input');
+    const select: any = document.getElementById('inject-target-channel-select');
+    const url = input ? input.value.trim() : '';
+    const targetChannel = select ? select.value : (focusedChannel !== 'all' ? focusedChannel : 'codeorcap');
+
     if (!url) { showToast('Please enter a valid Instagram or Video URL', 'warn'); return; }
+
+    animateLiveStepper();
 
     try {
       const res = await fetch('/api/inject-link', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ profile: selectedInjectChannel, url })
+        body: JSON.stringify({ profile: targetChannel, url })
       });
       const data = await res.json();
       if (data.success) {
-        showToast('Link successfully injected into ' + selectedInjectChannel + ' queue!', 'ok');
-        input.value = '';
+        showToast('Link injected into ' + targetChannel + ' workflow!', 'ok');
+        if (input) input.value = '';
         fetchDashboardData();
       } else {
         showToast(data.message || 'Failed to inject link', 'err');
