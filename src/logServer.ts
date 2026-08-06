@@ -179,8 +179,10 @@ async function getDashboardData() {
 
   const defaultFallbackProfiles = [
     { key: "codeorcap", name: "CodeOrCap", handle: "@codeorcap", niche: "tech", initials: "CO", color: "teal", dailyLimit: 6, active: true },
+    { key: "storiyum", name: "Storiyum", handle: "@storiyum", niche: "stories", initials: "ST", color: "purple", dailyLimit: 6, active: true },
+    { key: "prompt_gag", name: "PromptGag", handle: "@prompt_gag", niche: "humor", initials: "PG", color: "amber", dailyLimit: 6, active: true },
     { key: "viraltech", name: "ViralTech", handle: "@viraltech", niche: "viral", initials: "VT", color: "blue", dailyLimit: 4, active: true },
-    { key: "shortclips", name: "ShortClips", handle: "@shortclips", niche: "clips", initials: "SC", color: "purple", dailyLimit: 8, active: true },
+    { key: "shortclips", name: "ShortClips", handle: "@shortclips", niche: "clips", initials: "SC", color: "rose", dailyLimit: 8, active: true },
   ];
 
   defaultFallbackProfiles.forEach((fb, idx) => {
@@ -237,7 +239,7 @@ async function getDashboardData() {
     }
   });
 
-  const channelKeys = Array.from(new Set([...channels.map(c => c.key), "codeorcap", "viraltech", "shortclips"]));
+  const channelKeys = Array.from(new Set([...channels.map(c => c.key), "codeorcap", "storiyum", "prompt_gag", "viraltech", "shortclips"]));
 
   // Compile full Queue items across all watch_states & reelHistory
   const compiledQueue: any[] = [];
