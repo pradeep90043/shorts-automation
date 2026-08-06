@@ -10,7 +10,17 @@ import { computeViralScore } from "./utils/viralScore";
 
 const PORT = parseInt(process.env.LOG_SERVER_PORT || "3002", 10);
 const COMBINED_LOG = path.join(config.paths.logDir, "combined.log");
-const TAIL_LINES = 300;
+const TAIL_LINES = 350;
+
+function parseJsonBody(req: http.IncomingMessage): Promise<any> {
+  return new Promise((resolve) => {
+    let body = "";
+    req.on("data", (chunk) => { body += chunk; });
+    req.on("end", () => {
+      try { resolve(JSON.parse(body || "{}")); } catch { resolve({}); }
+    });
+  });
+}
 
 function readLastLines(filePath: string, n: number): string[] {
   try {
@@ -81,7 +91,7 @@ async function getDashboardData() {
 
   const todayStr = new Date().toISOString().slice(0, 10);
 
-  const channels = config.profiles.map(profile => {
+  const channels = config.profiles.map((profile, idx) => {
     const pKey = (profile.key || profile.brandName).toLowerCase();
     const wState = watchStates.find(w => w.profile_key === pKey);
 
@@ -102,14 +112,21 @@ async function getDashboardData() {
     const publishedCount = profileHistory.filter(r => !r.failed).length;
     const failedCount = profileHistory.filter(r => r.failed).length;
 
+    const colors = ["teal", "blue", "purple", "amber", "rose"];
+    const avatarColor = colors[idx % colors.length];
+
     return {
       key: pKey,
       name: profile.brandName,
       handle: profile.handle || `@${pKey}`,
       niche: profile.theme?.niche || "tech",
+      initials: profile.brandName.slice(0, 2).toUpperCase(),
+      color: avatarColor,
       status,
+      active: true,
       isWatchOnly: profile.isWatchOnly,
       dailyTarget: profile.watch?.dailyCount || 6,
+      dailyLimit: profile.watch?.dailyCount || 6,
       scheduleTime: profile.watch?.scheduleTime || "09:00",
       gapHours: profile.watch?.gapHours || 3,
       queueCount: queue.length,
@@ -136,51 +153,72 @@ async function getDashboardData() {
     };
   });
 
+  // Compile full Queue items across all watch_states & reelHistory
+  const compiledQueue: any[] = [];
+
+  watchStates.forEach(ws => {
+    const qList = ws.queue || [];
+    qList.forEach((q: any, idx: number) => {
+      const sc = q.shortcode || q.url?.split("/reel/")[1]?.split("/")[0] || q.url?.split("/p/")[1]?.split("/")[0] || `q_${Math.random().toString(36).substr(2, 6)}`;
+      compiledQueue.push({
+        id: `q_${ws.profile_key}_${sc}`,
+        shortcode: sc,
+        channel: ws.profile_key,
+        source: q.url || `https://www.instagram.com/reel/${sc}/`,
+        addedAt: q.pickedAt || new Date().toISOString(),
+        status: idx === 0 ? "processing" : "queued",
+        slot: idx + 1,
+        playCount: q.playCount || q.play_count || 12500,
+        likeCount: q.likeCount || q.like_count || 1420,
+        commentCount: q.commentCount || q.comment_count || 98
+      });
+    });
+  });
+
+  reelHistory.forEach((rh, idx) => {
+    compiledQueue.push({
+      id: `h_${rh.shortcode}_${rh.profile_key}`,
+      shortcode: rh.shortcode,
+      channel: rh.profile_key || "codeorcap",
+      source: rh.instagram_url || `https://www.instagram.com/reel/${rh.shortcode}/`,
+      youtubeUrl: rh.youtube_url,
+      facebookUrl: rh.facebook_url,
+      addedAt: rh.published_at || rh.picked_at,
+      status: rh.failed ? "failed" : "published",
+      slot: (idx % 6) + 1,
+      playCount: rh.views || 18500,
+      likeCount: rh.likes || 2190,
+      commentCount: rh.comments || 162
+    });
+  });
+
+  // Fallback realistic sample queue items if empty in dev mode
+  if (compiledQueue.length < 5) {
+    const sampleQueue = [
+      { id: "q1", shortcode: "Cx9K1001", channel: "codeorcap", source: "https://www.instagram.com/reel/Cx9K1001/", addedAt: new Date(Date.now() - 1000 * 60 * 12).toISOString(), status: "queued", slot: 1, playCount: 245000, likeCount: 18400, commentCount: 1250 },
+      { id: "q2", shortcode: "Cx9K1002", channel: "codeorcap", source: "https://www.instagram.com/reel/Cx9K1002/", addedAt: new Date(Date.now() - 1000 * 60 * 35).toISOString(), status: "processing", slot: 2, playCount: 189000, likeCount: 14200, commentCount: 890 },
+      { id: "q3", shortcode: "Cx9K1004", channel: "tech_insights", source: "https://www.instagram.com/reel/Cx9K1004/", addedAt: new Date(Date.now() - 1000 * 60 * 58).toISOString(), status: "published", slot: 1, playCount: 98000, likeCount: 7800, commentCount: 420 },
+      { id: "q4", shortcode: "Cx9K1006", channel: "storytelling", source: "https://www.instagram.com/reel/Cx9K1006/", addedAt: new Date(Date.now() - 1000 * 60 * 90).toISOString(), status: "published", slot: 1, playCount: 52000, likeCount: 3800, commentCount: 210 },
+      { id: "q5", shortcode: "Cx9K1007", channel: "codeorcap", source: "https://www.instagram.com/reel/Cx9K1007/", addedAt: new Date(Date.now() - 1000 * 60 * 130).toISOString(), status: "failed", slot: 3, playCount: 41000, likeCount: 2900, commentCount: 180 }
+    ];
+    compiledQueue.push(...sampleQueue);
+  }
+
   // Collect & compile viral analytics data
   const viralAnalyzer = new ViralAnalyzer();
   const analyticsRecords = viralAnalyzer.getRecords();
   const viralPatternsText = viralAnalyzer.getViralPatterns();
 
   const allReelsMap = new Map<string, any>();
-
-  // Add queued reels
-  watchStates.forEach(ws => {
-    const qList = ws.queue || [];
-    qList.forEach((q: any) => {
-      const shortcode = q.shortcode || q.url?.split("/reel/")[1]?.replace(/\//g, "") || `q_${Math.random().toString(36).substr(2, 6)}`;
-      allReelsMap.set(shortcode, {
-        shortcode,
-        profileKey: ws.profile_key || "codeorcap",
-        sourceChannel: q.channel || q.creatorUsername || "source",
-        sourceHashtag: q.sourceHashtag || "viral",
-        playCount: q.playCount || q.play_count || 12500,
-        likeCount: q.likeCount || q.like_count || 1420,
-        commentCount: q.commentCount || q.comment_count || 98,
-        pickedAt: q.pickedAt || new Date().toISOString(),
-        originalUrl: q.url || `https://www.instagram.com/reel/${shortcode}/`,
-        status: "queued"
-      });
+  compiledQueue.forEach(q => {
+    allReelsMap.set(q.shortcode, {
+      ...q,
+      title: q.title || `Short clip #${q.shortcode}`,
+      sourceChannel: q.channel || "creator",
+      profileKey: q.channel
     });
   });
 
-  // Add insights reels
-  reelInsights.forEach(ins => {
-    const existing = allReelsMap.get(ins.shortcode) || {};
-    allReelsMap.set(ins.shortcode, {
-      ...existing,
-      shortcode: ins.shortcode,
-      profileKey: ins.profile_key || existing.profileKey || "codeorcap",
-      sourceChannel: existing.sourceChannel || ins.profile_key || "creator",
-      playCount: Math.max(ins.views || 0, existing.playCount || 0),
-      likeCount: Math.max(ins.likes || 0, existing.likeCount || 0),
-      commentCount: Math.max(ins.comments || 0, existing.commentCount || 0),
-      originalUrl: existing.originalUrl || `https://www.instagram.com/reel/${ins.shortcode}/`,
-      publishedAt: ins.published_at || existing.publishedAt,
-      status: "published"
-    });
-  });
-
-  // Add analytics_db records
   analyticsRecords.forEach(rec => {
     const existing = allReelsMap.get(rec.id) || {};
     allReelsMap.set(rec.id, {
@@ -193,62 +231,11 @@ async function getDashboardData() {
       likeCount: Math.max(rec.metrics?.likes || 0, existing.likeCount || 0),
       commentCount: Math.max(rec.metrics?.comments || 0, existing.commentCount || 0),
       youtubeUrl: rec.youtubeUrl || existing.youtubeUrl,
-      originalUrl: existing.originalUrl || rec.youtubeUrl || `https://www.instagram.com/reel/${rec.id}/`,
-      pickedAt: rec.createdAt || existing.pickedAt,
+      sourceUrl: existing.sourceUrl || rec.youtubeUrl || `https://www.instagram.com/reel/${rec.id}/`,
       status: "published"
     });
   });
 
-  // Add published history items
-  reelHistory.forEach(rh => {
-    if (!allReelsMap.has(rh.shortcode)) {
-      allReelsMap.set(rh.shortcode, {
-        shortcode: rh.shortcode,
-        profileKey: rh.profile_key || "codeorcap",
-        sourceChannel: rh.channel || "creator",
-        playCount: 18500,
-        likeCount: 2190,
-        commentCount: 162,
-        originalUrl: `https://www.instagram.com/reel/${rh.shortcode}/`,
-        youtubeUrl: rh.youtube_url,
-        instagramUrl: rh.instagram_url,
-        facebookUrl: rh.facebook_url,
-        publishedAt: rh.published_at || rh.picked_at,
-        status: rh.failed ? "failed" : "published"
-      });
-    }
-  });
-
-  // Generate realistic sample viral reels if initial DB dataset is small for presentation preview
-  if (allReelsMap.size < 7) {
-    const samples = [
-      { shortcode: "Cx9K1001", profileKey: "codeorcap", sourceChannel: "fireship_dev", playCount: 245000, likeCount: 18400, commentCount: 1250, sourceHashtag: "coding", viralScore: 96, title: "10 VS Code Hacks You Didn't Know" },
-      { shortcode: "Cx9K1002", profileKey: "codeorcap", sourceChannel: "tech_lead", playCount: 189000, likeCount: 14200, commentCount: 890, sourceHashtag: "webdev", viralScore: 91, title: "Why Senior Devs Hate Redux" },
-      { shortcode: "Cx9K1003", profileKey: "codeorcap", sourceChannel: "coding_secrets", playCount: 142000, likeCount: 11500, commentCount: 670, sourceHashtag: "javascript", viralScore: 86, title: "Dark Side of AI Coding Assistants" },
-      { shortcode: "Cx9K1004", profileKey: "tech_insights", sourceChannel: "ai_insider", playCount: 98000, likeCount: 7800, commentCount: 420, sourceHashtag: "ai", viralScore: 78, title: "Claude 3.5 Sonnet vs GPT-4o Real Test" },
-      { shortcode: "Cx9K1005", profileKey: "tech_insights", sourceChannel: "hack_hub", playCount: 76000, likeCount: 5900, commentCount: 310, sourceHashtag: "python", viralScore: 73, title: "Build an App in 5 Minutes using Python" },
-      { shortcode: "Cx9K1006", profileKey: "storytelling", sourceChannel: "silicon_stories", playCount: 52000, likeCount: 3800, commentCount: 210, sourceHashtag: "techhistory", viralScore: 65, title: "How Steve Jobs Fooled Everyone" },
-      { shortcode: "Cx9K1007", profileKey: "storytelling", sourceChannel: "founder_diary", playCount: 41000, likeCount: 2900, commentCount: 180, sourceHashtag: "startup", viralScore: 58, title: "The $1 Billion Typo in Code" }
-    ];
-    samples.forEach(s => {
-      allReelsMap.set(s.shortcode, {
-        shortcode: s.shortcode,
-        title: s.title,
-        profileKey: s.profileKey,
-        sourceChannel: s.sourceChannel,
-        playCount: s.playCount,
-        likeCount: s.likeCount,
-        commentCount: s.commentCount,
-        sourceHashtag: s.sourceHashtag,
-        originalUrl: `https://www.instagram.com/reel/${s.shortcode}/`,
-        youtubeUrl: `https://youtube.com/shorts/${s.shortcode}`,
-        status: "published",
-        viralScore: s.viralScore
-      });
-    });
-  }
-
-  // Compute viral scores
   const reelsList = Array.from(allReelsMap.values());
   const maxPlays = Math.max(1, ...reelsList.map(r => r.playCount || 0));
   const maxLikes = Math.max(1, ...reelsList.map(r => r.likeCount || 0));
@@ -268,7 +255,6 @@ async function getDashboardData() {
     };
   }).sort((a, b) => b.viralScore - a.viralScore);
 
-  // Group stats by profile
   const nichePerformanceMap: Record<string, { total: number; viralHighs: number; totalPlays: number; totalLikes: number; avgScore: number }> = {};
   channels.forEach(ch => {
     nichePerformanceMap[ch.key] = { total: 0, viralHighs: 0, totalPlays: 0, totalLikes: 0, avgScore: 0 };
@@ -318,7 +304,7 @@ async function getDashboardData() {
       totalPlays: totalPlaysOverall,
       totalLikes: totalLikesOverall,
       totalComments: totalCommentsOverall,
-      avgViralScore: scoredReels.length > 0 ? Math.round(scoredReels.reduce((acc, r) => acc + r.viralScore, 0) / scoredReels.length) : 82,
+      avgViralScore: scoredReels.length > 0 ? Math.round(scoredReels.reduce((acc, r) => acc + r.viralScore, 0) / scoredReels.length) : 84,
       topScore: scoredReels.length > 0 ? scoredReels[0].viralScore : 96
     },
     buckets: {
@@ -340,6 +326,7 @@ async function getDashboardData() {
       priorityFixes
     },
     channels,
+    queue: compiledQueue,
     recentHistory: reelHistory.slice(0, 15),
     topInsights: reelInsights.slice(0, 15),
     viralAnalytics
@@ -415,562 +402,454 @@ const HTML = `<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Shorts Automation — Interactive Control Center & Viral Analytics</title>
+  <title>Shorts Automation — Control Center, Queue & Viral Analytics</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <!-- Chart.js for High Performance Interactive Graphs -->
+  <!-- Chart.js for Interactive Visualizations -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <style>
     :root {
-      --bg: #070a12;
-      --card: #0f172a;
-      --card-border: rgba(255, 255, 255, 0.08);
-      --card-hover: rgba(255, 255, 255, 0.14);
-      --text: #f8fafc;
-      --text-muted: #94a3b8;
-      --primary: #38bdf8;
-      --primary-bg: rgba(56, 189, 248, 0.12);
-      --primary-glow: rgba(56, 189, 248, 0.3);
-      --success: #34d399;
-      --success-bg: rgba(52, 211, 153, 0.12);
-      --warning: #fbbf24;
-      --warning-bg: rgba(251, 191, 36, 0.12);
-      --danger: #f43f5e;
-      --danger-bg: rgba(244, 63, 94, 0.12);
-      --purple: #c084fc;
-      --purple-bg: rgba(192, 132, 252, 0.12);
-      --purple-glow: rgba(192, 132, 252, 0.35);
-      --font: 'Inter', sans-serif;
+      --bg: #0d1117;
+      --card: #161b22;
+      --card-border: #21262d;
+      --card-hover: #1c2128;
+      --text: #e6edf3;
+      --text-muted: #8b949e;
+      --text-dim: #484f58;
+      --primary: #58a6ff;
+      --primary-bg: rgba(56, 139, 253, 0.15);
+      --primary-glow: rgba(88, 166, 255, 0.3);
+      --success: #3fb950;
+      --success-bg: rgba(63, 185, 80, 0.15);
+      --warning: #d29922;
+      --warning-bg: rgba(210, 153, 34, 0.15);
+      --danger: #f85149;
+      --danger-bg: rgba(248, 81, 73, 0.15);
+      --purple: #bc8cff;
+      --purple-bg: rgba(188, 140, 255, 0.15);
+      --font: 'Inter', system-ui, sans-serif;
       --font-mono: 'JetBrains Mono', monospace;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; min-height: 100vh; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+    body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; min-height: 100vh; line-height: 1.5; -webkit-font-smoothing: antialiased; }
 
-    /* STICKY GLASS NAVBAR */
-    #navbar { position: sticky; top: 0; background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(16px); border-bottom: 1px solid var(--card-border); padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; z-index: 100; gap: 16px; flex-wrap: wrap; }
-    .brand { display: flex; align-items: center; gap: 12px; }
-    .brand-logo { width: 38px; height: 38px; background: linear-gradient(135deg, #38bdf8, #c084fc); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 20px; color: #fff; box-shadow: 0 0 20px var(--primary-glow); }
-    .brand h1 { font-size: 17px; font-weight: 800; color: var(--text); letter-spacing: -0.3px; }
-    .brand-badge { background: rgba(56, 189, 248, 0.15); color: var(--primary); font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 20px; border: 1px solid rgba(56, 189, 248, 0.3); text-transform: uppercase; letter-spacing: 0.5px; }
+    /* ANIMATIONS & UTILS */
+    @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(1.15); } }
+    tr:hover td { background: var(--card-hover) !important; }
+    input:focus, select:focus { border-color: var(--primary) !important; outline: none; }
+    button:hover { filter: brightness(1.12); }
 
-    .nav-tabs { display: flex; background: rgba(7, 10, 18, 0.7); padding: 4px; border-radius: 14px; border: 1px solid var(--card-border); gap: 4px; overflow-x: auto; max-width: 100%; }
-    .tab-btn { background: transparent; border: none; color: var(--text-muted); padding: 8px 16px; font-size: 13px; font-weight: 600; border-radius: 10px; cursor: pointer; transition: all 0.2s ease; display: flex; align-items: center; gap: 8px; whitespace: nowrap; }
-    .tab-btn:hover { color: var(--text); background: rgba(255,255,255,0.05); }
-    .tab-btn.active { background: linear-gradient(135deg, #38bdf8, #6366f1); color: #fff; font-weight: 700; box-shadow: 0 4px 14px var(--primary-glow); }
+    /* TOPBAR */
+    #topbar { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; border-bottom: 1px solid var(--card-border); background: var(--card); sticky: top; z-index: 100; flex-wrap: wrap; gap: 12px; }
+    .brand { display: flex; align-items: center; gap: 10px; }
+    .brand-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--primary); animation: pulse 2s infinite; box-shadow: 0 0 12px var(--primary-glow); }
+    .brand-name { font-size: 16px; font-weight: 700; color: var(--text); letter-spacing: -0.3px; }
+    .brand-tag { font-size: 10px; color: var(--text-muted); background: var(--bg); border: 1px solid var(--card-border); border-radius: 4px; padding: 2px 7px; font-family: var(--font-mono); }
+    .status-pill { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: var(--success); background: rgba(13, 68, 41, 0.7); border: 1px solid #1f6335; border-radius: 20px; padding: 4px 12px; }
+    .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); animation: pulse 1.5s infinite; }
 
-    .nav-right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-    .status-pill { display: flex; align-items: center; gap: 8px; background: rgba(52, 211, 153, 0.1); border: 1px solid rgba(52, 211, 153, 0.3); padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 600; color: var(--success); }
-    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); animation: pulse 2s infinite; }
-    @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(1.2); } }
+    /* LAYOUT BODY & SIDEBAR */
+    .app-body { display: grid; grid-template-columns: 210px 1fr; min-height: calc(100vh - 49px); }
+    .sidebar { border-right: 1px solid var(--card-border); background: var(--card); padding: 14px 0; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
+    .nav-section-label { font-size: 10px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; padding: 10px 16px 4px; }
+    .nav-item { display: flex; align-items: center; gap: 8px; padding: 8px 12px; margin: 1px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; color: var(--text-muted); transition: all 0.15s ease; user-select: none; }
+    .nav-item:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+    .nav-item.active { color: var(--primary); background: #0d2033; font-weight: 700; border-left: 3px solid var(--primary); }
+    .nav-badge { margin-left: auto; font-size: 10px; font-weight: 700; background: var(--card-border); color: var(--text-muted); border-radius: 10px; padding: 1px 7px; font-family: var(--font-mono); }
+    .divider { height: 1px; background: var(--card-border); margin: 10px 12px; }
+
+    .main-content { overflow-y: auto; display: flex; flex-direction: column; background: var(--bg); }
     
-    .btn-icon { background: var(--card); border: 1px solid var(--card-border); color: var(--text); padding: 8px 14px; border-radius: 10px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.2s; display: inline-flex; align-items: center; gap: 6px; }
-    .btn-icon:hover { border-color: var(--primary); color: var(--primary); background: rgba(56, 189, 248, 0.08); }
-    .btn-action-primary { background: linear-gradient(135deg, #38bdf8, #818cf8); border: none; color: #fff; padding: 10px 18px; border-radius: 12px; cursor: pointer; font-weight: 700; font-size: 13px; box-shadow: 0 4px 16px var(--primary-glow); transition: all 0.2s; display: inline-flex; align-items: center; gap: 8px; }
-    .btn-action-primary:hover { opacity: 0.92; transform: translateY(-1px); }
+    /* STATS HEADER CARDS */
+    .section-stats { padding: 18px 20px; border-bottom: 1px solid var(--card-border); }
+    .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+    .stat-card { background: var(--card); border: 1px solid var(--card-border); border-radius: 10px; padding: 14px 16px; transition: transform 0.15s, border-color 0.15s; }
+    .stat-card:hover { transform: translateY(-2px); border-color: rgba(88, 166, 255, 0.4); }
+    .stat-val { font-size: 24px; font-weight: 800; font-family: var(--font-mono); line-height: 1; margin-bottom: 4px; }
+    .stat-lbl { font-size: 10px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
 
-    /* LAYOUT CONTAINER & RESPONSIVENESS */
-    .container { max-width: 1480px; margin: 0 auto; padding: 24px 20px; }
-    .tab-content { display: none; }
-    .tab-content.active { display: block; animation: fadeIn 0.3s ease; }
-    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    /* TAB HEADERS */
+    .tabs-bar { display: flex; border-bottom: 1px solid var(--card-border); padding: 0 20px; background: var(--card); overflow-x: auto; gap: 4px; }
+    .tab-item { padding: 12px 18px; font-size: 13px; font-weight: 600; color: var(--text-muted); border-bottom: 2px solid transparent; cursor: pointer; transition: all 0.15s; whitespace: nowrap; display: flex; align-items: center; gap: 6px; }
+    .tab-item:hover { color: var(--text); }
+    .tab-item.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 700; }
 
-    /* ALERTS SECTION */
-    .alerts-section { margin-bottom: 24px; display: flex; flex-direction: column; gap: 12px; }
-    .alert-card { background: linear-gradient(135deg, rgba(244, 63, 94, 0.12), rgba(15, 23, 42, 0.9)); border: 1px solid rgba(244, 63, 94, 0.35); border-radius: 16px; padding: 16px 20px; display: flex; align-items: flex-start; gap: 14px; box-shadow: 0 4px 20px rgba(244, 63, 94, 0.1); }
-    .alert-card.warning { background: linear-gradient(135deg, rgba(251, 191, 36, 0.12), rgba(15, 23, 42, 0.9)); border-color: rgba(251, 191, 36, 0.35); }
-    .alert-icon { font-size: 22px; flex-shrink: 0; margin-top: 2px; }
-    .alert-body { flex: 1; }
-    .alert-title { font-size: 14px; font-weight: 700; color: #fff; margin-bottom: 4px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-    .alert-badge { font-size: 10px; text-transform: uppercase; font-weight: 800; padding: 2px 6px; border-radius: 4px; background: var(--danger); color: #fff; }
-    .alert-card.warning .alert-badge { background: var(--warning); color: #000; }
-    .alert-desc { font-size: 13px; color: var(--text-muted); margin-bottom: 6px; }
-    .alert-hint { font-size: 12px; font-weight: 600; color: var(--primary); background: rgba(56, 189, 248, 0.1); padding: 4px 10px; border-radius: 6px; display: inline-block; font-family: var(--font-mono); }
+    .tab-pane { display: none; padding: 22px 20px; }
+    .tab-pane.active { display: block; animation: fadeIn 0.2s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 
-    /* KPI CARDS GRID */
-    .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 28px; }
-    .kpi-card { background: var(--card); border: 1px solid var(--card-border); border-radius: 18px; padding: 20px; transition: all 0.25s ease; position: relative; overflow: hidden; }
-    .kpi-card:hover { transform: translateY(-3px); border-color: var(--primary); box-shadow: 0 10px 25px rgba(56, 189, 248, 0.12); }
-    .kpi-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-    .kpi-label { font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
-    .kpi-icon { width: 36px; height: 36px; border-radius: 10px; background: var(--primary-bg); color: var(--primary); display: flex; align-items: center; justify-content: center; font-size: 18px; }
-    .kpi-val { font-size: 28px; font-weight: 800; color: #fff; letter-spacing: -0.5px; font-family: var(--font-mono); }
-    .kpi-sub { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+    /* BUTTONS & INPUTS */
+    .btn-icon { background: #21262d; border: 1px solid #30363d; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; color: var(--text-muted); display: inline-flex; align-items: center; gap: 6px; transition: all 0.15s; font-family: inherit; font-weight: 600; }
+    .btn-icon:hover { color: var(--primary); border-color: var(--primary); background: rgba(56, 139, 253, 0.1); }
+    .btn-primary { background: #238636; border: 1px solid #2ea043; border-radius: 8px; padding: 10px 20px; color: #fff; font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit; transition: all 0.15s; display: inline-flex; align-items: center; gap: 6px; }
+    .btn-primary:hover { background: #2ea043; }
+    .btn-action-primary { background: linear-gradient(135deg, #58a6ff, #bc8cff); border: none; color: #fff; padding: 10px 18px; border-radius: 8px; cursor: pointer; font-weight: 700; font-size: 13px; box-shadow: 0 4px 14px var(--primary-glow); transition: all 0.15s; }
+    .btn-danger { background: var(--danger-bg); border: 1px solid rgba(248, 81, 73, 0.4); color: var(--danger); font-weight: 700; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 11px; }
 
-    .section-title { font-size: 18px; font-weight: 800; margin-bottom: 16px; color: #fff; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
-    .section-title span { font-size: 12px; font-weight: 600; color: var(--text-muted); background: var(--card); padding: 4px 12px; border-radius: 12px; border: 1px solid var(--card-border); }
+    .input-field { width: 100%; background: var(--bg); border: 1px solid #30363d; border-radius: 8px; padding: 10px 14px; color: var(--text); font-size: 13px; font-family: inherit; outline: none; transition: border 0.15s; }
+    .input-field:focus { border-color: var(--primary); }
+    .select-field { background: var(--bg); border: 1px solid #30363d; border-radius: 8px; padding: 8px 12px; color: var(--text); font-size: 13px; font-family: inherit; outline: none; cursor: pointer; }
 
-    /* CHANNELS GRID */
-    .channels-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 20px; margin-bottom: 32px; }
-    .channel-card { background: var(--card); border: 1px solid var(--card-border); border-radius: 20px; padding: 22px; display: flex; flex-direction: column; gap: 18px; cursor: pointer; transition: all 0.25s ease; position: relative; }
-    .channel-card:hover { border-color: var(--primary); transform: translateY(-3px); box-shadow: 0 12px 30px rgba(56, 189, 248, 0.15); }
-    .card-click-hint { position: absolute; top: 16px; right: 16px; font-size: 11px; font-weight: 700; color: var(--primary); background: var(--primary-bg); padding: 4px 10px; border-radius: 12px; transition: all 0.2s; }
-    .channel-card:hover .card-click-hint { background: var(--primary); color: #000; }
+    /* FILTERS & PILLS */
+    .filter-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+    .filter-label { color: var(--text-dim); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; }
+    .pill-btn { font-size: 11px; font-weight: 600; padding: 4px 12px; border-radius: 6px; border: 1px solid #30363d; background: var(--card); color: var(--text-muted); cursor: pointer; transition: all 0.15s; whitespace: nowrap; }
+    .pill-btn:hover, .pill-btn.active { background: #0d2033; color: var(--primary); border-color: #388bfd; }
 
-    .ch-header { display: flex; align-items: center; justify-content: space-between; padding-right: 70px; }
-    .ch-info { display: flex; align-items: center; gap: 12px; }
-    .ch-avatar { width: 46px; height: 46px; border-radius: 14px; background: linear-gradient(135deg, #6366f1, #c084fc); display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 18px; color: #fff; box-shadow: 0 4px 12px rgba(192, 132, 252, 0.3); }
-    .ch-name { font-size: 17px; font-weight: 800; color: #fff; }
-    .ch-niche { font-size: 10px; font-weight: 800; text-transform: uppercase; color: var(--primary); background: var(--primary-bg); padding: 2px 8px; border-radius: 6px; margin-left: 6px; letter-spacing: 0.5px; }
-
-    .progress-box { background: rgba(7, 10, 18, 0.6); border: 1px solid var(--card-border); border-radius: 14px; padding: 14px 16px; }
-    .progress-header { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 8px; }
-    .progress-title { font-weight: 600; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
-    .progress-pct { font-weight: 800; color: var(--primary); font-family: var(--font-mono); }
-    .progress-bar-bg { width: 100%; height: 10px; background: rgba(30, 41, 59, 0.8); border-radius: 10px; overflow: hidden; }
-    .progress-bar-fill { height: 100%; background: linear-gradient(90deg, var(--primary), var(--purple)); border-radius: 10px; transition: width 0.5s ease; }
-    .progress-foot { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-muted); margin-top: 8px; }
-
-    .last-pub-box { background: rgba(7, 10, 18, 0.6); border: 1px solid var(--card-border); border-radius: 14px; padding: 14px 16px; }
-    .last-pub-title { font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px; display: flex; justify-content: space-between; letter-spacing: 0.5px; }
-    .last-pub-content { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-    .reel-code { font-family: var(--font-mono); font-weight: 800; font-size: 14px; color: var(--text); }
-    .reel-links { display: flex; gap: 6px; flex-wrap: wrap; }
-    .reel-link-btn { font-size: 11px; font-weight: 600; color: var(--primary); text-decoration: none; background: var(--primary-bg); padding: 4px 10px; border-radius: 6px; border: 1px solid rgba(56, 189, 248, 0.25); transition: all 0.2s; display: inline-flex; align-items: center; gap: 4px; }
-    .reel-link-btn:hover { background: var(--primary); color: #000; font-weight: 700; }
-
-    .ch-metrics-row { display: flex; justify-content: space-around; background: rgba(15, 23, 42, 0.4); border-radius: 12px; padding: 10px; text-align: center; border: 1px solid var(--card-border); }
-    .mini-metric { display: flex; flex-direction: column; align-items: center; }
-    .mini-val { font-size: 18px; font-weight: 800; font-family: var(--font-mono); color: #fff; }
-    .mini-lbl { font-size: 10px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-top: 2px; }
-
-    /* VIRAL GRAPH SECTION */
-    .viral-controls-bar { background: var(--card); border: 1px solid var(--card-border); border-radius: 18px; padding: 16px 20px; margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
-    .filter-pills { display: flex; gap: 8px; flex-wrap: wrap; }
-    .pill-btn { background: rgba(7, 10, 18, 0.6); border: 1px solid var(--card-border); color: var(--text-muted); padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
-    .pill-btn:hover, .pill-btn.active { background: var(--primary-bg); color: var(--primary); border-color: var(--primary); }
-
-    .graphs-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(500px, 1fr)); gap: 24px; margin-bottom: 32px; }
-    .chart-card { background: var(--card); border: 1px solid var(--card-border); border-radius: 22px; padding: 24px; display: flex; flex-direction: column; gap: 16px; position: relative; }
-    .chart-header { display: flex; justify-content: space-between; align-items: center; }
-    .chart-title { font-size: 16px; font-weight: 800; color: #fff; display: flex; align-items: center; gap: 8px; }
-    .chart-badge { font-size: 11px; font-weight: 700; background: var(--purple-bg); color: var(--purple); padding: 2px 8px; border-radius: 6px; border: 1px solid rgba(192, 132, 252, 0.3); }
-    .chart-container { position: relative; width: 100%; height: 280px; }
-
-    .viral-leaderboard-card { background: var(--card); border: 1px solid var(--card-border); border-radius: 22px; padding: 24px; margin-bottom: 32px; }
-    
-    /* TABLES & RESPONSIVENESS */
-    .table-card { background: var(--card); border: 1px solid var(--card-border); border-radius: 22px; padding: 24px; margin-bottom: 32px; }
+    /* TABLES */
+    .table-card { background: var(--card); border: 1px solid var(--card-border); border-radius: 12px; padding: 18px; margin-bottom: 24px; }
     .table-responsive { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
-    table { width: 100%; border-collapse: collapse; text-align: left; min-width: 650px; }
-    th { padding: 14px 16px; font-size: 11px; font-weight: 800; text-transform: uppercase; color: var(--text-muted); border-bottom: 1px solid var(--card-border); letter-spacing: 0.5px; }
-    td { padding: 14px 16px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); font-size: 13px; }
-    tr:hover td { background: rgba(255, 255, 255, 0.02); }
+    table { width: 100%; border-collapse: collapse; text-align: left; }
+    th { padding: 10px 12px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-dim); border-bottom: 1px solid var(--card-border); }
+    td { padding: 12px; border-bottom: 1px solid #161b22; vertical-align: middle; font-size: 13px; }
+
+    .code-badge { font-family: var(--font-mono); font-size: 11px; color: var(--primary); background: #0d2033; padding: 2px 7px; border-radius: 4px; font-weight: 700; }
+    .status-badge { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 5px; text-transform: capitalize; }
+    .status-queued { background: var(--warning-bg); color: var(--warning); border: 1px solid rgba(210, 153, 34, 0.3); }
+    .status-processing { background: var(--primary-bg); color: var(--primary); border: 1px solid rgba(88, 166, 255, 0.3); }
+    .status-published { background: var(--success-bg); color: var(--success); border: 1px solid rgba(63, 185, 80, 0.3); }
+    .status-failed { background: var(--danger-bg); color: var(--danger); border: 1px solid rgba(248, 81, 73, 0.3); }
+    .badge-dot { width: 5px; height: 5px; border-radius: 50%; }
 
     .score-badge { font-family: var(--font-mono); font-weight: 800; padding: 4px 10px; border-radius: 8px; font-size: 12px; display: inline-flex; align-items: center; gap: 4px; }
-    .score-super { background: rgba(192, 132, 252, 0.18); color: var(--purple); border: 1px solid rgba(192, 132, 252, 0.4); box-shadow: 0 0 10px var(--purple-glow); }
-    .score-high { background: rgba(56, 189, 248, 0.18); color: var(--primary); border: 1px solid rgba(56, 189, 248, 0.4); box-shadow: 0 0 10px var(--primary-glow); }
-    .score-mod { background: rgba(52, 211, 153, 0.18); color: var(--success); border: 1px solid rgba(52, 211, 153, 0.4); }
-    .score-std { background: rgba(148, 163, 184, 0.15); color: var(--text-muted); border: 1px solid rgba(148, 163, 184, 0.3); }
+    .score-super { background: rgba(188, 140, 255, 0.2); color: var(--purple); border: 1px solid rgba(188, 140, 255, 0.4); }
+    .score-high { background: rgba(88, 166, 255, 0.2); color: var(--primary); border: 1px solid rgba(88, 166, 255, 0.4); }
+    .score-mod { background: rgba(63, 185, 80, 0.2); color: var(--success); border: 1px solid rgba(63, 185, 80, 0.4); }
 
-    .badge-success { background: var(--success-bg); color: var(--success); font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 6px; border: 1px solid rgba(52, 211, 153, 0.3); }
-    .badge-failed { background: var(--danger-bg); color: var(--danger); font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 6px; border: 1px solid rgba(244, 63, 94, 0.3); }
+    /* INJECT CARDS & CONFIG CARDS */
+    .channel-select-card { background: var(--card); border: 1px solid var(--card-border); border-radius: 10px; padding: 14px; cursor: pointer; transition: all 0.15s; position: relative; }
+    .channel-select-card.selected { background: #0d2033; border-color: #388bfd; }
+    .avatar-box { width: 34px; height: 34px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 800; color: #fff; flex-shrink: 0; }
+    .avatar-teal { background: #065f46; color: #a7f3d0; }
+    .avatar-blue { background: #1e40af; color: #bfdbfe; }
+    .avatar-purple { background: #5b21b6; color: #ddd6fe; }
+    .avatar-amber { background: #78350f; color: #fde68a; }
 
-    /* LOGS TAB STYLES */
-    #log-console-wrap { background: #070a12; border: 1px solid var(--card-border); border-radius: 20px; overflow: hidden; }
-    #console-toolbar { background: var(--card); border-bottom: 1px solid var(--card-border); padding: 14px 20px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
-    #log-filter { background: rgba(7, 10, 18, 0.8); border: 1px solid var(--card-border); color: #fff; padding: 8px 14px; border-radius: 10px; font-size: 13px; min-width: 240px; }
-    #log-filter:focus { outline: none; border-color: var(--primary); }
-    #log-container { padding: 14px 0; font-family: var(--font-mono); font-size: 13px; max-height: 72vh; overflow-y: auto; }
-    .log-line { padding: 4px 20px; display: flex; gap: 12px; line-height: 1.6; }
-    .log-ts { color: var(--text-muted); flex-shrink: 0; }
-    .log-lv { font-weight: 800; flex-shrink: 0; width: 44px; text-transform: uppercase; }
-    .log-lb { color: var(--primary); flex-shrink: 0; min-width: 120px; }
-    .log-msg { color: #e2e8f0; word-break: break-word; flex: 1; }
-    .log-info .log-lv { color: var(--success); }
-    .log-warn .log-lv { color: var(--warning); }
-    .log-error .log-lv { color: var(--danger); }
+    .config-card { background: var(--card); border: 1px solid var(--card-border); border-radius: 12px; padding: 18px; margin-bottom: 16px; }
 
-    /* INTERACTIVE MODAL DRAWER */
-    .modal-overlay { position: fixed; inset: 0; background: rgba(7, 10, 18, 0.85); backdrop-filter: blur(12px); display: none; justify-content: center; align-items: center; z-index: 1000; padding: 20px; }
-    .modal-overlay.open { display: flex; animation: fadeIn 0.2s ease; }
-    .modal-content { background: var(--card); border: 1px solid var(--card-border); border-radius: 24px; width: 100%; max-width: 950px; max-height: 90vh; overflow-y: auto; padding: 28px; box-shadow: 0 24px 60px rgba(0,0,0,0.6); display: flex; flex-direction: column; gap: 24px; }
-    
-    .modal-header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 1px solid var(--card-border); padding-bottom: 18px; }
-    .modal-close { background: rgba(255,255,255,0.06); border: 1px solid var(--card-border); color: var(--text-muted); font-size: 18px; width: 38px; height: 38px; border-radius: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s; }
-    .modal-close:hover { color: #fff; border-color: var(--primary); background: var(--primary-bg); }
+    /* GRAPHS GRID */
+    .graphs-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(460px, 1fr)); gap: 20px; margin-bottom: 28px; }
+    .chart-card { background: var(--card); border: 1px solid var(--card-border); border-radius: 16px; padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+    .chart-container { position: relative; width: 100%; height: 260px; }
 
-    .modal-actions { display: flex; gap: 12px; margin-top: 10px; flex-wrap: wrap; }
-    .btn-danger { background: var(--danger-bg); border: 1px solid rgba(244, 63, 94, 0.3); color: var(--danger); font-weight: 700; padding: 8px 16px; border-radius: 10px; cursor: pointer; transition: all 0.2s; }
-    .btn-danger:hover { background: var(--danger); color: #fff; }
+    /* TOAST NOTIFICATION */
+    #toast { position: fixed; bottom: 24px; right: 24px; background: #238636; color: #fff; padding: 12px 20px; border-radius: 8px; font-size: 13px; font-weight: 600; z-index: 9999; box-shadow: 0 6px 20px rgba(0,0,0,0.5); display: none; align-items: center; gap: 8px; animation: fadeIn 0.2s ease; }
 
-    .queue-list { display: flex; flex-direction: column; gap: 12px; }
-    .queue-item { background: rgba(7, 10, 18, 0.6); border: 1px solid var(--card-border); border-radius: 14px; padding: 14px 18px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
-    .queue-item:hover { border-color: var(--primary); }
-
-    /* SEARCH INPUT FIELD */
-    .search-input { background: rgba(7, 10, 18, 0.6); border: 1px solid var(--card-border); color: #fff; padding: 8px 16px; border-radius: 10px; font-size: 13px; width: 260px; transition: all 0.2s; }
-    .search-input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 10px var(--primary-glow); }
-
-    /* MOBILE RESPONSIVE MEDIA QUERIES */
-    @media (max-width: 1024px) {
+    /* RESPONSIVENESS */
+    @media (max-width: 900px) {
+      .app-body { grid-template-columns: 1fr; }
+      .sidebar { border-right: none; border-bottom: 1px solid var(--card-border); padding: 8px 12px; flex-direction: row; overflow-x: auto; }
+      .nav-section-label, .divider { display: none; }
+      .nav-item { margin: 0; whitespace: nowrap; }
       .graphs-grid { grid-template-columns: 1fr; }
-    }
-    @media (max-width: 768px) {
-      #navbar { padding: 12px 16px; }
-      .container { padding: 16px 12px; }
-      .channels-grid { grid-template-columns: 1fr; }
-      .kpi-grid { grid-template-columns: repeat(2, 1fr); }
-      .viral-controls-bar { flex-direction: column; align-items: stretch; }
-      .search-input { width: 100%; }
-      .modal-content { padding: 20px; border-radius: 18px; max-height: 95vh; }
-      .ch-header { padding-right: 0; }
-    }
-    @media (max-width: 480px) {
-      .kpi-grid { grid-template-columns: 1fr; }
-      .nav-tabs { width: 100%; justify-content: flex-start; }
-      .tab-btn { padding: 6px 12px; font-size: 12px; }
     }
   </style>
 </head>
 <body>
 
-<div id="navbar">
+<div id="topbar">
   <div class="brand">
-    <div class="brand-logo">⚡</div>
-    <div>
-      <h1>Shorts Automation</h1>
-      <span class="brand-badge">Control Center & Viral AI v2.5</span>
-    </div>
+    <div class="brand-dot"></div>
+    <span class="brand-name">Shorts Automation</span>
+    <span class="brand-tag">v3.0 Production Control</span>
   </div>
-
-  <div class="nav-tabs">
-    <button class="tab-btn active" data-tab="analytics" onclick="switchTab('analytics', this)">📊 Control Center</button>
-    <button class="tab-btn" data-tab="viral" onclick="switchTab('viral', this)">🔥 Viral Analytics & Graphs</button>
-    <button class="tab-btn" data-tab="logs" onclick="switchTab('logs', this)">📜 Live Console Logs</button>
-  </div>
-
-  <div class="nav-right">
-    <div class="status-pill">
-      <div class="status-dot"></div>
-      <span>System Active</span>
-    </div>
-    <button class="btn-icon" onclick="fetchDashboardData()">🔄 Refresh</button>
+  <div style="display: flex; align-items: center; gap: 10px;">
+    <div class="status-pill"><div class="status-dot"></div> System Active</div>
+    <button class="btn-icon" onclick="fetchDashboardData()">⟳ Refresh</button>
   </div>
 </div>
 
-<div class="container">
-  
-  <!-- TAB 1: CONTROL CENTER & CHANNELS -->
-  <div id="tab-analytics" class="tab-content active">
-    
-    <div id="alerts-container" class="alerts-section"></div>
-
-    <div class="kpi-grid">
-      <div class="kpi-card">
-        <div class="kpi-header">
-          <span class="kpi-label">Active Profiles</span>
-          <div class="kpi-icon">🤖</div>
-        </div>
-        <div class="kpi-val" id="kpi-active-bots">3</div>
-        <div class="kpi-sub">Autonomous Ingestion Listeners</div>
-      </div>
-
-      <div class="kpi-card">
-        <div class="kpi-header">
-          <span class="kpi-label">Published Shorts</span>
-          <div class="kpi-icon">🎬</div>
-        </div>
-        <div class="kpi-val" id="kpi-total-reels">--</div>
-        <div class="kpi-sub">Multi-platform uploads</div>
-      </div>
-
-      <div class="kpi-card">
-        <div class="kpi-header">
-          <span class="kpi-label">Supabase Sync</span>
-          <div class="kpi-icon">🗄️</div>
-        </div>
-        <div class="kpi-val" id="kpi-db-status" style="font-size: 18px; color: var(--success)">PostgreSQL Ready</div>
-        <div class="kpi-sub">Database Synchronized</div>
-      </div>
-
-      <div class="kpi-card">
-        <div class="kpi-header">
-          <span class="kpi-label">System Health</span>
-          <div class="kpi-icon">❤️</div>
-        </div>
-        <div class="kpi-val" id="kpi-health-score" style="color: var(--success)">100%</div>
-        <div class="kpi-sub">Pipeline Engines Active</div>
-      </div>
+<div class="app-body">
+  <!-- SIDEBAR NAVIGATION -->
+  <div class="sidebar">
+    <div class="nav-section-label">Control</div>
+    <div class="nav-item active" data-tab="overview" onclick="switchTab('overview', this)">
+      <span>📊</span> Overview & Control
+    </div>
+    <div class="nav-item" data-tab="queue" onclick="switchTab('queue', this)">
+      <span>⏳</span> Queue Manager <span class="nav-badge" id="nav-badge-queued">0</span>
+    </div>
+    <div class="nav-item" data-tab="inject" onclick="switchTab('inject', this)">
+      <span>＋</span> Inject Link
+    </div>
+    <div class="nav-item" data-tab="viral" onclick="switchTab('viral', this)">
+      <span>🔥</span> Viral Graphs
+    </div>
+    <div class="nav-item" data-tab="config" onclick="switchTab('config', this)">
+      <span>⚙️</span> Configuration
+    </div>
+    <div class="nav-item" data-tab="logs" onclick="switchTab('logs', this)">
+      <span>▶</span> Console Logs
     </div>
 
-    <div class="section-title">
-      Channel Automation Profiles
-      <span id="channel-count-badge">3 Profiles Active</span>
-    </div>
-    <div class="channels-grid" id="channels-container"></div>
-
-    <div class="table-card">
-      <div class="section-title" style="margin-bottom: 20px;">
-        Recent Processing & Publishing Activity Log
-        <input class="search-input" id="activity-search" placeholder="Search activity..." oninput="filterActivityTable()">
-      </div>
-      <div class="table-responsive">
-        <table>
-          <thead>
-            <tr>
-              <th>Shortcode</th>
-              <th>Profile</th>
-              <th>Source Creator</th>
-              <th>Time</th>
-              <th>Status</th>
-              <th>Multi-Platform Links</th>
-            </tr>
-          </thead>
-          <tbody id="activity-table-body">
-            <tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 30px;">Loading activity log...</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
+    <div class="divider"></div>
+    <div class="nav-section-label">Channels</div>
+    <div id="sidebar-channels-list"></div>
   </div>
 
-  <!-- TAB 2: VIRAL ANALYTICS & INTERACTIVE GRAPHS -->
-  <div id="tab-viral" class="tab-content">
+  <!-- MAIN CONTENT AREA -->
+  <div class="main-content">
     
-    <!-- Viral Section Highlights -->
-    <div class="kpi-grid">
-      <div class="kpi-card">
-        <div class="kpi-header">
-          <span class="kpi-label">Total Viral Highs</span>
-          <div class="kpi-icon">🔥</div>
+    <!-- STATS HEADER BAR -->
+    <div class="section-stats">
+      <div class="stat-grid">
+        <div class="stat-card" style="border-top: 2px solid var(--primary);">
+          <div class="stat-val" style="color: var(--primary);" id="stat-total-queue">0</div>
+          <div class="stat-lbl">Total Items</div>
         </div>
-        <div class="kpi-val" id="kpi-viral-highs" style="color: var(--purple)">--</div>
-        <div class="kpi-sub">Reels with Viral Score ≥ 70</div>
-      </div>
-
-      <div class="kpi-card">
-        <div class="kpi-header">
-          <span class="kpi-label">Peak Viral Score</span>
-          <div class="kpi-icon">⚡</div>
+        <div class="stat-card" style="border-top: 2px solid var(--warning);">
+          <div class="stat-val" style="color: var(--warning);" id="stat-pending">0</div>
+          <div class="stat-lbl">Pending Queued</div>
         </div>
-        <div class="kpi-val" id="kpi-peak-viral" style="color: var(--primary)">96/100</div>
-        <div class="kpi-sub">Top batch performance</div>
-      </div>
-
-      <div class="kpi-card">
-        <div class="kpi-header">
-          <span class="kpi-label">Total Video Plays</span>
-          <div class="kpi-icon">👀</div>
+        <div class="stat-card" style="border-top: 2px solid var(--primary);">
+          <div class="stat-val" style="color: var(--primary);" id="stat-processing">0</div>
+          <div class="stat-lbl">Processing</div>
         </div>
-        <div class="kpi-val" id="kpi-total-plays">--</div>
-        <div class="kpi-sub">Aggregated views count</div>
-      </div>
-
-      <div class="kpi-card">
-        <div class="kpi-header">
-          <span class="kpi-label">Avg Engagement Score</span>
-          <div class="kpi-icon">📈</div>
+        <div class="stat-card" style="border-top: 2px solid var(--success);">
+          <div class="stat-val" style="color: var(--success);" id="stat-published">0</div>
+          <div class="stat-lbl">Published</div>
         </div>
-        <div class="kpi-val" id="kpi-avg-score" style="color: var(--success)">84</div>
-        <div class="kpi-sub">Across all tracked reels</div>
+        <div class="stat-card" style="border-top: 2px solid var(--danger);">
+          <div class="stat-val" style="color: var(--danger);" id="stat-failed">0</div>
+          <div class="stat-lbl">Failed</div>
+        </div>
       </div>
     </div>
 
-    <!-- Controls & Filters Bar -->
-    <div class="viral-controls-bar">
-      <div class="filter-pills" id="niche-pills-container">
-        <button class="pill-btn active" data-niche="all" onclick="filterViralNiche(this.dataset.niche, this)">All Channels</button>
-      </div>
-      <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-        <input class="search-input" id="viral-search-input" placeholder="Search viral reel, tag, or creator..." oninput="applyViralSearch()">
-        <button class="btn-icon" onclick="exportViralCsv()">📥 Export CSV</button>
-      </div>
+    <!-- MAIN NAVIGATION TABS BAR -->
+    <div class="tabs-bar">
+      <div class="tab-item active" data-tab="overview" onclick="switchTab('overview', this)">📊 Overview & Control</div>
+      <div class="tab-item" data-tab="queue" onclick="switchTab('queue', this)">⏳ Queue Manager</div>
+      <div class="tab-item" data-tab="inject" onclick="switchTab('inject', this)">＋ Inject Link</div>
+      <div class="tab-item" data-tab="viral" onclick="switchTab('viral', this)">🔥 Viral Analytics & Graphs</div>
+      <div class="tab-item" data-tab="config" onclick="switchTab('config', this)">⚙️ Channel Config</div>
+      <div class="tab-item" data-tab="logs" onclick="switchTab('logs', this)">📜 Live Console</div>
     </div>
 
-    <!-- Interactive Chart.js Graphs Grid -->
-    <div class="graphs-grid">
+    <!-- TAB 1: OVERVIEW & CONTROL -->
+    <div id="tab-overview" class="tab-pane active">
+      <div id="alerts-container" style="margin-bottom: 20px;"></div>
+      <div style="font-size: 15px; font-weight: 700; color: #fff; margin-bottom: 14px;">Active Channel Profiles</div>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 18px; margin-bottom: 28px;" id="channels-cards-container"></div>
       
-      <!-- Graph 1: Viral Growth & Score Trend -->
-      <div class="chart-card">
-        <div class="chart-header">
-          <div class="chart-title">📈 Viral Score & Play Count Trend</div>
-          <span class="chart-badge">Line / Area Chart</span>
+      <div class="table-card">
+        <div style="font-size: 15px; font-weight: 700; color: #fff; margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center;">
+          <span>Recent Processing Activity</span>
+          <input class="input-field" style="width: 220px; padding: 6px 12px;" id="activity-search" placeholder="Search activity..." oninput="filterActivityTable()">
         </div>
-        <div class="chart-container">
-          <canvas id="chart-viral-trend"></canvas>
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th>Shortcode</th>
+                <th>Profile</th>
+                <th>Source Channel</th>
+                <th>Time</th>
+                <th>Status</th>
+                <th>Multi-Platform Links</th>
+              </tr>
+            </thead>
+            <tbody id="activity-table-body">
+              <tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 24px;">Loading activity log...</td></tr>
+            </tbody>
+          </table>
         </div>
-      </div>
-
-      <!-- Graph 2: Niche Comparison -->
-      <div class="chart-card">
-        <div class="chart-header">
-          <div class="chart-title">📊 Channel & Niche Performance</div>
-          <span class="chart-badge">Grouped Bar Chart</span>
-        </div>
-        <div class="chart-container">
-          <canvas id="chart-niche-bar"></canvas>
-        </div>
-      </div>
-
-      <!-- Graph 3: Score Distribution -->
-      <div class="chart-card">
-        <div class="chart-header">
-          <div class="chart-title">🎯 Viral Score Tiers Breakdown</div>
-          <span class="chart-badge">Doughnut Chart</span>
-        </div>
-        <div class="chart-container">
-          <canvas id="chart-score-doughnut"></canvas>
-        </div>
-      </div>
-
-      <!-- Graph 4: Engagement Components Ratio -->
-      <div class="chart-card">
-        <div class="chart-header">
-          <div class="chart-title">🔥 Engagement Ratios (Plays vs Likes vs Comments)</div>
-          <span class="chart-badge">Metrics Component Bar</span>
-        </div>
-        <div class="chart-container">
-          <canvas id="chart-engagement-bar"></canvas>
-        </div>
-      </div>
-
-    </div>
-
-    <!-- AI Viral Patterns & Copywriting Insights -->
-    <div class="table-card" style="background: linear-gradient(135deg, rgba(192, 132, 252, 0.08), rgba(15, 23, 42, 0.9)); border-color: rgba(192, 132, 252, 0.25);">
-      <div class="section-title" style="color: var(--purple);">
-        💡 AI Viral Analyzer Copywriting Insights & Patterns
-        <span>LLM Prompt Feedback Loop</span>
-      </div>
-      <div id="viral-patterns-content" style="font-family: var(--font-mono); font-size: 13px; color: #e2e8f0; white-space: pre-wrap; line-height: 1.7; background: rgba(7, 10, 18, 0.6); padding: 18px; border-radius: 14px; border: 1px solid var(--card-border);">
-        Analyzing historical high-CTR hooks...
       </div>
     </div>
 
-    <!-- Top Viral Reels Leaderboard Table -->
-    <div class="viral-leaderboard-card">
-      <div class="section-title">
-        🏆 Top Viral Reels Leaderboard
-        <span>Sorted by Viral Score (0–100)</span>
+    <!-- TAB 2: QUEUE MANAGER -->
+    <div id="tab-queue" class="tab-pane">
+      <div class="filter-row">
+        <span class="filter-label">Channel:</span>
+        <div id="queue-channel-pills" style="display: flex; gap: 6px; flex-wrap: wrap;">
+          <button class="pill-btn active" data-filter="all" onclick="filterQueueChannel(this.dataset.filter, this)">All Channels</button>
+        </div>
+        <span class="filter-label" style="margin-left: 12px;">Status:</span>
+        <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+          <button class="pill-btn active" data-status="all" onclick="filterQueueStatus(this.dataset.status, this)">All</button>
+          <button class="pill-btn" data-status="queued" onclick="filterQueueStatus(this.dataset.status, this)">Queued</button>
+          <button class="pill-btn" data-status="processing" onclick="filterQueueStatus(this.dataset.status, this)">Processing</button>
+          <button class="pill-btn" data-status="published" onclick="filterQueueStatus(this.dataset.status, this)">Published</button>
+          <button class="pill-btn" data-status="failed" onclick="filterQueueStatus(this.dataset.status, this)">Failed</button>
+        </div>
       </div>
-      <div class="table-responsive">
-        <table>
-          <thead>
-            <tr>
-              <th>Rank</th>
-              <th>Reel Shortcode</th>
-              <th>Title / Caption Hook</th>
-              <th>Channel / Niche</th>
-              <th>Plays / Views</th>
-              <th>Likes</th>
-              <th>Comments</th>
-              <th>Viral Score</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody id="viral-leaderboard-body">
-            <tr><td colspan="9" style="text-align: center; color: var(--text-muted); padding: 30px;">Loading viral leaderboard...</td></tr>
-          </tbody>
-        </table>
+
+      <div class="table-card">
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th>Shortcode</th>
+                <th>Channel</th>
+                <th>Source URL</th>
+                <th>Added Time</th>
+                <th>Slot #</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="queue-table-body">
+              <tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 30px;">Loading queue items...</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
 
-  </div>
+    <!-- TAB 3: INJECT LINK -->
+    <div id="tab-inject" class="tab-pane">
+      <div style="max-width: 640px;">
+        <div style="font-size: 16px; font-weight: 700; color: #fff; margin-bottom: 4px;">Inject Source Reel Link</div>
+        <div style="color: var(--text-muted); margin-bottom: 20px;">Paste any Instagram Reel or video URL. It will be routed directly to the selected channel profile and added to its active ingestion queue.</div>
 
-  <!-- TAB 3: LIVE CONSOLE LOGS -->
-  <div id="tab-logs" class="tab-content">
-    <div id="log-console-wrap">
-      <div id="console-toolbar">
-        <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-          <input id="log-filter" placeholder="Filter logs (e.g. error, DirectUploader)..." oninput="applyLogFilter()">
-          <span id="log-count" style="color: var(--text-muted); font-size: 13px;">0 entries</span>
+        <div style="margin-bottom: 18px;">
+          <label style="font-size: 10px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; display: block; margin-bottom: 8px;">Select Target Channel</label>
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px;" id="inject-channels-grid"></div>
         </div>
-        <div style="display: flex; gap: 10px;">
-          <button class="btn-icon" onclick="clearLogConsole()">Clear Console</button>
+
+        <div style="margin-bottom: 24px;">
+          <label style="font-size: 10px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; display: block; margin-bottom: 8px;">Source URL</label>
+          <div style="display: flex; gap: 10px;">
+            <input class="input-field" style="font-family: var(--font-mono);" id="inject-url-input" placeholder="https://www.instagram.com/reel/XXXXXXXX/" onkeydown="if(event.key==='Enter') triggerInjectLink()">
+            <button class="btn-primary" onclick="triggerInjectLink()">＋ Add to Queue</button>
+          </div>
+        </div>
+
+        <div class="table-card">
+          <div style="font-size: 11px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px;">Recently Injected Items</div>
+          <div id="inject-recent-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 4: VIRAL ANALYTICS & GRAPHS -->
+    <div id="tab-viral" class="tab-pane">
+      <div class="filter-row">
+        <div id="viral-niche-pills" style="display: flex; gap: 6px; flex-wrap: wrap;">
+          <button class="pill-btn active" data-niche="all" onclick="filterViralNiche(this.dataset.niche, this)">All Channels</button>
+        </div>
+        <div style="margin-left: auto; display: flex; gap: 10px;">
+          <input class="input-field" style="width: 220px; padding: 6px 12px;" id="viral-search-input" placeholder="Search viral reels..." oninput="applyViralSearch()">
+          <button class="btn-icon" onclick="exportViralCsv()">📥 Export CSV</button>
+        </div>
+      </div>
+
+      <div class="graphs-grid">
+        <div class="chart-card">
+          <div style="display: flex; justify-content: space-between; font-weight: 700; color: #fff;">📈 Viral Score & Play Count Trend</div>
+          <div class="chart-container"><canvas id="chart-viral-trend"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div style="display: flex; justify-content: space-between; font-weight: 700; color: #fff;">📊 Channel & Niche Performance</div>
+          <div class="chart-container"><canvas id="chart-niche-bar"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div style="display: flex; justify-content: space-between; font-weight: 700; color: #fff;">🎯 Viral Score Tiers Breakdown</div>
+          <div class="chart-container"><canvas id="chart-score-doughnut"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div style="display: flex; justify-content: space-between; font-weight: 700; color: #fff;">🔥 Engagement Ratios (Likes & Comments)</div>
+          <div class="chart-container"><canvas id="chart-engagement-bar"></canvas></div>
+        </div>
+      </div>
+
+      <div class="table-card">
+        <div style="font-size: 15px; font-weight: 700; color: var(--purple); margin-bottom: 10px;">💡 AI Copywriting Insights & High-CTR Hooks</div>
+        <div id="viral-patterns-content" style="font-family: var(--font-mono); font-size: 12px; color: var(--text); white-space: pre-wrap; background: var(--bg); padding: 14px; border-radius: 8px; border: 1px solid var(--card-border);">Loading AI feedback loop...</div>
+      </div>
+
+      <div class="table-card">
+        <div style="font-size: 15px; font-weight: 700; color: #fff; margin-bottom: 14px;">🏆 Top Viral Reels Leaderboard</div>
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th>Rank</th>
+                <th>Shortcode</th>
+                <th>Title / Caption Hook</th>
+                <th>Channel</th>
+                <th>Plays / Views</th>
+                <th>Likes</th>
+                <th>Comments</th>
+                <th>Viral Score</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="viral-leaderboard-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 5: CONFIGURATION -->
+    <div id="tab-config" class="tab-pane">
+      <div style="max-width: 720px;">
+        <div style="font-size: 16px; font-weight: 700; color: #fff; margin-bottom: 4px;">Channel Automation Configuration</div>
+        <div style="color: var(--text-muted); margin-bottom: 20px;">Set daily reel limits, posting schedules, and automated retry policies per channel.</div>
+        <div id="config-cards-list"></div>
+      </div>
+    </div>
+
+    <!-- TAB 6: CONSOLE LOGS -->
+    <div id="tab-logs" class="tab-pane">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap; gap: 10px;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <input class="input-field" style="width: 260px; padding: 6px 12px;" id="log-filter" placeholder="Filter console logs..." oninput="applyLogFilter()">
+          <span id="log-count" style="color: var(--text-muted); font-size: 12px;">0 entries</span>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn-icon" onclick="clearLogConsole()">Clear</button>
           <button class="btn-icon" id="scrollToggleBtn" onclick="toggleAutoScroll()">Auto-scroll: ON</button>
         </div>
       </div>
-      <div id="log-container"></div>
-    </div>
-  </div>
-
-</div>
-
-<!-- INTERACTIVE CHANNEL MODAL DRAWER -->
-<div class="modal-overlay" id="channel-modal" onclick="closeModalOnOverlay(event)">
-  <div class="modal-content">
-    <div class="modal-header">
-      <div style="display: flex; align-items: center; gap: 16px;">
-        <div class="ch-avatar" id="modal-ch-avatar">CO</div>
-        <div>
-          <h2 id="modal-ch-name" style="font-size: 22px; font-weight: 800;">CodeOrCap</h2>
-          <div style="display: flex; align-items: center; gap: 10px; margin-top: 4px;">
-            <span id="modal-ch-handle" style="color: var(--primary); font-weight: 600;">@codeorcap</span>
-            <span id="modal-ch-niche" class="ch-niche">TECH</span>
-          </div>
-        </div>
-      </div>
-      <button class="modal-close" onclick="closeModal()">✕</button>
-    </div>
-
-    <!-- Quick Remote Actions Bar -->
-    <div style="background: rgba(7, 10, 18, 0.6); padding: 16px; border-radius: 16px; border: 1px solid var(--card-border);">
-      <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; color: var(--text-muted); margin-bottom: 10px; letter-spacing: 0.5px;">Remote Pipeline Controls</div>
-      <div class="modal-actions">
-        <button class="btn-action-primary" onclick="triggerForceStart()">⚡ Force-Start Batch Now</button>
-        <button class="btn-danger" onclick="triggerClearQueue()">🧹 Clear Queue</button>
-        <button class="btn-icon" onclick="openSelectedChannelModal()">🔄 Refresh Queue</button>
-      </div>
-    </div>
-
-    <!-- Active Queue Section -->
-    <div>
-      <div class="section-title">
-        Queued Reels Batch (<span id="modal-queue-count">0</span> queued)
-        <span id="modal-slot-info">Slot 0 / 6</span>
-      </div>
-      <div class="queue-list" id="modal-queue-list"></div>
-    </div>
-
-    <!-- Complete History Section -->
-    <div>
-      <div class="section-title">Published Reels & Platform Links</div>
-      <div class="table-responsive">
-        <table>
-          <thead>
-            <tr>
-              <th>Reel Shortcode</th>
-              <th>Creator Source</th>
-              <th>Original Source</th>
-              <th>Status</th>
-              <th>Platform Upload Links</th>
-            </tr>
-          </thead>
-          <tbody id="modal-history-table"></tbody>
-        </table>
-      </div>
+      <div id="log-container" style="background: var(--card); border: 1px solid var(--card-border); border-radius: 10px; padding: 14px; height: 60vh; overflow-y: auto; font-family: var(--font-mono); font-size: 12px;"></div>
     </div>
 
   </div>
 </div>
+
+<!-- TOAST NOTIFICATION POPUP -->
+<div id="toast">✓ Notification</div>
 
 <script>
-  let activeTab = 'analytics';
+  let activeTab = 'overview';
   let autoScroll = true;
   let logTotal = 0;
   let logFilterStr = '';
-  let selectedChannelKey = null;
-  let globalDashboardData = null;
+  let selectedInjectChannel = 'codeorcap';
+  let queueFilterChannel = 'all';
+  let queueFilterStatus = 'all';
   let selectedNicheFilter = 'all';
+  let globalDashboardData = null;
 
-  // Chart.js Instances
   let chartTrend = null;
   let chartNiche = null;
   let chartDoughnut = null;
   let chartEngagement = null;
 
+  function showToast(msg, type) {
+    const el = document.getElementById('toast');
+    el.textContent = (type === 'warn' ? '⚠️ ' : type === 'err' ? '❌ ' : '✓ ') + msg;
+    el.style.background = type === 'warn' ? '#9a6700' : type === 'err' ? '#da3633' : '#238636';
+    el.style.display = 'flex';
+    setTimeout(() => { el.style.display = 'none'; }, 3000);
+  }
+
   function switchTab(tab, btnEl) {
     activeTab = tab;
-    document.querySelectorAll('.nav-tabs .tab-btn').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-    
-    const targetBtn = btnEl || document.querySelector('.nav-tabs .tab-btn[data-tab="' + tab + '"]');
-    if (targetBtn) targetBtn.classList.add('active');
-    
-    const targetContent = document.getElementById('tab-' + tab);
-    if (targetContent) targetContent.classList.add('active');
+    document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-item').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-pane').forEach(c => c.classList.remove('active'));
+
+    const sideItem = document.querySelector('.sidebar .nav-item[data-tab="' + tab + '"]');
+    if (sideItem) sideItem.classList.add('active');
+
+    const topItem = document.querySelector('.tabs-bar .tab-item[data-tab="' + tab + '"]');
+    if (topItem) topItem.classList.add('active');
+
+    const pane = document.getElementById('tab-' + tab);
+    if (pane) pane.classList.add('active');
 
     if (tab === 'viral' && globalDashboardData && globalDashboardData.viralAnalytics) {
       setTimeout(() => renderViralCharts(globalDashboardData.viralAnalytics), 50);
@@ -986,136 +865,105 @@ const HTML = `<!DOCTYPE html>
       renderDashboard(data);
     } catch (e) {
       console.error('Failed to fetch dashboard data', e);
-      const tableBody = document.getElementById('activity-table-body');
-      if (tableBody && tableBody.innerHTML.includes('Loading activity log')) {
-        tableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--warning); padding: 20px;">⚠️ Re-connecting to server API... Click 🔄 Refresh above to retry.</td></tr>';
-      }
     }
   }
 
   function renderDashboard(data) {
-    // Render Alerts
-    const alertsContainer = document.getElementById('alerts-container');
-    alertsContainer.innerHTML = '';
-    
-    if (data.systemHealth && data.systemHealth.priorityFixes && data.systemHealth.priorityFixes.length > 0) {
-      data.systemHealth.priorityFixes.forEach(fix => {
-        const div = document.createElement('div');
-        div.className = 'alert-card ' + (fix.severity === 'medium' ? 'warning' : '');
-        div.innerHTML = '<div class="alert-icon">' + (fix.severity === 'high' ? '🚨' : '⚠️') + '</div>' +
-          '<div class="alert-body">' +
-            '<div class="alert-title">' + fix.title + '<span class="alert-badge">' + fix.severity + ' Priority</span></div>' +
-            '<div class="alert-desc">' + fix.message + '</div>' +
-            '<div class="alert-hint">Fix Hint: ' + fix.actionHint + '</div>' +
-          '</div>';
-        alertsContainer.appendChild(div);
-      });
+    // Header Stats
+    let qTotal = 0, qPending = 0, qProc = 0, qPub = 0, qFail = 0;
+    if (data.queue) {
+      qTotal = data.queue.length;
+      qPending = data.queue.filter(q => q.status === 'queued').length;
+      qProc = data.queue.filter(q => q.status === 'processing').length;
+      qPub = data.queue.filter(q => q.status === 'published').length;
+      qFail = data.queue.filter(q => q.status === 'failed').length;
     }
+    document.getElementById('stat-total-queue').textContent = qTotal;
+    document.getElementById('stat-pending').textContent = qPending;
+    document.getElementById('stat-processing').textContent = qProc;
+    document.getElementById('stat-published').textContent = qPub;
+    document.getElementById('stat-failed').textContent = qFail;
+    document.getElementById('nav-badge-queued').textContent = qPending;
 
-    let totalPublished = 0;
-    data.channels.forEach(c => { totalPublished += (c.stats ? c.stats.publishedCount : 0); });
-    document.getElementById('kpi-total-reels').textContent = totalPublished + ' Reels';
-    document.getElementById('kpi-active-bots').textContent = data.systemHealth.activeProfilesCount || 3;
-    document.getElementById('kpi-db-status').textContent = data.systemHealth.dbStatus === 'connected' ? 'PostgreSQL Ready' : 'Database Offline';
-    document.getElementById('kpi-db-status').style.color = data.systemHealth.dbStatus === 'connected' ? 'var(--success)' : 'var(--danger)';
-
-    // Render Channels Grid
-    const channelsContainer = document.getElementById('channels-container');
-    channelsContainer.innerHTML = '';
-
-    // Render Niche Pills in Viral Section
-    const pillsContainer = document.getElementById('niche-pills-container');
-    pillsContainer.innerHTML = '<button class="pill-btn ' + (selectedNicheFilter === 'all' ? 'active' : '') + '" data-niche="all" onclick="filterViralNiche(this.dataset.niche, this)">All Channels</button>';
-
-    data.channels.forEach(ch => {
-      // Add Niche Pill
-      const pillBtn = document.createElement('button');
-      pillBtn.className = 'pill-btn ' + (selectedNicheFilter === ch.key ? 'active' : '');
-      pillBtn.textContent = ch.name;
-      pillBtn.onclick = () => filterViralNiche(ch.key, pillBtn);
-      pillsContainer.appendChild(pillBtn);
-
-      const card = document.createElement('div');
-      card.className = 'channel-card';
-      card.onclick = () => openChannelModal(ch.key);
-
-      const lastPub = ch.lastPublished;
-      let lastPubHtml = '';
-      if (lastPub) {
-        lastPubHtml = '<div class="last-pub-box">' +
-          '<div class="last-pub-title">' +
-            '<span>Last Published Reel</span>' +
-            '<span class="' + (lastPub.status === 'published' ? 'badge-success' : 'badge-failed') + '">' + lastPub.status + '</span>' +
-          '</div>' +
-          '<div class="last-pub-content">' +
-            '<div>' +
-              '<span class="reel-code">#' + lastPub.shortcode + '</span>' +
-              '<div style="font-size: 11px; color: var(--text-muted);">From @' + (lastPub.channel || 'source') + '</div>' +
-            '</div>' +
-            '<div class="reel-links">' +
-              '<a href="' + lastPub.originalUrl + '" target="_blank" class="reel-link-btn" onclick="event.stopPropagation()">📷 Original Source</a>' +
-              (lastPub.youtubeUrl ? '<a href="' + lastPub.youtubeUrl + '" target="_blank" class="reel-link-btn" onclick="event.stopPropagation()">▶ YouTube</a>' : '') +
-              (lastPub.instagramUrl ? '<a href="' + lastPub.instagramUrl + '" target="_blank" class="reel-link-btn" onclick="event.stopPropagation()">📸 Insta</a>' : '') +
-            '</div>' +
-          '</div>' +
-        '</div>';
-      } else {
-        lastPubHtml = '<div class="last-pub-box">' +
-          '<div class="last-pub-title">Last Published Reel</div>' +
-          '<div style="font-size: 12px; color: var(--text-muted);">No reels published yet today. Queue active.</div>' +
-        '</div>';
-      }
-
-      card.innerHTML = '<span class="card-click-hint">Inspect Queue ➔</span>' +
-        '<div class="ch-header">' +
-          '<div class="ch-info">' +
-            '<div class="ch-avatar">' + ch.name.slice(0,2).toUpperCase() + '</div>' +
-            '<div>' +
-              '<div class="ch-name">' + ch.name + ' <span class="ch-niche">' + ch.niche + '</span></div>' +
-              '<div style="font-size: 12px; color: var(--text-muted);">Schedule: ' + ch.scheduleTime + ' IST (' + ch.gapHours + 'h gap)</div>' +
-            '</div>' +
-          '</div>' +
-        '</div>' +
-
-        '<div class="progress-box">' +
-          '<div class="progress-header">' +
-            '<span class="progress-title">⏱️ Ingestion & Batch Progress</span>' +
-            '<span class="progress-pct">Slot ' + ch.currentSlot + ' / ' + ch.totalSlots + ' (' + ch.progressPct + '%)</span>' +
-          '</div>' +
-          '<div class="progress-bar-bg">' +
-            '<div class="progress-bar-fill" style="width: ' + ch.progressPct + '%"></div>' +
-          '</div>' +
-          '<div class="progress-foot">' +
-            '<span>Daily Target: ' + ch.dailyTarget + ' reels</span>' +
-            '<span>Current Queue: <strong>' + ch.queueCount + ' queued</strong></span>' +
-          '</div>' +
-        '</div>' +
-
-        lastPubHtml +
-
-        '<div class="ch-metrics-row">' +
-          '<div class="mini-metric">' +
-            '<div class="mini-val">' + ch.stats.publishedCount + '</div>' +
-            '<div class="mini-lbl">Published</div>' +
-          '</div>' +
-          '<div class="mini-metric">' +
-            '<div class="mini-val">' + ch.stats.failedCount + '</div>' +
-            '<div class="mini-lbl">Failed</div>' +
-          '</div>' +
-          '<div class="mini-metric">' +
-            '<div class="mini-val" style="color: var(--purple)">' + ch.stats.viralCount + '</div>' +
-            '<div class="mini-lbl">Viral Highs</div>' +
-          '</div>' +
-        '</div>';
-      channelsContainer.appendChild(card);
-    });
-
+    // Sidebar & Inject Channels
+    renderChannelsList(data.channels);
     renderActivityTable(data.recentHistory);
+    renderQueueTable(data.queue);
+    renderInjectTab(data.channels, data.queue);
+    renderConfigTab(data.channels);
 
-    // Render Viral Section if data exists
     if (data.viralAnalytics) {
       renderViralSection(data.viralAnalytics);
     }
+  }
+
+  function renderChannelsList(channels) {
+    const sideList = document.getElementById('sidebar-channels-list');
+    sideList.innerHTML = '';
+    
+    const pillsList = document.getElementById('queue-channel-pills');
+    pillsList.innerHTML = '<button class="pill-btn ' + (queueFilterChannel === 'all' ? 'active' : '') + '" data-filter="all" onclick="filterQueueChannel(this.dataset.filter, this)">All Channels</button>';
+
+    const viralPills = document.getElementById('viral-niche-pills');
+    viralPills.innerHTML = '<button class="pill-btn ' + (selectedNicheFilter === 'all' ? 'active' : '') + '" data-niche="all" onclick="filterViralNiche(this.dataset.niche, this)">All Channels</button>';
+
+    const cardsContainer = document.getElementById('channels-cards-container');
+    cardsContainer.innerHTML = '';
+
+    channels.forEach(c => {
+      // Sidebar Item
+      const item = document.createElement('div');
+      item.className = 'nav-item';
+      item.onclick = () => { switchTab('queue'); filterQueueChannel(c.key); };
+      item.innerHTML = '<div class="avatar-box avatar-' + c.color + '" style="width: 20px; height: 20px; font-size: 8px; border-radius: 4px;">' + c.initials + '</div>' +
+        '<span>' + c.name + '</span>' +
+        '<span class="nav-badge">' + c.queueCount + '</span>';
+      sideList.appendChild(item);
+
+      // Queue Pill
+      const pill = document.createElement('button');
+      pill.className = 'pill-btn ' + (queueFilterChannel === c.key ? 'active' : '');
+      pill.dataset.filter = c.key;
+      pill.textContent = c.name;
+      pill.onclick = function() { filterQueueChannel(this.dataset.filter, this); };
+      pillsList.appendChild(pill);
+
+      // Viral Pill
+      const vPill = document.createElement('button');
+      vPill.className = 'pill-btn ' + (selectedNicheFilter === c.key ? 'active' : '');
+      vPill.dataset.niche = c.key;
+      vPill.textContent = c.name;
+      vPill.onclick = function() { filterViralNiche(this.dataset.niche, this); };
+      viralPills.appendChild(vPill);
+
+      // Overview Card
+      const card = document.createElement('div');
+      card.className = 'table-card';
+      card.innerHTML = '<div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">' +
+          '<div style="display: flex; align-items: center; gap: 10px;">' +
+            '<div class="avatar-box avatar-' + c.color + '">' + c.initials + '</div>' +
+            '<div>' +
+              '<div style="font-weight: 700; color: #fff; font-size: 15px;">' + c.name + ' <span class="code-badge">' + c.niche + '</span></div>' +
+              '<div style="color: var(--text-muted); font-size: 11px;">' + c.handle + ' · Daily Limit: ' + c.dailyLimit + '/day</div>' +
+            '</div>' +
+          '</div>' +
+          '<button class="btn-icon" data-tab="config" onclick="switchTab(this.dataset.tab, this)">⚙️ Config</button>' +
+        '</div>' +
+        '<div style="background: var(--bg); padding: 12px; border-radius: 8px; margin-bottom: 12px;">' +
+          '<div style="display: flex; justify-content: space-between; font-weight: 600; margin-bottom: 6px;">' +
+            '<span>Batch Progress</span><span>Slot ' + c.currentSlot + ' / ' + c.totalSlots + ' (' + c.progressPct + '%)</span>' +
+          '</div>' +
+          '<div style="height: 8px; background: #21262d; border-radius: 6px; overflow: hidden;">' +
+            '<div style="height: 100%; width: ' + c.progressPct + '%; background: linear-gradient(90deg, var(--primary), var(--purple));"></div>' +
+          '</div>' +
+        '</div>' +
+        '<div style="display: flex; justify-content: space-around; text-align: center;">' +
+          '<div><div style="font-size: 18px; font-weight: 800; font-family: var(--font-mono); color: var(--success);">' + c.stats.publishedCount + '</div><div style="font-size: 10px; color: var(--text-muted);">Published</div></div>' +
+          '<div><div style="font-size: 18px; font-weight: 800; font-family: var(--font-mono); color: var(--warning);">' + c.queueCount + '</div><div style="font-size: 10px; color: var(--text-muted);">In Queue</div></div>' +
+          '<div><div style="font-size: 18px; font-weight: 800; font-family: var(--font-mono); color: var(--purple);">' + c.stats.viralCount + '</div><div style="font-size: 10px; color: var(--text-muted);">Viral Highs</div></div>' +
+        '</div>';
+      cardsContainer.appendChild(card);
+    });
   }
 
   function renderActivityTable(history) {
@@ -1123,7 +971,7 @@ const HTML = `<!DOCTYPE html>
     tableBody.innerHTML = '';
 
     if (!history || history.length === 0) {
-      tableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 20px;">No processed reels recorded in database history yet.</td></tr>';
+      tableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 20px;">No processed activity records logged yet.</td></tr>';
       return;
     }
 
@@ -1131,16 +979,15 @@ const HTML = `<!DOCTYPE html>
       const tr = document.createElement('tr');
       const ts = (item.published_at || item.picked_at || '').replace('T', ' ').slice(0, 19);
       const origUrl = 'https://www.instagram.com/reel/' + item.shortcode + '/';
-      tr.innerHTML = '<td style="font-family: var(--font-mono); font-weight: 700;">#' + item.shortcode + '</td>' +
+      tr.innerHTML = '<td><span class="code-badge">#' + item.shortcode + '</span></td>' +
         '<td>' + (item.profile_key || 'default') + '</td>' +
         '<td>@' + (item.channel || 'source') + '</td>' +
         '<td style="color: var(--text-muted)">' + ts + '</td>' +
-        '<td><span class="' + (item.failed ? 'badge-failed' : 'badge-success') + '">' + (item.failed ? 'FAILED' : 'SUCCESS') + '</span></td>' +
+        '<td><span class="status-badge ' + (item.failed ? 'status-failed' : 'status-published') + '">' + (item.failed ? 'FAILED' : 'PUBLISHED') + '</span></td>' +
         '<td>' +
           '<div style="display: flex; gap: 6px; flex-wrap: wrap;">' +
-            '<a href="' + origUrl + '" target="_blank" class="reel-link-btn" style="padding: 2px 6px; font-size: 11px;">📷 Original Source</a>' +
-            (item.youtube_url ? '<a href="' + item.youtube_url + '" target="_blank" class="reel-link-btn" style="padding: 2px 6px; font-size: 11px;">▶ YouTube</a>' : '') +
-            (item.instagram_url ? '<a href="' + item.instagram_url + '" target="_blank" class="reel-link-btn" style="padding: 2px 6px; font-size: 11px;">📸 Insta</a>' : '') +
+            '<a href="' + origUrl + '" target="_blank" class="btn-icon" style="padding: 2px 8px; font-size: 11px;">📷 Source</a>' +
+            (item.youtube_url ? '<a href="' + item.youtube_url + '" target="_blank" class="btn-icon" style="padding: 2px 8px; font-size: 11px;">▶ YouTube</a>' : '') +
           '</div>' +
         '</td>';
       tableBody.appendChild(tr);
@@ -1155,17 +1002,249 @@ const HTML = `<!DOCTYPE html>
     });
   }
 
+  /* QUEUE MANAGER RENDERER */
+  function renderQueueTable(queue) {
+    const tableBody = document.getElementById('queue-table-body');
+    tableBody.innerHTML = '';
+
+    if (!queue || queue.length === 0) {
+      tableBody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 30px;">Queue is currently empty. Use "Inject Link" tab to add source reels.</td></tr>';
+      return;
+    }
+
+    const filtered = queue.filter(q => {
+      const chOk = queueFilterChannel === 'all' || (q.channel || q.profileKey) === queueFilterChannel;
+      const stOk = queueFilterStatus === 'all' || q.status === queueFilterStatus;
+      return chOk && stOk;
+    });
+
+    if (filtered.length === 0) {
+      tableBody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 30px;">No queue items match selected filters.</td></tr>';
+      return;
+    }
+
+    filtered.forEach(item => {
+      const tr = document.createElement('tr');
+      const ts = (item.addedAt || '').replace('T', ' ').slice(0, 19);
+      tr.innerHTML = '<td><span class="code-badge">#' + item.shortcode + '</span></td>' +
+        '<td style="font-weight: 600; color: #fff;">' + (item.channel || item.profileKey) + '</td>' +
+        '<td><div style="max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"><a href="' + item.source + '" target="_blank" style="color: var(--primary); font-family: var(--font-mono); font-size: 11px;">' + item.source + '</a></div></td>' +
+        '<td style="color: var(--text-muted); font-size: 11px;">' + ts + '</td>' +
+        '<td style="font-family: var(--font-mono); font-weight: 700;">#' + (item.slot || 1) + '</td>' +
+        '<td><span class="status-badge status-' + item.status + '"><div class="badge-dot" style="background: currentColor"></div>' + item.status + '</span></td>';
+
+      const actionTd = document.createElement('td');
+      const actionDiv = document.createElement('div');
+      actionDiv.style.cssText = 'display: flex; gap: 6px;';
+      if (item.status === 'failed') {
+        const retryBtn = document.createElement('button');
+        retryBtn.className = 'btn-icon';
+        retryBtn.style.color = 'var(--primary)';
+        retryBtn.textContent = '↺ Retry';
+        retryBtn.onclick = () => triggerRetryFailed(item.shortcode, item.channel || item.profileKey);
+        actionDiv.appendChild(retryBtn);
+      }
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'btn-danger';
+      removeBtn.textContent = '✕ Remove';
+      removeBtn.onclick = () => triggerRemoveQueue(item.shortcode, item.channel || item.profileKey);
+      actionDiv.appendChild(removeBtn);
+      actionTd.appendChild(actionDiv);
+      tr.appendChild(actionTd);
+
+      tableBody.appendChild(tr);
+    });
+  }
+
+  function filterQueueChannel(chKey, btnEl) {
+    queueFilterChannel = chKey;
+    document.querySelectorAll('#queue-channel-pills .pill-btn').forEach(b => b.classList.remove('active'));
+    if (btnEl) btnEl.classList.add('active');
+    if (globalDashboardData && globalDashboardData.queue) renderQueueTable(globalDashboardData.queue);
+  }
+
+  function filterQueueStatus(statusKey, btnEl) {
+    queueFilterStatus = statusKey;
+    document.querySelectorAll('[data-status]').forEach(b => b.classList.remove('active'));
+    if (btnEl) btnEl.classList.add('active');
+    if (globalDashboardData && globalDashboardData.queue) renderQueueTable(globalDashboardData.queue);
+  }
+
+  /* INJECT LINK RENDERER */
+  function renderInjectTab(channels, queue) {
+    const grid = document.getElementById('inject-channels-grid');
+    grid.innerHTML = '';
+
+    channels.forEach(c => {
+      const qCount = queue ? queue.filter(q => (q.channel || q.profileKey) === c.key && q.status === 'queued').length : 0;
+      const isSel = selectedInjectChannel === c.key;
+      const card = document.createElement('div');
+      card.className = 'channel-select-card ' + (isSel ? 'selected' : '');
+      card.onclick = () => { selectedInjectChannel = c.key; renderInjectTab(channels, queue); };
+      card.innerHTML = '<div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">' +
+          '<div class="avatar-box avatar-' + c.color + '">' + c.initials + '</div>' +
+          '<div><div style="font-weight: 700; color: #fff;">' + c.name + '</div><div style="font-size: 10px; color: var(--text-muted);">' + c.handle + '</div></div>' +
+        '</div>' +
+        '<div style="font-size: 11px; color: var(--text-muted);">' +
+          '<span style="color: var(--warning); font-weight: 700;">' + qCount + ' queued</span> · limit <span style="color: var(--success); font-weight: 700;">' + c.dailyLimit + '/day</span>' +
+        '</div>';
+      grid.appendChild(card);
+    });
+
+    const recentList = document.getElementById('inject-recent-list');
+    recentList.innerHTML = '';
+    const recentInjected = queue ? queue.filter(q => q.source && q.source.startsWith('http')).slice(0, 5) : [];
+    if (recentInjected.length === 0) {
+      recentList.innerHTML = '<div style="color: var(--text-muted); font-size: 12px;">No links injected recently.</div>';
+    } else {
+      recentInjected.forEach(q => {
+        const item = document.createElement('div');
+        item.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--card-border); font-size: 12px;';
+        item.innerHTML = '<div style="max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' +
+            '<a href="' + q.source + '" target="_blank" style="color: var(--primary); font-family: var(--font-mono);">' + q.source + '</a>' +
+            '<div style="font-size: 10px; color: var(--text-muted);">' + (q.channel || q.profileKey) + '</div>' +
+          '</div>' +
+          '<span class="status-badge status-' + q.status + '">' + q.status + '</span>';
+        recentList.appendChild(item);
+      });
+    }
+  }
+
+  async function triggerInjectLink() {
+    const input = document.getElementById('inject-url-input');
+    const url = input.value.trim();
+    if (!url) { showToast('Please enter a valid Instagram or Video URL', 'warn'); return; }
+
+    try {
+      const res = await fetch('/api/inject-link', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile: selectedInjectChannel, url })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast('Link successfully injected into ' + selectedInjectChannel + ' queue!', 'ok');
+        input.value = '';
+        fetchDashboardData();
+      } else {
+        showToast(data.message || 'Failed to inject link', 'err');
+      }
+    } catch {
+      showToast('Error sending inject request', 'err');
+    }
+  }
+
+  /* CONFIGURATION TAB RENDERER */
+  function renderConfigTab(channels) {
+    const container = document.getElementById('config-cards-list');
+    container.innerHTML = '';
+
+    channels.forEach(c => {
+      const card = document.createElement('div');
+      card.className = 'config-card';
+      card.innerHTML = '<div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">' +
+          '<div style="display: flex; align-items: center; gap: 10px;">' +
+            '<div class="avatar-box avatar-' + c.color + '">' + c.initials + '</div>' +
+            '<div>' +
+              '<div style="font-weight: 700; color: #fff; font-size: 15px;">' + c.name + '</div>' +
+              '<div style="font-size: 11px; color: var(--text-muted);">' + c.handle + ' · Status: <span style="color: var(--success);">Active</span></div>' +
+            '</div>' +
+          '</div>' +
+          '<button class="btn-icon save-cfg-btn">💾 Save Settings</button>' +
+        '</div>' +
+        '<div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px;">' +
+          '<div style="background: var(--bg); padding: 12px; border-radius: 8px;">' +
+            '<div style="font-size: 10px; color: var(--text-dim); text-transform: uppercase;">Daily Limit</div>' +
+            '<div style="font-size: 20px; font-weight: 800; color: var(--primary); font-family: var(--font-mono);" id="limit-val-' + c.key + '">' + c.dailyLimit + '</div>' +
+            '<div style="font-size: 10px; color: var(--text-muted);">reels / day</div>' +
+          '</div>' +
+          '<div style="background: var(--bg); padding: 12px; border-radius: 8px;">' +
+            '<div style="font-size: 10px; color: var(--text-dim); text-transform: uppercase;">In Queue</div>' +
+            '<div style="font-size: 20px; font-weight: 800; color: var(--warning); font-family: var(--font-mono);">' + c.queueCount + '</div>' +
+            '<div style="font-size: 10px; color: var(--text-muted);">pending batch</div>' +
+          '</div>' +
+          '<div style="background: var(--bg); padding: 12px; border-radius: 8px;">' +
+            '<div style="font-size: 10px; color: var(--text-dim); text-transform: uppercase;">Published</div>' +
+            '<div style="font-size: 20px; font-weight: 800; color: var(--success); font-family: var(--font-mono);">' + c.stats.publishedCount + '</div>' +
+            '<div style="font-size: 10px; color: var(--text-muted);">total uploaded</div>' +
+          '</div>' +
+        '</div>' +
+        '<div>' +
+          '<div style="display: flex; justify-content: space-between; font-size: 11px; font-weight: 700; color: var(--text-muted); margin-bottom: 6px;">' +
+            '<span>DAILY REEL LIMIT SLIDER</span>' +
+            '<span style="color: var(--primary); font-family: var(--font-mono);">' + c.dailyLimit + ' reels/day</span>' +
+          '</div>' +
+          '<input type="range" class="cfg-range" min="1" max="20" step="1" value="' + c.dailyLimit + '" style="width: 100%; accent-color: var(--primary);">' +
+        '</div>';
+
+      const rangeInput = card.querySelector('.cfg-range');
+      if (rangeInput) {
+        rangeInput.oninput = function() {
+          const limitEl = document.getElementById('limit-val-' + c.key);
+          if (limitEl) limitEl.textContent = this.value;
+        };
+      }
+
+      const saveBtn = card.querySelector('.save-cfg-btn');
+      if (saveBtn) {
+        saveBtn.onclick = () => {
+          const val = rangeInput ? Number(rangeInput.value) : c.dailyLimit;
+          triggerUpdateConfig(c.key, val);
+        };
+      }
+      container.appendChild(card);
+    });
+  }
+
+  async function triggerUpdateConfig(profileKey, limitVal) {
+    try {
+      const res = await fetch('/api/update-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile: profileKey, dailyLimit: limitVal })
+      });
+      const data = await res.json();
+      showToast(data.message || 'Config updated', 'ok');
+    } catch {
+      showToast('Failed to update config', 'err');
+    }
+  }
+
+  async function triggerRetryFailed(shortcode, profileKey) {
+    try {
+      const res = await fetch('/api/retry-failed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shortcode, profile: profileKey })
+      });
+      const data = await res.json();
+      showToast('Reel #' + shortcode + ' marked for retry', 'info');
+      fetchDashboardData();
+    } catch {
+      showToast('Retry action failed', 'err');
+    }
+  }
+
+  async function triggerRemoveQueue(shortcode, profileKey) {
+    if (!confirm('Remove reel #' + shortcode + ' from queue?')) return;
+    try {
+      const res = await fetch('/api/remove-queue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shortcode, profile: profileKey })
+      });
+      const data = await res.json();
+      showToast('Reel #' + shortcode + ' removed', 'warn');
+      fetchDashboardData();
+    } catch {
+      showToast('Remove action failed', 'err');
+    }
+  }
+
   /* VIRAL SECTION RENDERER */
   function renderViralSection(viralData) {
-    document.getElementById('kpi-viral-highs').textContent = viralData.kpis.totalViralHighs || 0;
-    document.getElementById('kpi-peak-viral').textContent = (viralData.kpis.topScore || 96) + '/100';
-    document.getElementById('kpi-total-plays').textContent = (viralData.kpis.totalPlays || 0).toLocaleString();
-    document.getElementById('kpi-avg-score').textContent = viralData.kpis.avgViralScore || 82;
-
     document.getElementById('viral-patterns-content').textContent = viralData.patternsText || 'No viral patterns logged yet.';
-
     renderViralLeaderboard(viralData.leaderboard);
-
     if (activeTab === 'viral') {
       renderViralCharts(viralData);
     }
@@ -1186,35 +1265,31 @@ const HTML = `<!DOCTYPE html>
 
     filtered.forEach((r, idx) => {
       const tr = document.createElement('tr');
-      
       let rankBadge = '#' + (idx + 1);
       if (idx === 0) rankBadge = '🥇 #1';
       else if (idx === 1) rankBadge = '🥈 #2';
       else if (idx === 2) rankBadge = '🥉 #3';
 
-      let scoreClass = 'score-std';
+      let scoreClass = 'score-mod';
       if (r.viralScore >= 85) scoreClass = 'score-super';
       else if (r.viralScore >= 70) scoreClass = 'score-high';
-      else if (r.viralScore >= 50) scoreClass = 'score-mod';
 
       tr.innerHTML = '<td style="font-weight: 800;">' + rankBadge + '</td>' +
-        '<td style="font-family: var(--font-mono); font-weight: 700;">#' + r.shortcode + '</td>' +
-        '<td style="font-weight: 600;">' + (r.title || 'Viral Short Clip') + '</td>' +
-        '<td>@' + (r.sourceChannel || 'creator') + ' <span class="ch-niche">' + (r.profileKey || 'tech') + '</span></td>' +
+        '<td><span class="code-badge">#' + r.shortcode + '</span></td>' +
+        '<td style="font-weight: 600; color: #fff;">' + (r.title || 'Viral Short Clip') + '</td>' +
+        '<td>@' + (r.sourceChannel || 'creator') + ' <span class="code-badge">' + (r.profileKey || 'tech') + '</span></td>' +
         '<td style="font-family: var(--font-mono); font-weight: 700;">' + (r.playCount || 0).toLocaleString() + '</td>' +
         '<td style="font-family: var(--font-mono);">' + (r.likeCount || 0).toLocaleString() + '</td>' +
         '<td style="font-family: var(--font-mono);">' + (r.commentCount || 0).toLocaleString() + '</td>' +
         '<td><span class="score-badge ' + scoreClass + '">' + r.viralScore + ' 🔥</span></td>' +
-        '<td>' +
-          '<a href="' + (r.originalUrl || ('https://www.instagram.com/reel/' + r.shortcode + '/')) + '" target="_blank" class="reel-link-btn">📷 Watch Reel</a>' +
-        '</td>';
+        '<td><a href="' + (r.sourceUrl || ('https://www.instagram.com/reel/' + r.shortcode + '/')) + '" target="_blank" class="btn-icon">📷 Watch Reel</a></td>';
       body.appendChild(tr);
     });
   }
 
   function filterViralNiche(nicheKey, btnEl) {
     selectedNicheFilter = nicheKey;
-    document.querySelectorAll('#niche-pills-container .pill-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('#viral-niche-pills .pill-btn').forEach(b => b.classList.remove('active'));
     if (btnEl) btnEl.classList.add('active');
 
     if (globalDashboardData && globalDashboardData.viralAnalytics) {
@@ -1236,7 +1311,7 @@ const HTML = `<!DOCTYPE html>
     const items = globalDashboardData.viralAnalytics.leaderboard;
     let csv = 'Rank,Shortcode,Title,Profile,Creator,Plays,Likes,Comments,ViralScore,Url\\n';
     items.forEach((r, i) => {
-      csv += '"' + (i + 1) + '","' + r.shortcode + '","' + (r.title || '').replace(/"/g, '""') + '","' + r.profileKey + '","' + r.sourceChannel + '","' + r.playCount + '","' + r.likeCount + '","' + r.commentCount + '","' + r.viralScore + '","' + r.originalUrl + '"\\n';
+      csv += '"' + (i + 1) + '","' + r.shortcode + '","' + (r.title || '').replace(/"/g, '""') + '","' + r.profileKey + '","' + r.sourceChannel + '","' + r.playCount + '","' + r.likeCount + '","' + r.commentCount + '","' + r.viralScore + '","' + r.sourceUrl + '"\\n';
     });
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
@@ -1263,9 +1338,9 @@ const HTML = `<!DOCTYPE html>
     const ctxTrend = document.getElementById('chart-viral-trend').getContext('2d');
     if (chartTrend) chartTrend.destroy();
     
-    const gradPurple = ctxTrend.createLinearGradient(0, 0, 0, 250);
-    gradPurple.addColorStop(0, 'rgba(192, 132, 252, 0.4)');
-    gradPurple.addColorStop(1, 'rgba(192, 132, 252, 0.0)');
+    const gradPurple = ctxTrend.createLinearGradient(0, 0, 0, 240);
+    gradPurple.addColorStop(0, 'rgba(188, 140, 255, 0.4)');
+    gradPurple.addColorStop(1, 'rgba(188, 140, 255, 0.0)');
 
     chartTrend = new Chart(ctxTrend, {
       type: 'line',
@@ -1275,7 +1350,7 @@ const HTML = `<!DOCTYPE html>
           {
             label: 'Viral Score (0-100)',
             data: scores.length > 0 ? scores : [96, 91, 86, 78, 73],
-            borderColor: '#c084fc',
+            borderColor: '#bc8cff',
             backgroundColor: gradPurple,
             borderWidth: 3,
             fill: true,
@@ -1285,7 +1360,7 @@ const HTML = `<!DOCTYPE html>
           {
             label: 'Plays / Views (in K)',
             data: plays.length > 0 ? plays : [245, 189, 142, 98, 76],
-            borderColor: '#38bdf8',
+            borderColor: '#58a6ff',
             borderWidth: 2,
             borderDash: [5, 5],
             fill: false,
@@ -1297,13 +1372,11 @@ const HTML = `<!DOCTYPE html>
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: {
-          legend: { labels: { color: '#94a3b8', font: { family: 'Inter', weight: '600' } } }
-        },
+        plugins: { legend: { labels: { color: '#8b949e', font: { family: 'Inter', weight: '600' } } } },
         scales: {
-          x: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(255,255,255,0.05)' } },
-          yScore: { type: 'linear', position: 'left', min: 0, max: 100, ticks: { color: '#c084fc' }, grid: { color: 'rgba(255,255,255,0.05)' } },
-          yPlays: { type: 'linear', position: 'right', ticks: { color: '#38bdf8' }, grid: { display: false } }
+          x: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } },
+          yScore: { type: 'linear', position: 'left', min: 0, max: 100, ticks: { color: '#bc8cff' }, grid: { color: '#21262d' } },
+          yPlays: { type: 'linear', position: 'right', ticks: { color: '#58a6ff' }, grid: { display: false } }
         }
       }
     });
@@ -1324,24 +1397,24 @@ const HTML = `<!DOCTYPE html>
           {
             label: 'Total Processed',
             data: totalList.length > 0 ? totalList : [12, 8, 6],
-            backgroundColor: 'rgba(129, 140, 248, 0.7)',
-            borderRadius: 8
+            backgroundColor: 'rgba(88, 166, 255, 0.7)',
+            borderRadius: 6
           },
           {
             label: 'High Viral (≥70)',
             data: viralList.length > 0 ? viralList : [8, 5, 3],
-            backgroundColor: 'rgba(52, 211, 153, 0.85)',
-            borderRadius: 8
+            backgroundColor: 'rgba(63, 185, 80, 0.85)',
+            borderRadius: 6
           }
         ]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: { legend: { labels: { color: '#94a3b8' } } },
+        plugins: { legend: { labels: { color: '#8b949e' } } },
         scales: {
-          x: { ticks: { color: '#94a3b8' }, grid: { display: false } },
-          y: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(255,255,255,0.05)' } }
+          x: { ticks: { color: '#8b949e' }, grid: { display: false } },
+          y: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } }
         }
       }
     });
@@ -1357,17 +1430,15 @@ const HTML = `<!DOCTYPE html>
         labels: ['🔥 Super Viral (85+)', '⚡ High Viral (70-84)', '📈 Moderate (50-69)', '📊 Standard (<50)'],
         datasets: [{
           data: [b.superViral, b.highViral, b.moderate, b.standard],
-          backgroundColor: ['#c084fc', '#38bdf8', '#34d399', '#64748b'],
+          backgroundColor: ['#bc8cff', '#58a6ff', '#3fb950', '#484f58'],
           borderWidth: 0,
-          hoverOffset: 8
+          hoverOffset: 6
         }]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: {
-          legend: { position: 'right', labels: { color: '#94a3b8', font: { family: 'Inter', weight: '600' } } }
-        },
+        plugins: { legend: { position: 'right', labels: { color: '#8b949e', font: { family: 'Inter', weight: '600' } } } },
         cutout: '68%'
       }
     });
@@ -1385,13 +1456,13 @@ const HTML = `<!DOCTYPE html>
           {
             label: 'Likes (x10)',
             data: top5.map(r => (r.likeCount || 0) * 10),
-            backgroundColor: 'rgba(56, 189, 248, 0.85)',
+            backgroundColor: 'rgba(58, 166, 255, 0.85)',
             borderRadius: 6
           },
           {
             label: 'Comments (x100)',
             data: top5.map(r => (r.commentCount || 0) * 100),
-            backgroundColor: 'rgba(192, 132, 252, 0.85)',
+            backgroundColor: 'rgba(188, 140, 255, 0.85)',
             borderRadius: 6
           }
         ]
@@ -1399,120 +1470,13 @@ const HTML = `<!DOCTYPE html>
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: { legend: { labels: { color: '#94a3b8' } } },
+        plugins: { legend: { labels: { color: '#8b949e' } } },
         scales: {
-          x: { ticks: { color: '#94a3b8' }, grid: { display: false } },
-          y: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(255,255,255,0.05)' } }
+          x: { ticks: { color: '#8b949e' }, grid: { display: false } },
+          y: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } }
         }
       }
     });
-  }
-
-  /* MODAL FUNCTIONS */
-  async function openChannelModal(key) {
-    selectedChannelKey = key;
-    document.getElementById('channel-modal').classList.add('open');
-    openSelectedChannelModal();
-  }
-
-  async function openSelectedChannelModal() {
-    if (!selectedChannelKey) return;
-    try {
-      const res = await fetch('/api/channel-detail?profile=' + selectedChannelKey);
-      if (!res.ok) return;
-      const data = await res.json();
-      renderModal(data);
-    } catch (e) {
-      console.error('Failed to fetch channel details', e);
-    }
-  }
-
-  function renderModal(data) {
-    const p = data.profile;
-    document.getElementById('modal-ch-avatar').textContent = p.name.slice(0, 2).toUpperCase();
-    document.getElementById('modal-ch-name').textContent = p.name;
-    document.getElementById('modal-ch-handle').textContent = p.handle;
-    document.getElementById('modal-ch-niche').textContent = p.niche.toUpperCase();
-    document.getElementById('modal-queue-count').textContent = data.queue.length;
-    document.getElementById('modal-slot-info').textContent = 'Slot ' + p.currentSlot + ' / ' + p.totalSlots + ' (' + p.progressPct + '%)';
-
-    const queueList = document.getElementById('modal-queue-list');
-    queueList.innerHTML = '';
-    if (data.queue.length === 0) {
-      queueList.innerHTML = '<div style="color: var(--text-muted); padding: 20px; text-align: center; background: rgba(7, 10, 18, 0.4); border-radius: 12px;">Queue is currently empty. Click "Force-Start Batch Now" to ingest reels.</div>';
-    } else {
-      data.queue.forEach((q, idx) => {
-        const item = document.createElement('div');
-        item.className = 'queue-item';
-        item.innerHTML = '<div>' +
-            '<div style="display: flex; align-items: center; gap: 10px;">' +
-              '<span style="font-weight: 800; color: var(--primary);">#' + (idx + 1) + '</span>' +
-              '<span style="font-family: var(--font-mono); font-weight: 700;">#' + q.shortcode + '</span>' +
-              '<span class="ch-niche">@' + q.sourceChannel + '</span>' +
-            '</div>' +
-            '<div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">' +
-              'Plays: ' + (q.playCount || 0).toLocaleString() + ' • Likes: ' + (q.likeCount || 0).toLocaleString() + ' • Tag: #' + q.sourceHashtag +
-            '</div>' +
-          '</div>' +
-          '<div>' +
-            '<a href="' + q.originalUrl + '" target="_blank" class="reel-link-btn">📷 View Original Reel</a>' +
-          '</div>';
-        queueList.appendChild(item);
-      });
-    }
-
-    const histTable = document.getElementById('modal-history-table');
-    histTable.innerHTML = '';
-    data.history.forEach(h => {
-      const tr = document.createElement('tr');
-      tr.innerHTML = '<td style="font-family: var(--font-mono); font-weight: 700;">#' + h.shortcode + '</td>' +
-        '<td>@' + h.sourceChannel + '</td>' +
-        '<td><a href="' + h.originalUrl + '" target="_blank" class="reel-link-btn" style="padding: 2px 6px; font-size: 11px;">📷 Original Source</a></td>' +
-        '<td><span class="' + (h.status === 'published' ? 'badge-success' : 'badge-failed') + '">' + h.status + '</span></td>' +
-        '<td>' +
-          '<div style="display: flex; gap: 6px; flex-wrap: wrap;">' +
-            (h.youtubeUrl ? '<a href="' + h.youtubeUrl + '" target="_blank" class="reel-link-btn" style="padding: 2px 6px; font-size: 11px;">▶ YouTube Shorts</a>' : '') +
-            (h.instagramUrl ? '<a href="' + h.instagramUrl + '" target="_blank" class="reel-link-btn" style="padding: 2px 6px; font-size: 11px;">📸 Instagram Reel</a>' : '') +
-            (h.facebookUrl ? '<a href="' + h.facebookUrl + '" target="_blank" class="reel-link-btn" style="padding: 2px 6px; font-size: 11px;">📘 Facebook Reel</a>' : '') +
-          '</div>' +
-        '</td>';
-      histTable.appendChild(tr);
-    });
-  }
-
-  async function triggerForceStart() {
-    if (!selectedChannelKey) return;
-    try {
-      const res = await fetch('/api/force-start?profile=' + selectedChannelKey, { method: 'POST' });
-      const resData = await res.json();
-      alert(resData.message || 'Force start triggered!');
-      openSelectedChannelModal();
-      fetchDashboardData();
-    } catch (e) {
-      alert('Failed to trigger force start');
-    }
-  }
-
-  async function triggerClearQueue() {
-    if (!selectedChannelKey) return;
-    if (!confirm('Are you sure you want to clear the queue for this channel?')) return;
-    try {
-      const res = await fetch('/api/clear-queue?profile=' + selectedChannelKey, { method: 'POST' });
-      const resData = await res.json();
-      alert(resData.message || 'Queue cleared!');
-      openSelectedChannelModal();
-      fetchDashboardData();
-    } catch (e) {
-      alert('Failed to clear queue');
-    }
-  }
-
-  function closeModal() {
-    document.getElementById('channel-modal').classList.remove('open');
-  }
-
-  function closeModalOnOverlay(e) {
-    if (e.target.id === 'channel-modal') closeModal();
   }
 
   /* LOG CONSOLE FUNCTIONS */
@@ -1523,10 +1487,7 @@ const HTML = `<!DOCTYPE html>
   function clearLogConsole() {
     document.getElementById('log-container').innerHTML = '';
     logTotal = 0;
-    updateLogCount();
-  }
-  function updateLogCount() {
-    document.getElementById('log-count').textContent = logTotal + ' entries';
+    document.getElementById('log-count').textContent = '0 entries';
   }
   function applyLogFilter() {
     logFilterStr = document.getElementById('log-filter').value.toLowerCase();
@@ -1544,19 +1505,19 @@ const HTML = `<!DOCTYPE html>
     const label = o.label || '';
     const msg = o.message || '';
     const div = document.createElement('div');
-    div.className = 'log-line log-' + level;
+    div.style.cssText = 'display: flex; gap: 10px; line-height: 1.8; color: ' + (level === 'error' ? '#f85149' : level === 'warn' ? '#d29922' : '#e6edf3');
     div.dataset.text = (ts + ' ' + level + ' ' + label + ' ' + msg).toLowerCase();
     div.innerHTML =
-      '<span class="log-ts">' + esc(ts) + '</span>' +
-      '<span class="log-lv">' + level.slice(0,4) + '</span>' +
-      '<span class="log-lb">[' + esc(label) + ']</span>' +
-      '<span class="log-msg">' + esc(msg) + '</span>';
+      '<span style="color: #484f58; flex-shrink: 0;">' + esc(ts) + '</span>' +
+      '<span style="font-weight: 700; width: 44px; flex-shrink: 0; text-transform: uppercase; color: ' + (level === 'error' ? '#f85149' : level === 'warn' ? '#d29922' : '#3fb950') + ';">' + level.slice(0,4) + '</span>' +
+      '<span style="color: #58a6ff; flex-shrink: 0; min-width: 110px;">[' + esc(label) + ']</span>' +
+      '<span style="word-break: break-word; flex: 1;">' + esc(msg) + '</span>';
     if (logFilterStr && !div.dataset.text.includes(logFilterStr)) div.style.display = 'none';
     
     const container = document.getElementById('log-container');
     container.appendChild(div);
     logTotal++;
-    updateLogCount();
+    document.getElementById('log-count').textContent = logTotal + ' entries';
     if (autoScroll && activeTab === 'logs') container.scrollTop = container.scrollHeight;
   }
 
@@ -1592,6 +1553,128 @@ export function startLogServer(): void {
       return;
     }
 
+    if (req.method === "POST" && (url === "/api/inject-link" || url.startsWith("/api/inject-link?"))) {
+      try {
+        const body = await parseJsonBody(req);
+        const pUrl = new URL(url, `http://${req.headers.host || "localhost"}`);
+        const pKey = (body.profile || pUrl.searchParams.get("profile") || "codeorcap").toLowerCase();
+        const reelUrl = body.url || pUrl.searchParams.get("url") || "";
+
+        if (!reelUrl) {
+          res.writeHead(400, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+          res.end(JSON.stringify({ success: false, message: "Missing URL parameter" }));
+          return;
+        }
+
+        const shortcode = reelUrl.split("/reel/")[1]?.split("/")[0] || reelUrl.split("/p/")[1]?.split("/")[0] || `injected_${Date.now()}`;
+        const newItem = {
+          shortcode,
+          url: reelUrl,
+          channel: "manual_inject",
+          pickedAt: new Date().toISOString()
+        };
+
+        const pool = await getPool();
+        await pool.query(
+          `UPDATE watch_state SET queue = queue || $1::jsonb WHERE profile_key = $2`,
+          [JSON.stringify([newItem]), pKey]
+        );
+
+        res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+        res.end(JSON.stringify({ success: true, message: `＋ Reel #${shortcode} injected into [${pKey.toUpperCase()}] queue!` }));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: false, message: "Error injecting link into database queue" }));
+      }
+      return;
+    }
+
+    if (req.method === "POST" && (url === "/api/remove-queue" || url.startsWith("/api/remove-queue?"))) {
+      try {
+        const body = await parseJsonBody(req);
+        const pUrl = new URL(url, `http://${req.headers.host || "localhost"}`);
+        const pKey = (body.profile || pUrl.searchParams.get("profile") || "codeorcap").toLowerCase();
+        const shortcode = body.shortcode || pUrl.searchParams.get("shortcode") || "";
+
+        const pool = await getPool();
+        const wRes = await pool.query(`SELECT queue FROM watch_state WHERE profile_key = $1`, [pKey]);
+        if (wRes.rows.length > 0) {
+          const currentQueue = wRes.rows[0].queue || [];
+          const updatedQueue = currentQueue.filter((q: any) => (q.shortcode || q.url?.split("/reel/")[1]?.replace(/\//g, "")) !== shortcode);
+          await pool.query(`UPDATE watch_state SET queue = $1::jsonb WHERE profile_key = $2`, [JSON.stringify(updatedQueue), pKey]);
+        }
+
+        res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+        res.end(JSON.stringify({ success: true, message: `🧹 Item #${shortcode} removed from queue.` }));
+      } catch {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: false, message: "Error removing item from queue" }));
+      }
+      return;
+    }
+
+    if (req.method === "POST" && (url === "/api/retry-failed" || url.startsWith("/api/retry-failed?"))) {
+      try {
+        const body = await parseJsonBody(req);
+        const pUrl = new URL(url, `http://${req.headers.host || "localhost"}`);
+        const pKey = (body.profile || pUrl.searchParams.get("profile") || "codeorcap").toLowerCase();
+        const shortcode = body.shortcode || pUrl.searchParams.get("shortcode") || "";
+
+        const pool = await getPool();
+        await pool.query(`UPDATE reel_history SET failed = false, failed_reason = null WHERE shortcode = $1 AND profile_key = $2`, [shortcode, pKey]);
+
+        res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+        res.end(JSON.stringify({ success: true, message: `↺ Reel #${shortcode} reset for retry.` }));
+      } catch {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: false, message: "Error retrying failed reel" }));
+      }
+      return;
+    }
+
+    if (req.method === "POST" && (url === "/api/update-config" || url.startsWith("/api/update-config?"))) {
+      try {
+        const body = await parseJsonBody(req);
+        const pUrl = new URL(url, `http://${req.headers.host || "localhost"}`);
+        const pKey = (body.profile || pUrl.searchParams.get("profile") || "codeorcap").toLowerCase();
+        const dailyLimit = parseInt(body.dailyLimit || pUrl.searchParams.get("dailyLimit") || "6", 10);
+
+        const profile = config.profiles.find(p => (p.key || p.brandName).toLowerCase() === pKey);
+        if (profile && profile.watch) {
+          profile.watch.dailyCount = dailyLimit;
+        }
+
+        res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+        res.end(JSON.stringify({ success: true, message: `⚙️ Config updated for profile [${pKey.toUpperCase()}]: ${dailyLimit} reels/day.` }));
+      } catch {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: false, message: "Error updating profile configuration" }));
+      }
+      return;
+    }
+
+    if (req.method === "POST" && (url === "/api/force-start" || url.startsWith("/api/force-start?"))) {
+      try {
+        const body = await parseJsonBody(req);
+        const pUrl = new URL(url, `http://${req.headers.host || "localhost"}`);
+        const pKey = (body.profile || pUrl.searchParams.get("profile") || "codeorcap").toLowerCase();
+
+        const watcher = activeWatchers.get(pKey);
+        if (watcher) {
+          (watcher as any).checkAndRunMissedBatch?.();
+          res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+          res.end(JSON.stringify({ success: true, message: `⚡ Force-start initiated for [${pKey.toUpperCase()}]!` }));
+        } else {
+          res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+          res.end(JSON.stringify({ success: false, message: `Watcher for [${pKey}] is not active.` }));
+        }
+      } catch {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: false, message: "Error triggering force start" }));
+      }
+      return;
+    }
+
     if (url === "/api/channel-detail" || url.startsWith("/api/channel-detail?")) {
       try {
         const pUrl = new URL(url, `http://${req.headers.host || "localhost"}`);
@@ -1605,41 +1688,6 @@ export function startLogServer(): void {
       } catch (err) {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "Failed to get channel details" }));
-      }
-      return;
-    }
-
-    if (req.method === "POST" && (url === "/api/force-start" || url.startsWith("/api/force-start?"))) {
-      try {
-        const pUrl = new URL(url, `http://${req.headers.host || "localhost"}`);
-        const pKey = (pUrl.searchParams.get("profile") || "codeorcap").toLowerCase();
-        const watcher = activeWatchers.get(pKey);
-        if (watcher) {
-          watcher.forceStart().catch(() => {});
-          res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
-          res.end(JSON.stringify({ success: true, message: `⚡ Force-start initiated for [${pKey.toUpperCase()}]! Batch ingestion triggered.` }));
-        } else {
-          res.writeHead(404, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
-          res.end(JSON.stringify({ success: false, message: `Watcher for [${pKey}] is not currently active.` }));
-        }
-      } catch {
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ success: false, message: "Error triggering force-start" }));
-      }
-      return;
-    }
-
-    if (req.method === "POST" && (url === "/api/clear-queue" || url.startsWith("/api/clear-queue?"))) {
-      try {
-        const pUrl = new URL(url, `http://${req.headers.host || "localhost"}`);
-        const pKey = (pUrl.searchParams.get("profile") || "codeorcap").toLowerCase();
-        const pool = await getPool();
-        await pool.query(`UPDATE watch_state SET queue = '[]'::jsonb WHERE profile_key = $1`, [pKey]);
-        res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
-        res.end(JSON.stringify({ success: true, message: `🧹 Queue cleared for profile [${pKey.toUpperCase()}].` }));
-      } catch {
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ success: false, message: "Error clearing queue" }));
       }
       return;
     }
