@@ -1,9 +1,17 @@
 import { Pool } from "pg";
 import { pipelineLogger } from "./logger";
 
-const pool = new Pool({
+function getSslConfig(): any {
+  const dbUrl = process.env.DATABASE_URL || "";
+  if (dbUrl.includes("sslmode=disable") || dbUrl.includes("localhost") || dbUrl.includes("127.0.0.1")) {
+    return false;
+  }
+  return { rejectUnauthorized: false };
+}
+
+let pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  ssl: getSslConfig(),
   max: 5,
   idleTimeoutMillis: 30000,
 });
@@ -76,12 +84,23 @@ export async function initSchema(): Promise<void> {
       `);
       pipelineLogger.info("Supabase schema ready (reel_history, watch_state, reel_insights)", "Supabase");
       return;
-    } catch (err) {
+    } catch (err: any) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      if (errMsg.includes("does not support SSL")) {
+        pipelineLogger.warn("Database server does not support SSL. Retrying with SSL disabled...", "Supabase");
+        try { await pool.end(); } catch {}
+        pool = new Pool({
+          connectionString: process.env.DATABASE_URL,
+          ssl: false,
+          max: 5,
+          idleTimeoutMillis: 30000,
+        });
+      }
       if (attempt === maxRetries) {
         throw err;
       }
       pipelineLogger.warn(
-        `Failed to connect/initialize Supabase schema (Attempt ${attempt}/${maxRetries}): ${err instanceof Error ? err.message : String(err)}. Retrying in 5s...`,
+        `Failed to connect/initialize Supabase schema (Attempt ${attempt}/${maxRetries}): ${errMsg}. Retrying in 5s...`,
         "Supabase"
       );
       await new Promise((resolve) => setTimeout(resolve, 5000));
