@@ -41,6 +41,7 @@ RUN npm ci --omit=dev
 
 # Copy pre-compiled JavaScript dist and assets
 COPY dist/ ./dist/
+COPY public/dashboard.html ./public/dashboard.html
 COPY scripts/ ./scripts/
 COPY assets/ ./assets/
 
