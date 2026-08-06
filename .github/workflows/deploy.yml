@@ -85,5 +85,8 @@ jobs:
             cd ~/shorts-automation
             # Ensure runtime directories exist
             mkdir -p temp output logs
-            # Rebuild and restart the container services
-            docker compose up --build -d
+            # Gracefully stop containers and clean up any stale container name conflicts
+            docker compose down --remove-orphans || true
+            docker rm -f codeorcap-bot 2>/dev/null || true
+            # Rebuild and restart container services
+            docker compose up --build -d --remove-orphans
