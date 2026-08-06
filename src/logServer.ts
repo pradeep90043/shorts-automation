@@ -965,6 +965,21 @@ const HTML = `<!DOCTYPE html>
     return String(n);
   }
 
+  function fmtDate(dStr) {
+    if (!dStr) return 'Recently';
+    const d = new Date(dStr);
+    if (isNaN(d.getTime())) return dStr;
+    const day = d.getDate();
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const month = months[d.getMonth()];
+    let hours = d.getHours();
+    const minutes = d.getMinutes().toString().padStart(2, '0');
+    const ampm = hours >= 12 ? 'pm' : 'am';
+    hours = hours % 12;
+    hours = hours ? hours : 12;
+    return day + ' ' + month + ' at ' + hours + ':' + minutes + ' ' + ampm;
+  }
+
   function showToast(msg, type) {
     const el = document.getElementById('toast');
     el.textContent = (type === 'warn' ? '⚠️ ' : type === 'err' ? '❌ ' : '✓ ') + msg;
@@ -1113,7 +1128,7 @@ const HTML = `<!DOCTYPE html>
 
     history.forEach(item => {
       const tr = document.createElement('tr');
-      const ts = (item.published_at || item.picked_at || '').replace('T', ' ').slice(0, 19);
+      const ts = fmtDate(item.published_at || item.picked_at);
       const origUrl = 'https://www.instagram.com/reel/' + item.shortcode + '/';
       tr.innerHTML = '<td><span class="code-badge">#' + item.shortcode + '</span></td>' +
         '<td>' + (item.profile_key || 'default') + '</td>' +
@@ -1161,7 +1176,7 @@ const HTML = `<!DOCTYPE html>
 
     filtered.forEach(item => {
       const tr = document.createElement('tr');
-      const ts = (item.addedAt || '').replace('T', ' ').slice(0, 19);
+      const ts = fmtDate(item.addedAt);
       tr.innerHTML = '<td><span class="code-badge">#' + item.shortcode + '</span></td>' +
         '<td style="font-weight: 600; color: #fff;">' + (item.channel || item.profileKey) + '</td>' +
         '<td><div style="max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"><a href="' + item.source + '" target="_blank" style="color: var(--primary); font-family: var(--font-mono); font-size: 11px;">' + item.source + '</a></div></td>' +
@@ -1238,7 +1253,7 @@ const HTML = `<!DOCTYPE html>
         item.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--card-border); font-size: 12px;';
         item.innerHTML = '<div style="max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' +
             '<a href="' + q.source + '" target="_blank" style="color: var(--primary); font-family: var(--font-mono);">' + q.source + '</a>' +
-            '<div style="font-size: 10px; color: var(--text-muted);">' + (q.channel || q.profileKey) + '</div>' +
+            '<div style="font-size: 10px; color: var(--text-muted);">' + (q.channel || q.profileKey) + ' · Added ' + fmtDate(q.addedAt) + '</div>' +
           '</div>' +
           '<span class="status-badge status-' + q.status + '">' + q.status + '</span>';
         recentList.appendChild(item);
