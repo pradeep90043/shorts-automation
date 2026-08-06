@@ -15,6 +15,8 @@ import { pipelineLogger } from "../utils/logger";
  * profile.watch.gapHours apart, reusing the exact same preset-settings
  * skip-gate pipeline path validated by TelegramService.runPresetReel.
  */
+export const activeWatchers = new Map<string, ChannelWatcher>();
+
 export class ChannelWatcher {
   private store: WatchStore;
   private history: ReelHistoryStore;
@@ -32,6 +34,7 @@ export class ChannelWatcher {
     this.store = new WatchStore(dbKey);
     this.history = new ReelHistoryStore(dbKey);
     this.db = new JobDatabase(dbKey);
+    activeWatchers.set((profile.key || profile.brandName).toLowerCase(), this);
   }
 
   private getScraperEnvCandidates(): Record<string, string>[] {
