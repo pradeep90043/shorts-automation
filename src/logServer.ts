@@ -744,13 +744,12 @@ const HTML = `<!DOCTYPE html>
                 <th>Channel</th>
                 <th>Source URL</th>
                 <th>Added Time</th>
-                <th>Slot #</th>
                 <th>Status</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody id="queue-table-body">
-              <tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 30px;">Loading queue items...</td></tr>
+              <tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 30px;">Loading queue items...</td></tr>
             </tbody>
           </table>
         </div>
@@ -1159,7 +1158,7 @@ const HTML = `<!DOCTYPE html>
     tableBody.innerHTML = '';
 
     if (!queue || queue.length === 0) {
-      tableBody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 30px;">Queue is currently empty. Use "Inject Link" tab to add source reels.</td></tr>';
+      tableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 30px;">Queue is currently empty. Use "Inject Link" tab to add source reels.</td></tr>';
       return;
     }
 
@@ -1170,19 +1169,38 @@ const HTML = `<!DOCTYPE html>
     });
 
     if (filtered.length === 0) {
-      tableBody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 30px;">No queue items match selected filters.</td></tr>';
+      tableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 30px;">No queue items match selected filters.</td></tr>';
       return;
     }
 
     filtered.forEach(item => {
       const tr = document.createElement('tr');
       const ts = fmtDate(item.addedAt);
+
+      const instaUrl = item.instagramUrl || (item.shortcode && !item.shortcode.startsWith('q_') ? 'https://www.instagram.com/reel/' + item.shortcode + '/' : null);
+      const ytUrl = item.youtubeUrl;
+      const fbUrl = item.facebookUrl;
+
+      let statusLinksHtml = '';
+      if (item.status === 'published' || instaUrl || ytUrl || fbUrl) {
+        statusLinksHtml += '<div style="display: flex; gap: 4px; margin-top: 4px; flex-wrap: wrap;">';
+        if (instaUrl) {
+          statusLinksHtml += '<a href="' + instaUrl + '" target="_blank" class="btn-icon" style="padding: 2px 6px; font-size: 10px; color: #e1306c;" title="Instagram Reel">📷 Insta</a>';
+        }
+        if (ytUrl) {
+          statusLinksHtml += '<a href="' + ytUrl + '" target="_blank" class="btn-icon" style="padding: 2px 6px; font-size: 10px; color: #ff4e4e;" title="YouTube Short">▶ YouTube</a>';
+        }
+        if (fbUrl) {
+          statusLinksHtml += '<a href="' + fbUrl + '" target="_blank" class="btn-icon" style="padding: 2px 6px; font-size: 10px; color: #1877f2;" title="Facebook Reel">📘 FB</a>';
+        }
+        statusLinksHtml += '</div>';
+      }
+
       tr.innerHTML = '<td><span class="code-badge">#' + item.shortcode + '</span></td>' +
         '<td style="font-weight: 600; color: #fff;">' + (item.channel || item.profileKey) + '</td>' +
         '<td><div style="max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"><a href="' + item.source + '" target="_blank" style="color: var(--primary); font-family: var(--font-mono); font-size: 11px;">' + item.source + '</a></div></td>' +
         '<td style="color: var(--text-muted); font-size: 11px;">' + ts + '</td>' +
-        '<td style="font-family: var(--font-mono); font-weight: 700;">#' + (item.slot || 1) + '</td>' +
-        '<td><span class="status-badge status-' + item.status + '"><div class="badge-dot" style="background: currentColor"></div>' + item.status + '</span></td>';
+        '<td><div><span class="status-badge status-' + item.status + '"><div class="badge-dot" style="background: currentColor"></div>' + item.status + '</span></div>' + statusLinksHtml + '</td>';
 
       const actionTd = document.createElement('td');
       const actionDiv = document.createElement('div');
