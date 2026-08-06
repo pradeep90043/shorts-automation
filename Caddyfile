@@ -1,0 +1,28 @@
+{
+    email pradeep90043@gmail.com
+}
+
+# Base domain: shorts-automation.duckdns.org
+{$DUCKDNS_DOMAIN:shorts-automation.duckdns.org} {
+
+    # FreeLLMAPI Frontend JS/CSS Assets
+    handle /assets/* {
+        reverse_proxy freellmapi:3001
+    }
+
+    # FreeLLMAPI OpenAI API Endpoints
+    handle /v1/* {
+        reverse_proxy freellmapi:3001
+    }
+
+    # FreeLLMAPI Admin & Web UI
+    handle /freellmapi* {
+        uri strip_prefix /freellmapi
+        reverse_proxy freellmapi:3001
+    }
+
+    # Live Log Dashboard & Bot System (Default Root)
+    handle {
+        reverse_proxy bot:3002
+    }
+}

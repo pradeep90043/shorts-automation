@@ -85,6 +85,10 @@ jobs:
             cd ~/shorts-automation
             # Ensure runtime directories exist
             mkdir -p temp output logs
+            # If Caddyfile was wrongly created as a directory by docker, remove it
+            if [ -d ~/shorts-automation/Caddyfile ]; then
+              rm -rf ~/shorts-automation/Caddyfile
+            fi
             # Gracefully stop containers and clean up any stale container name conflicts
             docker compose down --remove-orphans || true
             docker rm -f codeorcap-bot 2>/dev/null || true
