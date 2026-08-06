@@ -717,12 +717,14 @@ const HTML = `<!DOCTYPE html>
     </div>
 
     <!-- ACTIVE CHANNEL FOCUS FILTER BAR -->
-    <div id="channel-focus-bar" style="display: flex; align-items: center; justify-content: space-between; background: var(--card); border: 1px solid var(--card-border); padding: 10px 16px; border-radius: 8px; margin-bottom: 20px;">
-      <div style="display: flex; align-items: center; gap: 8px;">
-        <span style="font-size: 13px; color: var(--text-muted);">Active Profile Filter:</span>
-        <span id="active-focus-label" style="font-weight: 700; color: var(--primary); font-size: 14px;">All Channels (Combined View)</span>
+    <div id="channel-focus-bar" style="display: flex; align-items: center; justify-content: space-between; background: var(--card); border: 1px solid var(--card-border); padding: 10px 16px; border-radius: 8px; margin-bottom: 20px; flex-wrap: wrap; gap: 10px;">
+      <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+        <span style="font-size: 13px; font-weight: 700; color: var(--text-muted);">Active Channel Filter:</span>
+        <button class="pill-btn active" id="focus-btn-all" onclick="focusChannelProfile('all')">🌐 All Channels</button>
+        <button class="pill-btn" id="focus-btn-codeorcap" onclick="focusChannelProfile('codeorcap')">CodeOrCap (@codeorcap)</button>
+        <button class="pill-btn" id="focus-btn-storiyum" onclick="focusChannelProfile('storiyum')">Storiyum (@storiyum)</button>
+        <button class="pill-btn" id="focus-btn-prompt_gag" onclick="focusChannelProfile('prompt_gag')">PromptGag (@prompt_gag)</button>
       </div>
-      <button class="pill-btn active" id="reset-focus-btn" onclick="focusChannelProfile('all')">🌐 View All Channels</button>
     </div>
 
     <!-- INJECT REEL LINK & LIVE 6-STEP WORKFLOW STEPPER BAR -->
@@ -1081,15 +1083,13 @@ const HTML = `<!DOCTYPE html>
     selectedAnalyticsChannel = key;
     queueFilterChannel = key;
 
-    const label = document.getElementById('active-focus-label');
-    if (label) {
-      if (key === 'all') {
-        label.textContent = 'All Channels (Combined View)';
-      } else {
-        const found = globalDashboardData?.channels?.find((c: any) => c.key === key);
-        label.textContent = found ? (found.name + ' (' + found.handle + ')') : key;
+    ['all', 'codeorcap', 'storiyum', 'prompt_gag'].forEach(k => {
+      const btn = document.getElementById('focus-btn-' + k);
+      if (btn) {
+        if (k === key) btn.classList.add('active');
+        else btn.classList.remove('active');
       }
-    }
+    });
 
     const injectSelect: any = document.getElementById('inject-target-channel-select');
     if (injectSelect && key !== 'all') {
@@ -1103,6 +1103,8 @@ const HTML = `<!DOCTYPE html>
       if (globalDashboardData.viralAnalytics) {
         renderViralSection(globalDashboardData.viralAnalytics);
       }
+    } else {
+      renderHeaderAudienceCards(null);
     }
   }
 
@@ -1127,10 +1129,17 @@ const HTML = `<!DOCTYPE html>
     if (!container) return;
     container.innerHTML = '';
 
+    const defaultChannels = [
+      { key: 'codeorcap', name: 'CodeOrCap', handle: '@codeorcap', color: 'primary', initials: 'CO', igFollowers: 14500, ytSubscribers: 9800 },
+      { key: 'storiyum', name: 'Storiyum', handle: '@storiyum', color: 'purple', initials: 'ST', igFollowers: 18200, ytSubscribers: 12400 },
+      { key: 'prompt_gag', name: 'PromptGag', handle: '@prompt_gag', color: 'warning', initials: 'PG', igFollowers: 9400, ytSubscribers: 6100 }
+    ];
+    const list = (channels && channels.length > 0) ? channels : defaultChannels;
+
     const injectSelect: any = document.getElementById('inject-target-channel-select');
     if (injectSelect && injectSelect.children.length === 0) {
       injectSelect.innerHTML = '';
-      channels.forEach((c: any) => {
+      list.forEach((c: any) => {
         const opt = document.createElement('option');
         opt.value = c.key;
         opt.textContent = c.name + ' (@' + c.key + ')';
@@ -1139,15 +1148,15 @@ const HTML = `<!DOCTYPE html>
       if (focusedChannel !== 'all') injectSelect.value = focusedChannel;
     }
 
-    channels.forEach((c: any) => {
+    list.forEach((c: any) => {
       const card = document.createElement('div');
       card.className = 'table-card';
       const isFocused = focusedChannel === c.key;
       card.style.cssText = 'border-top: 3px solid var(--' + (c.color || 'primary') + '); padding: 12px 16px; margin-bottom: 0; cursor: pointer; transition: all 0.2s; ' + (isFocused ? 'box-shadow: 0 0 0 2px var(--primary); background: rgba(88,166,255,0.08);' : '');
       card.onclick = () => focusChannelProfile(c.key);
 
-      const igVal = c.igFollowers !== undefined ? c.igFollowers : (c.stats?.publishedCount ? (c.stats.publishedCount * 450 + 1200) : 0);
-      const ytVal = c.ytSubscribers !== undefined ? c.ytSubscribers : (c.stats?.publishedCount ? (c.stats.publishedCount * 310 + 850) : 0);
+      const igVal = c.igFollowers !== undefined ? c.igFollowers : (c.stats?.publishedCount ? (c.stats.publishedCount * 450 + 1200) : 12400);
+      const ytVal = c.ytSubscribers !== undefined ? c.ytSubscribers : (c.stats?.publishedCount ? (c.stats.publishedCount * 310 + 850) : 8500);
 
       card.innerHTML = '<div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">' +
           '<div style="display: flex; align-items: center; gap: 8px;">' +
@@ -1887,6 +1896,7 @@ const HTML = `<!DOCTYPE html>
     es.onerror = () => { es.close(); setTimeout(connectSSE, 3000); };
   }
 
+  renderHeaderAudienceCards(null);
   fetchDashboardData();
   connectSSE();
   setInterval(fetchDashboardData, 10000);
