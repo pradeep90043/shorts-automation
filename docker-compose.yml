@@ -34,20 +34,6 @@ services:
     volumes:
       - freellmapi-data:/app/server/data
 
-  # Free Static Address Tunnel (e.g. https://your-name.ngrok-free.app -> bot:3002)
-  ngrok:
-    image: ngrok/ngrok:latest
-    container_name: ngrok-dashboard-tunnel
-    restart: unless-stopped
-    command:
-      - "http"
-      - "bot:3002"
-      - "--domain=${NGROK_DOMAIN}"
-    environment:
-      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
-    depends_on:
-      - bot
-
   # Automatic DuckDNS IP updater (keeps shorts-dashboard.duckdns.org pointing to server IP)
   duckdns:
     image: lscr.io/linuxserver/duckdns:latest
