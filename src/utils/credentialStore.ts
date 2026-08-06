@@ -1,3 +1,5 @@
+import path from "path";
+import { execFile } from "child_process";
 import { getPool } from "./pgClient";
 
 export interface ChannelCredentials {
@@ -47,6 +49,46 @@ export async function saveChannelCredentials(creds: ChannelCredentials): Promise
       creds.instagramEmail || null,
     ],
   );
+}
+
+/**
+ * Spawns get_session_id.py with stored username+password, saves the returned
+ * session ID back to the DB and into process.env.  Returns the new session ID
+ * on success, null if credentials are missing or login fails.
+ */
+export async function refreshSessionForProfile(profileKey: string): Promise<string | null> {
+  const creds = await getChannelCredentials(profileKey);
+  if (!creds?.instagramUsername || !creds?.instagramPassword) return null;
+
+  const python3 = (process.env.PYTHON_PATH && process.env.PYTHON_PATH !== "python3") ? process.env.PYTHON_PATH : "python3";
+  const script = path.resolve(__dirname, "../../scripts/get_session_id.py");
+
+  return new Promise((resolve) => {
+    execFile(
+      python3,
+      [script],
+      {
+        timeout: 90000,
+        env: {
+          ...process.env,
+          INSTAGRAM_USERNAME: creds.instagramUsername!,
+          INSTAGRAM_PASSWORD: creds.instagramPassword!,
+        },
+      },
+      async (err, stdout) => {
+        const sessionId = stdout.trim();
+        if (err || !sessionId) { resolve(null); return; }
+        try {
+          await saveChannelCredentials({ ...creds, instagramSessionId: sessionId });
+          // Update process.env immediately so in-memory candidates pick it up
+          const prefix = profileKey.toUpperCase().replace(/-/g, "_");
+          process.env[`${prefix}_INSTAGRAM_SESSION_ID`] = sessionId;
+          process.env.INSTAGRAM_SESSION_ID = sessionId;
+          resolve(sessionId);
+        } catch { resolve(null); }
+      },
+    );
+  });
 }
 
 /** Load DB credentials into process.env as fallback (only sets if env var not already present). */

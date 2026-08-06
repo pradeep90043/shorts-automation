@@ -40,6 +40,7 @@ const FETCH_SCRIPT = path.resolve(__dirname, "../../scripts/fetch_reels.py");
 export async function listChannelReels(
   username: string,
   scraperEnv?: Record<string, string>,
+  onSessionRefresh?: (newSessionId: string) => void,
 ): Promise<ChannelReelSummary[]> {
   pipelineLogger.info(
     `[ChannelFeed] Fetching reels for @${username} via Instagram mobile API...`,
@@ -60,10 +61,14 @@ export async function listChannelReels(
       (err, stdout, stderr) => {
         const stderrText = stderr.trim();
         if (stderrText) {
-          pipelineLogger.warn(
-            `[ChannelFeed] @${username}: ${stderrText.split("\n")[0]}`,
-            "ChannelFeed",
-          );
+          for (const line of stderrText.split("\n")) {
+            if (line.startsWith("SESSION_REFRESHED:")) {
+              const newSid = line.slice("SESSION_REFRESHED:".length).trim();
+              if (newSid && onSessionRefresh) onSessionRefresh(newSid);
+            } else {
+              pipelineLogger.warn(`[ChannelFeed] @${username}: ${line}`, "ChannelFeed");
+            }
+          }
         }
 
         // Propagate 429 as a distinct error so the caller can back off
@@ -127,6 +132,7 @@ export async function searchAllHashtagReels(
   hashtags: string[],
   limitPerTag = 20,
   scraperEnv?: Record<string, string>,
+  onSessionRefresh?: (newSessionId: string) => void,
 ): Promise<ScoredReelSummary[]> {
   const tags = hashtags.map((t) => t.replace(/^#/, "")).filter(Boolean);
   if (tags.length === 0) return [];
@@ -158,13 +164,15 @@ export async function searchAllHashtagReels(
       (err, stdout, stderr) => {
         const stderrTrimmed = stderr.trim();
         if (stderrTrimmed) {
-          // Log all stderr lines (INFO/WARN from Python) as one log entry
           const lines = stderrTrimmed.split("\n");
           for (const line of lines) {
             if (line.startsWith("RATE_LIMITED")) {
               return reject(new InstagramRateLimitError(tags.join(",")));
             }
-            if (line.startsWith("WARN") || line.startsWith("ERROR")) {
+            if (line.startsWith("SESSION_REFRESHED:")) {
+              const newSid = line.slice("SESSION_REFRESHED:".length).trim();
+              if (newSid && onSessionRefresh) onSessionRefresh(newSid);
+            } else if (line.startsWith("WARN") || line.startsWith("ERROR")) {
               pipelineLogger.warn(`[ChannelFeed] ${line}`, "ChannelFeed");
             }
           }

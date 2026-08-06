@@ -1,6 +1,7 @@
 import http from "http";
 import fs from "fs";
 import path from "path";
+import { execFile } from "child_process";
 import { addLogClient, removeLogClient } from "./utils/logBroadcast";
 import { config } from "./config";
 import { getPool } from "./utils/pgClient";
@@ -1060,6 +1061,49 @@ export function startLogServer(): void {
       } catch (err: any) {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ success: false, message: "Error saving credentials" }));
+      }
+      return;
+    }
+
+    if (
+      req.method === "POST" &&
+      (url === "/api/auto-session" || url.startsWith("/api/auto-session?"))
+    ) {
+      try {
+        const body = await parseJsonBody(req);
+        const pKey = (body.profile || "codeorcap").toLowerCase();
+        const creds = await getChannelCredentials(pKey);
+        if (!creds?.instagramUsername || !creds?.instagramPassword) {
+          res.writeHead(400, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+          res.end(JSON.stringify({ success: false, message: "Username and password must be saved first" }));
+          return;
+        }
+        const python3 = config.binaries.python3;
+        const script = path.resolve(__dirname, "../../scripts/get_session_id.py");
+        const env = {
+          ...process.env,
+          INSTAGRAM_USERNAME: creds.instagramUsername,
+          INSTAGRAM_PASSWORD: creds.instagramPassword,
+          ...(creds.instagramSessionId ? {} : {}),
+        };
+        pipelineLogger.info(`[${pKey.toUpperCase()}] Auto-login started to retrieve session ID`, "ControlCenter");
+        execFile(python3, [script], { timeout: 60000, env }, async (err, stdout, stderr) => {
+          const sessionId = stdout.trim();
+          if (err || !sessionId) {
+            const msg = stderr?.trim().split("\n")[0] || err?.message || "Login failed";
+            pipelineLogger.warn(`[${pKey.toUpperCase()}] Auto-login failed: ${msg}`, "ControlCenter");
+            res.writeHead(500, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+            res.end(JSON.stringify({ success: false, message: msg }));
+            return;
+          }
+          await saveChannelCredentials({ ...creds, instagramSessionId: sessionId });
+          pipelineLogger.info(`[${pKey.toUpperCase()}] Session ID auto-retrieved and saved`, "ControlCenter");
+          res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+          res.end(JSON.stringify({ success: true, message: `Session ID retrieved and saved for [${pKey.toUpperCase()}]`, sessionIdPreview: sessionId.slice(0, 6) + "••••••••" }));
+        });
+      } catch (err: any) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: false, message: "Auto-session error" }));
       }
       return;
     }
