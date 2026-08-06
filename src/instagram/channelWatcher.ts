@@ -6,6 +6,7 @@ import { JobDatabase } from "../utils/db";
 import { listChannelReels } from "./channelFeed";
 import { buildHashtagsForNiche, searchViralReels, ScoredReel } from "./nicheSearcher";
 import { pipelineLogger } from "../utils/logger";
+import { refreshSessionForProfile, saveChannelCredentials, getChannelCredentials } from "../utils/credentialStore";
 
 /**
  * Recurring Instagram-channel-watch automation for one channel profile.
@@ -16,6 +17,19 @@ import { pipelineLogger } from "../utils/logger";
  * skip-gate pipeline path validated by TelegramService.runPresetReel.
  */
 export const activeWatchers = new Map<string, ChannelWatcher>();
+
+function isSessionError(err: Error): boolean {
+  const msg = err.message.toLowerCase();
+  return (
+    msg.includes("loginrequired") ||
+    msg.includes("login required") ||
+    msg.includes("login failed") ||
+    msg.includes("login by session") ||
+    msg.includes("session") ||
+    msg.includes("challengerequired") ||
+    msg.includes("please wait a few minutes")
+  );
+}
 
 export class ChannelWatcher {
   private store: WatchStore;
@@ -97,14 +111,29 @@ export class ChannelWatcher {
     };
   }
 
+  /** Saves a freshly-obtained session ID from an in-flight Python login back to the DB and process.env. */
+  private handleSessionRefresh(newSessionId: string): void {
+    const prefix = this.profile.key.toUpperCase().replace(/-/g, "_");
+    process.env[`${prefix}_INSTAGRAM_SESSION_ID`] = newSessionId;
+    process.env.INSTAGRAM_SESSION_ID = newSessionId;
+    getChannelCredentials(this.profile.key).then((creds) => {
+      if (creds) saveChannelCredentials({ ...creds, instagramSessionId: newSessionId }).catch(() => {});
+    }).catch(() => {});
+    pipelineLogger.info(
+      `[${this.profile.brandName}] Session ID auto-refreshed and saved to DB`,
+      "ChannelWatcher",
+    );
+  }
+
   private async searchViralReelsWithFallback(
     hashtags: string[],
     viralThreshold: number,
     limitPerTag: number,
+    allowSessionRefresh = true,
   ): Promise<ScoredReel[]> {
     const candidates = this.getScraperEnvCandidates();
     let lastError: Error | null = null;
-    
+
     for (const env of candidates) {
       try {
         pipelineLogger.info(
@@ -120,12 +149,27 @@ export class ChannelWatcher {
         );
       }
     }
+
+    if (allowSessionRefresh && lastError && isSessionError(lastError)) {
+      pipelineLogger.info(
+        `[${this.profile.brandName}] All candidates failed with session error. Auto-refreshing session ID...`,
+        "ChannelWatcher",
+      );
+      const newSession = await refreshSessionForProfile(this.profile.key).catch(() => null);
+      if (newSession) {
+        this.handleSessionRefresh(newSession);
+        return this.searchViralReelsWithFallback(hashtags, viralThreshold, limitPerTag, false);
+      }
+    }
+
     throw lastError || new Error("All Instagram login candidates failed");
   }
 
-  private async listChannelReelsWithFallback(channel: string): Promise<any[]> {
+  private async listChannelReelsWithFallback(channel: string, allowSessionRefresh = true): Promise<any[]> {
     const candidates = this.getScraperEnvCandidates();
     let lastError: Error | null = null;
+
+    const onRefresh = (newSid: string) => this.handleSessionRefresh(newSid);
 
     for (const env of candidates) {
       try {
@@ -133,7 +177,7 @@ export class ChannelWatcher {
           `[${this.profile.brandName}] Attempting listChannelReels with account "${env.INSTAGRAM_USERNAME || 'session-only'}"...`,
           "ChannelWatcher",
         );
-        return await listChannelReels(channel, env);
+        return await listChannelReels(channel, env, onRefresh);
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
         pipelineLogger.warn(
@@ -142,6 +186,19 @@ export class ChannelWatcher {
         );
       }
     }
+
+    if (allowSessionRefresh && lastError && isSessionError(lastError)) {
+      pipelineLogger.info(
+        `[${this.profile.brandName}] All candidates failed with session error. Auto-refreshing session ID...`,
+        "ChannelWatcher",
+      );
+      const newSession = await refreshSessionForProfile(this.profile.key).catch(() => null);
+      if (newSession) {
+        this.handleSessionRefresh(newSession);
+        return this.listChannelReelsWithFallback(channel, false);
+      }
+    }
+
     throw lastError || new Error("All Instagram login candidates failed");
   }
 

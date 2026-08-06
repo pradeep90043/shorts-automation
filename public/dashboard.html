@@ -889,7 +889,10 @@
           '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">' +
             '<div><div style="font-size:12px;font-weight:700;color:var(--text);">Instagram Credentials</div>' +
             '<div style="font-size:11px;color:var(--text-muted);margin-top:2px;">Stored in database — survives redeployments</div></div>' +
+            '<div style="display:flex;gap:8px;">' +
+            '<button class="btn-icon auto-session-btn" style="background:var(--primary-bg);color:var(--primary);border-color:var(--primary);">🔑 Auto-Login</button>' +
             '<button class="btn-icon save-creds-btn" style="background:var(--success-bg);color:var(--success);border-color:var(--success);">💾 Save Credentials</button>' +
+            '</div>' +
           '</div>' +
           '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
             '<div><label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Username</label>' +
@@ -919,6 +922,7 @@
         this.textContent = pwdInput.type === 'password' ? '👁' : '🙈';
       };
       card.querySelector('.save-creds-btn').onclick = () => triggerSaveCredentials(c.key, card);
+      card.querySelector('.auto-session-btn').onclick = () => triggerAutoSession(c.key, card);
       loadCredentialsIntoCard(c.key, card);
       container.appendChild(card);
     });
@@ -1133,6 +1137,24 @@
       if (updEl && data.updatedAt) updEl.textContent = 'Last saved: ' + new Date(data.updatedAt).toLocaleString();
       else if (updEl && data.hasCredentials) updEl.textContent = 'Credentials stored in database';
     } catch {}
+  }
+  async function triggerAutoSession(profileKey, card) {
+    const btn = card.querySelector('.auto-session-btn');
+    const orig = btn.textContent;
+    btn.textContent = '⏳ Logging in...';
+    btn.disabled = true;
+    try {
+      const res = await fetch('/api/auto-session', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({profile: profileKey})});
+      const data = await res.json();
+      if (data.success) {
+        showToast(data.message || 'Session ID saved!', 'ok');
+        loadCredentialsIntoCard(profileKey, card);
+      } else {
+        showToast(data.message || 'Auto-login failed', 'err');
+      }
+    } catch { showToast('Auto-login request failed', 'err'); }
+    btn.textContent = orig;
+    btn.disabled = false;
   }
   async function triggerRetryFailed(shortcode, profileKey) {
     try {

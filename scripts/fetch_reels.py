@@ -182,8 +182,11 @@ def get_client(force_login=False):
                 except Exception: pass
             print(f"WARN: Saved session file is invalid/expired ({exc}). Removing and re-authenticating...", file=sys.stderr)
 
+    _used_password_login = False
+
     def _do_login(client: "Client") -> None:
         """Login, injecting a TOTP code when 2FA is configured, or login by session ID."""
+        nonlocal _used_password_login
         if session_id:
             try:
                 sid = urllib.parse.unquote(session_id)
@@ -191,14 +194,15 @@ def get_client(force_login=False):
                 print(f"INFO: Logged in using INSTAGRAM_SESSION_ID ({sid[:15]}...).", file=sys.stderr)
                 return
             except Exception as e:
-                print(f"WARN: Login by session ID failed: {e}", file=sys.stderr)
+                print(f"WARN: Login by session ID failed: {e}. Falling back to username/password.", file=sys.stderr)
                 if not ig_user or not ig_pass:
                     raise e
-                    
+
         if totp_secret:
             try:
                 import pyotp
                 client.login(ig_user, ig_pass, verification_code=pyotp.TOTP(totp_secret).now())
+                _used_password_login = True
                 return
             except ImportError:
                 print(
@@ -207,6 +211,7 @@ def get_client(force_login=False):
                     file=sys.stderr,
                 )
         client.login(ig_user, ig_pass)
+        _used_password_login = True
 
     if not session_loaded:
         try:
@@ -255,6 +260,13 @@ def get_client(force_login=False):
         cl.dump_settings(session_file)
     except Exception as exc:
         print(f"WARN: Could not save session file: {exc}", file=sys.stderr)
+
+    # If we logged in via password (session was missing or expired), emit the new
+    # session ID so Node.js can persist it to the DB automatically.
+    if _used_password_login:
+        new_sid = cl.cookie_dict.get("sessionid", "")
+        if new_sid:
+            print(f"SESSION_REFRESHED:{new_sid}", file=sys.stderr)
 
     return cl
 
