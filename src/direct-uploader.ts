@@ -4542,8 +4542,9 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
               `:enable='between(t,0.3,${scoreShowEnd})'[out_v]`,
             ...(hasNumberTts
               ? [
-                  `[2:a]adelay=${numberDelayMs}|${numberDelayMs}[num]`,
-                  `[0:a][num]amix=inputs=2:duration=first:normalize=0[out_a]`,
+                  `[0:a]volume=eval=frame:volume='if(between(t,2.05,2.45),0.05,1)'[ducked]`,
+                  `[2:a]volume=3.5,adelay=${numberDelayMs}|${numberDelayMs}[num]`,
+                  `[ducked][num]amix=inputs=2:duration=first:normalize=0[out_a]`,
                 ]
               : [`[0:a]acopy[out_a]`]),
           ].join(";");
