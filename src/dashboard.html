@@ -945,6 +945,11 @@
         '<div style="margin-top:12px;">' +
           '<label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Excluded Channels (comma separated)</label><textarea class="input-field excludes-input" style="width:100%;height:80px;padding:8px 12px;resize:vertical;font-size:12px;font-family:var(--font-mono);" placeholder="e.g. badcreator, spambot">' + (c.excludeChannels || []).join(', ') + '</textarea>' +
         '</div>' +
+        (c.key === 'codeorcap' ?
+        '<div style="margin-top:12px;">' +
+          '<label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Outro / Final Clip Version</label>' +
+          '<select class="select-field outro-version-select" style="width:100%;"><option value="v1" ' + ((c.outroVersion || 'v1') === 'v1' ? 'selected' : '') + '>v1 (Classic Outro)</option><option value="v2" ' + (c.outroVersion === 'v2' ? 'selected' : '') + '>v2 (Transition + Classic Outro)</option></select>' +
+        '</div>' : '') +
         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px;">' +
           '<div><label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Post Interval</label><select class="select-field" style="width:100%;"><option>Every 2 hours</option><option>Every 4 hours</option><option>Every 6 hours</option><option>Custom</option></select></div>' +
           '<div><label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">On Queue Empty</label><select class="select-field" style="width:100%;"><option>Wait for new reels</option><option>Auto-fetch watchlist</option><option>Pause bot</option></select></div>' +
@@ -960,6 +965,7 @@
       const hashtagsInput = card.querySelector('.hashtags-input');
       const watchlistInput = card.querySelector('.watchlist-input');
       const excludesInput = card.querySelector('.excludes-input');
+      const outroVersionSelect = card.querySelector('.outro-version-select');
       card.querySelector('.save-cfg-btn').onclick = () => {
         triggerUpdateConfig(
           c.key,
@@ -967,7 +973,8 @@
           searchModeSelect.value,
           hashtagsInput.value,
           watchlistInput.value,
-          excludesInput.value
+          excludesInput.value,
+          outroVersionSelect ? outroVersionSelect.value : 'v1'
         );
       };
       container.appendChild(card);
@@ -1147,7 +1154,7 @@
   }
 
   /* ─── API ACTIONS ─── */
-  async function triggerUpdateConfig(profileKey, limitVal, searchMode, nicheHashtags) {
+  async function triggerUpdateConfig(profileKey, limitVal, searchMode, nicheHashtags, watchedChannels, excludeChannels, outroVersion) {
     try {
       const res = await fetch('/api/update-config',{
         method:'POST',
@@ -1156,7 +1163,10 @@
           profile:profileKey,
           dailyLimit:limitVal,
           searchMode:searchMode,
-          nicheHashtags:nicheHashtags
+          nicheHashtags:nicheHashtags,
+          watchedChannels:watchedChannels,
+          excludeChannels:excludeChannels,
+          outroVersion:outroVersion
         })
       });
       const data = await res.json();
