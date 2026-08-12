@@ -1099,7 +1099,8 @@ export function startLogServer(): void {
             message: `⚙️ Config updated for profile [${pKey.toUpperCase()}]: ${dailyLimit} reels/day.`,
           }),
         );
-      } catch {
+      } catch (err) {
+        pipelineLogger.error("Failed to update profile configuration", err, "ControlCenter");
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(
           JSON.stringify({
