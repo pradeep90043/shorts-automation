@@ -52,6 +52,8 @@ const HASHTAG_MAP: Record<string, Record<string, string[]>> = {
     emotional: ["emotionalstory", "motivational", "inspiration", "heartfelt", "feelgood"],
     sad: ["emotionalstory", "sadvideo", "heartfelt", "inspiration", "relatable"],
     motivational: ["motivational", "inspiration", "mindset", "success", "positivity"],
+    horror: ["horrorstories", "scarystories", "horror", "scary", "creepy", "ghoststories", "spooky"],
+    romantic: ["romanticstory", "loveletters", "romance", "lovestory", "love", "feelgood", "romantic"],
   },
 };
 

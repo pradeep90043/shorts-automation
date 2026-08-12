@@ -8,6 +8,7 @@ import { getPool } from "./utils/pgClient";
 import { getChannelCredentials, saveChannelCredentials } from "./utils/credentialStore";
 import { activeWatchers } from "./instagram/channelWatcher";
 import { ViralAnalyzer } from "./utils/viral-analyzer";
+import { buildHashtagsForNiche } from "./instagram/nicheSearcher";
 import { computeViralScore } from "./utils/viralScore";
 import { pipelineLogger } from "./utils/logger";
 
@@ -31,20 +32,40 @@ function parseJsonBody(req: http.IncomingMessage): Promise<any> {
   });
 }
 
-function readLastLines(filePath: string, n: number): string[] {
+function readLastLines(filePath: string, maxLines: number): string[] {
   try {
     if (!fs.existsSync(filePath)) return [];
-    const stats = fs.statSync(filePath);
-    const maxBytes = 256 * 1024;
-    const readSize = Math.min(stats.size, maxBytes);
-    const buffer = Buffer.alloc(readSize);
+    const stat = fs.statSync(filePath);
+    const fileSize = stat.size;
+    if (fileSize === 0) return [];
+
     const fd = fs.openSync(filePath, "r");
-    fs.readSync(fd, buffer, 0, readSize, stats.size - readSize);
+    const bufferSize = 8192;
+    const buffer = Buffer.alloc(bufferSize);
+    let filePosition = fileSize;
+    let lineCount = 0;
+    let output = "";
+
+    while (filePosition > 0 && lineCount <= maxLines) {
+      const readLength = Math.min(bufferSize, filePosition);
+      filePosition -= readLength;
+      fs.readSync(fd, buffer, 0, readLength, filePosition);
+      
+      const chunk = buffer.toString("utf8", 0, readLength);
+      output = chunk + output;
+      
+      let pos = -1;
+      while ((pos = chunk.indexOf("\n", pos + 1)) !== -1) {
+        lineCount++;
+      }
+    }
+
     fs.closeSync(fd);
-    const content = buffer.toString("utf8");
-    const lines = content.split("\n").filter((l) => l.trim());
-    return stats.size > maxBytes ? lines.slice(1).slice(-n) : lines.slice(-n);
-  } catch {
+
+    const lines = output.split("\n").filter((l) => l.trim());
+    return lines.slice(-maxLines);
+  } catch (err) {
+    console.error("Error reading last lines of log file:", err);
     return [];
   }
 }
@@ -289,6 +310,8 @@ async function getDashboardData() {
     const colors = ["teal", "blue", "purple", "amber", "rose"];
     const avatarColor = colors[idx % colors.length];
 
+    const defaultHashtags = buildHashtagsForNiche(profile.theme);
+
     return {
       key: pKey,
       name: profile.brandName,
@@ -301,6 +324,9 @@ async function getDashboardData() {
       isWatchOnly: profile.isWatchOnly,
       dailyTarget: profile.watch?.dailyCount || 6,
       dailyLimit: profile.watch?.dailyCount || 6,
+      searchMode: profile.watch?.searchMode || "hashtags",
+      nicheHashtags: profile.watch?.nicheHashtags || [],
+      defaultHashtags,
       scheduleTime: profile.watch?.scheduleTime || "09:00",
       gapHours: profile.watch?.gapHours || 3,
       queueCount: queue.length,
@@ -409,6 +435,9 @@ async function getDashboardData() {
         isWatchOnly: false,
         dailyTarget: fb.dailyLimit,
         dailyLimit: fb.dailyLimit,
+        searchMode: "hashtags",
+        nicheHashtags: [],
+        defaultHashtags: buildHashtagsForNiche({ niche: fb.niche } as any),
         scheduleTime: "09:00",
         gapHours: 3,
         queueCount: queue.length,
@@ -984,12 +1013,30 @@ export function startLogServer(): void {
           body.dailyLimit || pUrl.searchParams.get("dailyLimit") || "6",
           10,
         );
+        const searchMode = body.searchMode || pUrl.searchParams.get("searchMode") || "";
+        let nicheHashtags: string[] | undefined = undefined;
+        if (body.nicheHashtags) {
+          nicheHashtags = Array.isArray(body.nicheHashtags)
+            ? body.nicheHashtags
+            : String(body.nicheHashtags).split(",").map(t => t.trim().replace(/^#/, "")).filter(Boolean);
+        } else {
+          const hashtagsRaw = pUrl.searchParams.get("nicheHashtags") || "";
+          if (hashtagsRaw) {
+            nicheHashtags = hashtagsRaw.split(",").map(t => t.trim().replace(/^#/, "")).filter(Boolean);
+          }
+        }
 
         const profile = config.profiles.find(
           (p) => (p.key || p.brandName).toLowerCase() === pKey,
         );
         if (profile && profile.watch) {
           profile.watch.dailyCount = dailyLimit;
+          if (searchMode && ["channels", "hashtags", "both"].includes(searchMode)) {
+            profile.watch.searchMode = searchMode as any;
+          }
+          if (nicheHashtags !== undefined) {
+            profile.watch.nicheHashtags = nicheHashtags;
+          }
         }
 
         res.writeHead(200, {
@@ -1284,10 +1331,16 @@ export function startLogServer(): void {
       return;
     }
 
+    const urlObj = new URL(url, `http://${req.headers.host || "localhost"}`);
+    const isStream = urlObj.pathname === "/logs/stream" ||
+                     urlObj.searchParams.get("stream") === "true" ||
+                     (req.headers["accept"] && req.headers["accept"].includes("text/event-stream"));
+
     if (
-      url === "/logs" ||
-      url.startsWith("/logs?") ||
-      url.startsWith("/logs/")
+      isStream &&
+      (urlObj.pathname === "/logs" ||
+       urlObj.pathname === "/logs/stream" ||
+       urlObj.pathname.startsWith("/logs/"))
     ) {
       res.writeHead(200, {
         "Content-Type": "text/event-stream",
