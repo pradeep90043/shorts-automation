@@ -864,7 +864,9 @@ export function startLogServer(): void {
           shortcode,
           url: reelUrl,
           channel: "manual_inject",
-          pickedAt: new Date().toISOString(),
+          scheduledAt: new Date().toISOString(),
+          fired: false,
+          addedAt: new Date().toISOString(),
         };
 
         const pool = await getPool();
@@ -1076,6 +1078,15 @@ export function startLogServer(): void {
           if (outroVersion && ["v1", "v2"].includes(outroVersion)) {
             profile.watch.outroVersion = outroVersion as "v1" | "v2";
           }
+
+          const pool = await getPool();
+          await pool.query(
+            `INSERT INTO watch_state (profile_key, watch_config)
+             VALUES ($1, $2::jsonb)
+             ON CONFLICT (profile_key) DO UPDATE
+               SET watch_config = EXCLUDED.watch_config`,
+            [pKey, JSON.stringify(profile.watch)],
+          );
         }
 
         res.writeHead(200, {

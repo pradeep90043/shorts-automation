@@ -289,12 +289,15 @@ function loadWatchConfig(prefix?: string): WatchConfig {
     ? outroVersionRaw
     : "v1") as "v1" | "v2";
 
+  const primaryAdminChatId = process.env.WATCH_ADMIN_CHAT_ID ? parseInt(process.env.WATCH_ADMIN_CHAT_ID, 10) : 0;
+  const adminChatId = parseInt(env("WATCH_ADMIN_CHAT_ID") || "0", 10) || primaryAdminChatId;
+
   return {
     channels,
     dailyCount: parseInt(env("WATCH_DAILY_COUNT") || "5", 10),
     scheduleTime: env("WATCH_SCHEDULE_TIME") || "09:00",
     gapHours: parseFloat(env("WATCH_GAP_HOURS") || "2"),
-    adminChatId: parseInt(env("WATCH_ADMIN_CHAT_ID") || "0", 10),
+    adminChatId,
     searchMode,
     nicheHashtags,
     moodFilter,
@@ -308,11 +311,15 @@ function loadWatchConfig(prefix?: string): WatchConfig {
 function loadExtraProfiles(): ChannelProfile[] {
   const prefixes = new Set<string>();
   for (const key of Object.keys(process.env)) {
-    const m = key.match(/^([A-Z0-9_]+)_(?:TELEGRAM_BOT_TOKEN|INSTAGRAM_CHANNELS|YOUTUBE_REFRESH_TOKEN)(?:_LOCAL|_PROD)?$/);
+    const m = key.match(/^([A-Z0-9_]+)_(?:TELEGRAM_BOT_TOKEN|INSTAGRAM_CHANNELS|YOUTUBE_REFRESH_TOKEN|INSTAGRAM_ACCESS_TOKEN|INSTAGRAM_USER_ID)(?:_LOCAL|_PROD)?$/);
     if (m) {
       prefixes.add(m[1].toUpperCase());
     }
   }
+
+  // Always ensure STORIYUM and PROMPT_GAG are considered as prefixes
+  prefixes.add("STORIYUM");
+  prefixes.add("PROMPT_GAG");
 
   const profiles: ChannelProfile[] = [];
   for (const prefix of prefixes) {
@@ -337,7 +344,11 @@ function loadExtraProfiles(): ChannelProfile[] {
     }
     if (!telegramToken) continue;
 
-    const brandName = env("BRAND_NAME") || titleCase(prefix);
+    let brandName = env("BRAND_NAME");
+    if (!brandName) {
+      if (prefix === "PROMPT_GAG") brandName = "PromptGag";
+      else brandName = titleCase(prefix);
+    }
     
     let fbPageId = env("FACEBOOK_PAGE_ID") || "";
     let fbAccessToken = env("FACEBOOK_ACCESS_TOKEN") || env("INSTAGRAM_ACCESS_TOKEN") || "";
@@ -345,11 +356,13 @@ function loadExtraProfiles(): ChannelProfile[] {
       if (!fbPageId) fbPageId = "1244228672098266";
     }
 
+    const nicheEnv = env("NICHE") || (prefix === "PROMPT_GAG" ? "humor" : undefined);
+
     profiles.push({
       key: prefix.toLowerCase(),
       brandName,
-      handle: env("BRAND_HANDLE") || `@${prefix.toLowerCase()}`,
-      theme: resolveTheme(env("NICHE"), brandName),
+      handle: env("BRAND_HANDLE") || (prefix === "PROMPT_GAG" ? "@prompt_gag" : `@${prefix.toLowerCase()}`),
+      theme: resolveTheme(nicheEnv, brandName),
       isDefault: false,
       telegramToken,
       isWatchOnly,

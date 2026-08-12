@@ -77,6 +77,7 @@ export async function initSchema(): Promise<void> {
       await pool.query(`
         ALTER TABLE watch_state ADD COLUMN IF NOT EXISTS channel_sequence JSONB NOT NULL DEFAULT '[]';
         ALTER TABLE watch_state ADD COLUMN IF NOT EXISTS current_slot INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE watch_state ADD COLUMN IF NOT EXISTS watch_config JSONB;
         ALTER TABLE reel_history ADD COLUMN IF NOT EXISTS facebook_url TEXT;
         ALTER TABLE reel_history ADD COLUMN IF NOT EXISTS youtube_video_id TEXT;
         ALTER TABLE reel_history ADD COLUMN IF NOT EXISTS instagram_media_id TEXT;

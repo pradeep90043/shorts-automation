@@ -40,6 +40,34 @@ async function bootstrap() {
     await loadCredentialsToEnv(profile.key).catch(() => {});
   }
 
+  // 1d. Load watch configurations from the database to override file-based defaults
+  try {
+    const { getPool } = require("./utils/pgClient");
+    const pool = await getPool();
+    const { rows } = await pool.query(
+      "SELECT profile_key, watch_config FROM watch_state WHERE watch_config IS NOT NULL"
+    );
+    for (const row of rows) {
+      const pKey = row.profile_key.toLowerCase();
+      const profile = config.profiles.find((p) => (p.key || p.brandName).toLowerCase() === pKey);
+      if (profile && row.watch_config) {
+        pipelineLogger.info(
+          `Overriding watch configuration for profile [${profile.brandName}] from database: ${row.watch_config.dailyCount} reels/day, ${row.watch_config.channels?.length || 0} watched channels`,
+          "Bootstrap",
+        );
+        profile.watch = {
+          ...profile.watch,
+          ...row.watch_config,
+        };
+      }
+    }
+  } catch (err) {
+    pipelineLogger.warn(
+      `Failed to load watch configurations from database: ${err instanceof Error ? err.message : err}`,
+      "Bootstrap",
+    );
+  }
+
   // 2. Ensure branding and default audio assets are present
   try {
     await ensureAssetsExist();
