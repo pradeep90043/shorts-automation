@@ -41,6 +41,7 @@ export interface WatchConfig {
   nicheHashtags?: string[]; // override auto-generated hashtags from niche/mood mapping
   moodFilter?: string[]; // preferred moods as a hint to the AI metadata prompt
   viralThreshold: number; // 0-100 minimum viral score to include (default: 50, fail-open)
+  excludeChannels?: string[]; // list of channels to ignore/exclude
 }
 
 export interface FacebookConfig {
@@ -262,6 +263,11 @@ function loadWatchConfig(prefix?: string): WatchConfig {
     ? searchModeRaw
     : "hashtags") as WatchConfig["searchMode"];
 
+  const excludeChannelsRaw = env("WATCH_EXCLUDE_CHANNELS") || "";
+  const excludeChannels = excludeChannelsRaw
+    ? excludeChannelsRaw.split(",").map((c) => c.trim().replace(/^@/, "").toLowerCase()).filter(Boolean)
+    : [];
+
   const nicheHashtagsRaw = env("WATCH_NICHE_HASHTAGS") || "";
   const nicheHashtags = nicheHashtagsRaw
     ? nicheHashtagsRaw.split(",").map((t) => t.trim().replace(/^#/, "")).filter(Boolean)
@@ -287,6 +293,7 @@ function loadWatchConfig(prefix?: string): WatchConfig {
     nicheHashtags,
     moodFilter,
     viralThreshold,
+    excludeChannels,
   };
 }
 

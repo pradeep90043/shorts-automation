@@ -327,6 +327,8 @@ async function getDashboardData() {
       searchMode: profile.watch?.searchMode || "hashtags",
       nicheHashtags: profile.watch?.nicheHashtags || [],
       defaultHashtags,
+      watchedChannels: profile.watch?.channels || [],
+      excludeChannels: profile.watch?.excludeChannels || [],
       scheduleTime: profile.watch?.scheduleTime || "09:00",
       gapHours: profile.watch?.gapHours || 3,
       queueCount: queue.length,
@@ -438,6 +440,8 @@ async function getDashboardData() {
         searchMode: "hashtags",
         nicheHashtags: [],
         defaultHashtags: buildHashtagsForNiche({ niche: fb.niche } as any),
+        watchedChannels: [],
+        excludeChannels: [],
         scheduleTime: "09:00",
         gapHours: 3,
         queueCount: queue.length,
@@ -1015,7 +1019,7 @@ export function startLogServer(): void {
         );
         const searchMode = body.searchMode || pUrl.searchParams.get("searchMode") || "";
         let nicheHashtags: string[] | undefined = undefined;
-        if (body.nicheHashtags) {
+        if (body.nicheHashtags !== undefined) {
           nicheHashtags = Array.isArray(body.nicheHashtags)
             ? body.nicheHashtags
             : String(body.nicheHashtags).split(",").map(t => t.trim().replace(/^#/, "")).filter(Boolean);
@@ -1023,6 +1027,30 @@ export function startLogServer(): void {
           const hashtagsRaw = pUrl.searchParams.get("nicheHashtags") || "";
           if (hashtagsRaw) {
             nicheHashtags = hashtagsRaw.split(",").map(t => t.trim().replace(/^#/, "")).filter(Boolean);
+          }
+        }
+
+        let watchedChannels: string[] | undefined = undefined;
+        if (body.watchedChannels !== undefined) {
+          watchedChannels = Array.isArray(body.watchedChannels)
+            ? body.watchedChannels
+            : String(body.watchedChannels).split(",").map(t => t.trim().replace(/^@/, "").toLowerCase()).filter(Boolean);
+        } else {
+          const watchedRaw = pUrl.searchParams.get("watchedChannels") || "";
+          if (watchedRaw) {
+            watchedChannels = watchedRaw.split(",").map(t => t.trim().replace(/^@/, "").toLowerCase()).filter(Boolean);
+          }
+        }
+
+        let excludeChannels: string[] | undefined = undefined;
+        if (body.excludeChannels !== undefined) {
+          excludeChannels = Array.isArray(body.excludeChannels)
+            ? body.excludeChannels
+            : String(body.excludeChannels).split(",").map(t => t.trim().replace(/^@/, "").toLowerCase()).filter(Boolean);
+        } else {
+          const excludeRaw = pUrl.searchParams.get("excludeChannels") || "";
+          if (excludeRaw) {
+            excludeChannels = excludeRaw.split(",").map(t => t.trim().replace(/^@/, "").toLowerCase()).filter(Boolean);
           }
         }
 
@@ -1036,6 +1064,12 @@ export function startLogServer(): void {
           }
           if (nicheHashtags !== undefined) {
             profile.watch.nicheHashtags = nicheHashtags;
+          }
+          if (watchedChannels !== undefined) {
+            profile.watch.channels = watchedChannels;
+          }
+          if (excludeChannels !== undefined) {
+            profile.watch.excludeChannels = excludeChannels;
           }
         }
 

@@ -848,14 +848,13 @@
     } catch { showToast('Error sending inject request', 'err'); }
   }
 
-  /* ─── CONFIG TAB ─── */
   function renderConfigTab(channels) {
     const container = document.getElementById('config-cards-list');
     if (!container) return;
     const defaults = [
-      { key:'codeorcap', name:'CodeOrCap', color:'primary', initials:'CO', handle:'@codeorcap', dailyLimit:6, queueCount:0, stats:{publishedCount:0}, searchMode:'hashtags', nicheHashtags:[], defaultHashtags:[] },
-      { key:'storiyum',  name:'Storiyum',  color:'purple',  initials:'ST', handle:'@storiyum',  dailyLimit:6, queueCount:0, stats:{publishedCount:0}, searchMode:'hashtags', nicheHashtags:[], defaultHashtags:[] },
-      { key:'prompt_gag',name:'PromptGag', color:'warning', initials:'PG', handle:'@prompt_gag',dailyLimit:6, queueCount:0, stats:{publishedCount:0}, searchMode:'hashtags', nicheHashtags:[], defaultHashtags:[] }
+      { key:'codeorcap', name:'CodeOrCap', color:'primary', initials:'CO', handle:'@codeorcap', dailyLimit:6, queueCount:0, stats:{publishedCount:0}, searchMode:'hashtags', nicheHashtags:[], defaultHashtags:[], watchedChannels:[], excludeChannels:[] },
+      { key:'storiyum',  name:'Storiyum',  color:'purple',  initials:'ST', handle:'@storiyum',  dailyLimit:6, queueCount:0, stats:{publishedCount:0}, searchMode:'hashtags', nicheHashtags:[], defaultHashtags:[], watchedChannels:[], excludeChannels:[] },
+      { key:'prompt_gag',name:'PromptGag', color:'warning', initials:'PG', handle:'@prompt_gag',dailyLimit:6, queueCount:0, stats:{publishedCount:0}, searchMode:'hashtags', nicheHashtags:[], defaultHashtags:[], watchedChannels:[], excludeChannels:[] }
     ];
     const list = (channels && channels.length > 0) ? channels : defaults;
     const filtered = focusedChannel === 'all' ? list : list.filter(c => c.key === focusedChannel);
@@ -880,8 +879,12 @@
           '<input type="range" class="cfg-range" min="1" max="20" step="1" value="' + dailyLimit + '" style="width:100%;accent-color:var(--primary);">' +
         '</div>' +
         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px;">' +
-          '<div><label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Search Mode</label><select class="select-field search-mode-select" style="width:100%;"><option value="channels" ' + (c.searchMode === 'channels' ? 'selected' : '') + '>Competitor Watchlist</option><option value="hashtags" ' + (c.searchMode === 'hashtags' ? 'selected' : '') + '>Global Hashtags</option><option value="both" ' + (c.searchMode === 'both' ? 'selected' : '') + '>Both (Hashtags + Channels)</option></select></div>' +
-          '<div><label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Hashtags (comma separated)</label><input type="text" class="input-field hashtags-input" style="width:100%;padding:6px 10px;" value="' + ((c.nicheHashtags && c.nicheHashtags.length > 0) ? c.nicheHashtags.join(', ') : (c.defaultHashtags || []).join(', ')) + '" placeholder="e.g. coding, programming, ai"></div>' +
+          '<div><label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Search Mode</label><select class="select-field search-mode-select" style="width:100%;" onchange="toggleConfigChannelFields(\'' + c.key + '\', this.value)"><option value="channels" ' + (c.searchMode === 'channels' ? 'selected' : '') + '>Competitor Watchlist</option><option value="hashtags" ' + (c.searchMode === 'hashtags' ? 'selected' : '') + '>Global Hashtags</option><option value="both" ' + (c.searchMode === 'both' ? 'selected' : '') + '>Both (Hashtags + Channels)</option></select></div>' +
+          '<div><label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Excluded Channels (comma separated)</label><input type="text" class="input-field excludes-input" style="width:100%;padding:6px 10px;" value="' + (c.excludeChannels || []).join(', ') + '" placeholder="e.g. badcreator, spambot"></div>' +
+        '</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;">' +
+          '<div id="cfg-hashtags-container-' + c.key + '" style="display:' + (c.searchMode !== 'channels' ? 'block' : 'none') + ';"><label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Hashtags (comma separated)</label><input type="text" class="input-field hashtags-input" style="width:100%;padding:6px 10px;" value="' + ((c.nicheHashtags && c.nicheHashtags.length > 0) ? c.nicheHashtags.join(', ') : (c.defaultHashtags || []).join(', ')) + '" placeholder="e.g. coding, programming, ai"></div>' +
+          '<div id="cfg-channels-container-' + c.key + '" style="display:' + (c.searchMode !== 'hashtags' ? 'block' : 'none') + ';"><label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Competitor Watchlist (comma separated)</label><input type="text" class="input-field watchlist-input" style="width:100%;padding:6px 10px;" value="' + (c.watchedChannels || []).join(', ') + '" placeholder="e.g. competitor1, competitor2"></div>' +
         '</div>' +
         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px;">' +
           '<div><label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Post Interval</label><select class="select-field" style="width:100%;"><option>Every 2 hours</option><option>Every 4 hours</option><option>Every 6 hours</option><option>Custom</option></select></div>' +
@@ -921,8 +924,17 @@
       };
       const searchModeSelect = card.querySelector('.search-mode-select');
       const hashtagsInput = card.querySelector('.hashtags-input');
+      const watchlistInput = card.querySelector('.watchlist-input');
+      const excludesInput = card.querySelector('.excludes-input');
       card.querySelector('.save-cfg-btn').onclick = () => {
-        triggerUpdateConfig(c.key, Number(rangeInput.value), searchModeSelect.value, hashtagsInput.value);
+        triggerUpdateConfig(
+          c.key,
+          Number(rangeInput.value),
+          searchModeSelect.value,
+          hashtagsInput.value,
+          watchlistInput.value,
+          excludesInput.value
+        );
       };
       card.querySelector('.cred-eye-btn').onclick = function() {
         const pwdInput = card.querySelector('.cred-password');
@@ -1109,7 +1121,7 @@
   }
 
   /* ─── API ACTIONS ─── */
-  async function triggerUpdateConfig(profileKey, limitVal, searchMode, nicheHashtags) {
+  async function triggerUpdateConfig(profileKey, limitVal, searchMode, nicheHashtags, watchedChannels, excludeChannels) {
     try {
       const res = await fetch('/api/update-config',{
         method:'POST',
@@ -1118,7 +1130,9 @@
           profile:profileKey,
           dailyLimit:limitVal,
           searchMode:searchMode,
-          nicheHashtags:nicheHashtags
+          nicheHashtags:nicheHashtags,
+          watchedChannels:watchedChannels,
+          excludeChannels:excludeChannels
         })
       });
       const data = await res.json();
@@ -1248,6 +1262,13 @@
     logTotal++;
     document.getElementById('log-count').textContent=logTotal+' entries';
     if (autoScroll && activeTab==='logs') container.scrollTop=container.scrollHeight;
+  }
+
+  function toggleConfigChannelFields(key, mode) {
+    const hashtagsContainer = document.getElementById('cfg-hashtags-container-' + key);
+    const channelsContainer = document.getElementById('cfg-channels-container-' + key);
+    if (hashtagsContainer) hashtagsContainer.style.display = (mode !== 'channels') ? 'block' : 'none';
+    if (channelsContainer) channelsContainer.style.display = (mode !== 'hashtags') ? 'block' : 'none';
   }
 
   function connectSSE() {
