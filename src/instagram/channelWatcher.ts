@@ -350,7 +350,8 @@ export class ChannelWatcher {
       return [];
     }
 
-    const { searchMode, channels, dailyCount, nicheHashtags, viralThreshold } = this.profile.watch;
+    const { searchMode, channels, dailyCount, nicheHashtags, viralThreshold, excludeChannels = [] } = this.profile.watch;
+    const excludes = new Set(excludeChannels.map(c => c.toLowerCase().trim()));
 
     // ── Hashtag search (hashtags | both mode) ───────────────────────────────
     this.hashtagReelPool = [];
@@ -393,6 +394,9 @@ export class ChannelWatcher {
     const pool: Array<{ shortcode: string; url: string; channel: string }> = [];
     if (searchMode === "channels" || searchMode === "both" || this.hashtagReelPool.length === 0) {
       for (const channel of channels) {
+        if (excludes.has(channel.toLowerCase().trim())) {
+          continue;
+        }
         try {
           const reels = await this.listChannelReelsWithFallback(channel);
           for (const r of reels) {
@@ -425,6 +429,11 @@ export class ChannelWatcher {
 
     for (const r of this.hashtagReelPool) {
       if (allPicks.length >= dailyCount) break;
+      const creator = (r.creatorUsername || r.channel || "").toLowerCase().trim();
+      if (excludes.has(creator)) {
+        pipelineLogger.info(`[${this.profile.brandName}] Excluding reel #${r.shortcode} from hashtag pool because it belongs to excluded channel: ${creator}`, "ChannelWatcher");
+        continue;
+      }
       if (!seenShortcodes.has(r.shortcode)) {
         seenShortcodes.add(r.shortcode);
         allPicks.push({ shortcode: r.shortcode, url: r.url, channel: r.creatorUsername || r.channel });
@@ -432,6 +441,11 @@ export class ChannelWatcher {
     }
     for (const r of pool) {
       if (allPicks.length >= dailyCount) break;
+      const creator = (r.channel || "").toLowerCase().trim();
+      if (excludes.has(creator)) {
+        pipelineLogger.info(`[${this.profile.brandName}] Excluding reel #${r.shortcode} from channel pool because it belongs to excluded channel: ${creator}`, "ChannelWatcher");
+        continue;
+      }
       if (!seenShortcodes.has(r.shortcode)) {
         seenShortcodes.add(r.shortcode);
         allPicks.push(r);
