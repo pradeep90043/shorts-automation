@@ -107,6 +107,7 @@ export interface VideoMetadata {
   voiceoverScript?: string;
   howItWorks?: string; // explanation for the middle transition clip
   diagramWorkflow?: string; // Mermaid flowchart representing the code execution logic
+  diagramTitle?: string; // Title for the Mermaid diagram card
 }
 
 export interface ReviewSettings {
