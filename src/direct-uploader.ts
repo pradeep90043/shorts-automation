@@ -644,6 +644,7 @@ Use this to write a voiceover script that matches the content arc of the video. 
           mood: (data as any).mood,
           voiceoverScript: (data as any).voiceoverScript,
           howItWorks: (data as any).howItWorks,
+          diagramWorkflow: (data as any).diagramWorkflow,
         };
       }
 
@@ -1013,8 +1014,8 @@ Description: ${description}\n`;
       }
 
       const prompt = viral
-        ? `You are a viral YouTube Shorts growth hacker for ${this.theme.channelDescriptor} called "${this.profile.brandName}". ${contentContext} Generate the most scroll-stopping, curiosity-gap, high-CTR metadata possible based on the text.\n${this.theme.titleRules}\n${this.theme.descriptionRules(this.profile.brandName)}\n${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} describing the content. Additionally, generate a 'howItWorks' field containing a detailed, clear, and educational explanation (approx 2-3 sentences, 30-50 words) explaining how the code snippet or trick works step-by-step to add original educational value.\nReturn ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate","voiceoverScript":"...","howItWorks":"..."}}`
-        : `You are a YouTube Shorts strategist for ${this.theme.channelDescriptor} called "${this.profile.brandName}". ${contentContext} Generate SEO-optimised metadata based on the text.\n${this.theme.titleRules}\n${this.theme.descriptionRules(this.profile.brandName)}\n${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} describing the content. Additionally, generate a 'howItWorks' field containing a detailed, clear, and educational explanation (approx 2-3 sentences, 30-50 words) explaining how the code snippet or trick works step-by-step to add original educational value.\nReturn ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate","voiceoverScript":"...","howItWorks":"..."}}`;
+        ? `You are a viral YouTube Shorts growth hacker for ${this.theme.channelDescriptor} called "${this.profile.brandName}". ${contentContext} Generate the most scroll-stopping, curiosity-gap, high-CTR metadata possible based on the text.\n${this.theme.titleRules}\n${this.theme.descriptionRules(this.profile.brandName)}\n${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} describing the content. Additionally, generate a 'howItWorks' field containing a detailed, clear, and educational explanation (approx 2-3 sentences, 30-50 words) explaining how the code snippet or trick works step-by-step to add original educational value. Also, generate a 'diagramWorkflow' field containing a valid, simple Mermaid.js flowchart (graph TD) with 3-5 nodes explaining the execution workflow of the code to add original educational value. Use double quotes around node labels.\nReturn ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate","voiceoverScript":"...","howItWorks":"...","diagramWorkflow":"..."}}`
+        : `You are a YouTube Shorts strategist for ${this.theme.channelDescriptor} called "${this.profile.brandName}". ${contentContext} Generate SEO-optimised metadata based on the text.\n${this.theme.titleRules}\n${this.theme.descriptionRules(this.profile.brandName)}\n${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} describing the content. Additionally, generate a 'howItWorks' field containing a detailed, clear, and educational explanation (approx 2-3 sentences, 30-50 words) explaining how the code snippet or trick works step-by-step to add original educational value. Also, generate a 'diagramWorkflow' field containing a valid, simple Mermaid.js flowchart (graph TD) with 3-5 nodes explaining the execution workflow of the code to add original educational value. Use double quotes around node labels.\nReturn ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate","voiceoverScript":"...","howItWorks":"...","diagramWorkflow":"..."}}`;
       
       // Retry timeouts once — the free API is intermittently slow. If
       // FreeLLMAPI still fails, Gemini gets one attempt with the same prompt
@@ -1118,6 +1119,7 @@ Rules:
 - mood: Determine the emotional tone or theme of the content. Choose exactly one of: "funny", "sad", or "other" (for general, educational, or motivational content).
 - voiceoverScript: ${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} that describes the content. It should sound very natural, hook the viewer immediately, and explain what is happening or read the meme text in an entertaining way.
 - howItWorks: A detailed, clear, and educational explanation (approx 2-3 sentences, 30-50 words) explaining how the code snippet or trick works. This step-by-step commentary adds original educational value to reuse of other creators' videos, so explain the logic or mechanics thoroughly and clearly.
+- diagramWorkflow: A valid, simple Mermaid.js flowchart (graph TD) explaining the logic or execution workflow of the code snippet (3-5 nodes max). Use double quotes around node labels (e.g. A[\"Start\"] --> B[\"Check condition\"]). Node IDs must be simple alphanumeric characters. Keep it clean and valid.
 - ${this.theme.analysisRules}`;
 
     if (context?.userPrompt) {
@@ -1134,7 +1136,7 @@ Rules:
     }
 
     prompt += `\nReturn ONLY a raw JSON object — no markdown, no explanation:
-{"title":"...","description":"...","tags":["...","..."],"mood":"funny" | "sad" | "other", "factCheckScore": 10, "verdict": "...", "voiceoverScript": "...", "howItWorks": "..."}`;
+{"title":"...","description":"...","tags":["...","..."],"mood":"funny" | "sad" | "other", "factCheckScore": 10, "verdict": "...", "voiceoverScript": "...", "howItWorks": "...", "diagramWorkflow": "..."}`;
 
     for (let attempt = 0; attempt < AI_MAX_ATTEMPTS; attempt++) {
       try {
@@ -1214,6 +1216,7 @@ THUMBNAIL: Max 5 words, highly clickable, curiosity driven.
 FILENAME: SEO-friendly filename (e.g., viral-short-video-2026.mp4).
 - MOOD: Determine emotional tone: "funny", "serious", "emotional", "motivational", "technical", "horror", "romantic", "sad", or "other".
 - howItWorks: A detailed, clear, and educational explanation (approx 2-3 sentences, 30-50 words) explaining how the code snippet or trick works. This step-by-step commentary adds original educational value to reuse of other creators' videos, so explain the logic or mechanics thoroughly and clearly.
+- diagramWorkflow: A valid, simple Mermaid.js flowchart (graph TD) explaining the logic or execution workflow of the code snippet (3-5 nodes max). Use double quotes around node labels (e.g. A[\"Start\"] --> B[\"Check condition\"]). Node IDs must be simple alphanumeric characters. Keep it clean and valid.
 ${this.theme.analysisRules}`;
 
     if (context?.userPrompt) {
@@ -1230,7 +1233,7 @@ ${this.theme.analysisRules}`;
     }
 
     prompt += `\nReturn ONLY raw JSON — no markdown:
-{"title":"...","description":"...","primaryKeyword":"...","secondaryKeywords":["..."],"tags":["..."],"hashtags":["..."],"thumbnailText":"...","filename":"...","mood":"funny" | "sad" | "other","factCheckScore":10,"verdict":"...","howItWorks":"..."}`;
+{"title":"...","description":"...","primaryKeyword":"...","secondaryKeywords":["..."],"tags":["..."],"hashtags":["..."],"thumbnailText":"...","filename":"...","mood":"funny" | "sad" | "other","factCheckScore":10,"verdict":"...","howItWorks":"...","diagramWorkflow":"..."}`;
 
     for (let attempt = 0; attempt < AI_MAX_ATTEMPTS; attempt++) {
       try {
@@ -4664,14 +4667,45 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
           pipelineLogger.warn(`Transition TTS failed: ${err instanceof Error ? err.message : err}. Using default duration.`, "DirectUploader");
         }
 
-        const mainDuration = await this.getVideoDuration(mainVideoPath);
-        const frameTime = Math.max(0, mainDuration - 0.5).toFixed(2);
-        await new Promise<void>((resolve, reject) => {
-          const cmd = `${config.binaries.ffmpeg} -y -ss ${frameTime} -i "${mainVideoPath}" -vframes 1 "${transitionBgFramePath}"`;
-          exec(cmd, (err) => (err ? reject(err) : resolve()));
-        });
+        // Generate the background diagram image using Puppeteer if Mermaid code is present
+        const mermaidCode = context.metadata?.diagramWorkflow;
+        let diagramRendered = false;
+        if (mermaidCode && mermaidCode.trim().length > 10) {
+          try {
+            pipelineLogger.info("Attempting to render Mermaid workflow diagram...", "DirectUploader");
+            const wrapText = (text: string, maxLineLength = 32): string => {
+              const words = text.split(/\s+/);
+              const lines: string[] = [];
+              let currentLine = "";
+              for (const word of words) {
+                if ((currentLine + " " + word).trim().length <= maxLineLength) {
+                  currentLine = currentLine ? currentLine + " " + word : word;
+                } else {
+                  if (currentLine) lines.push(currentLine);
+                  currentLine = word;
+                }
+              }
+              if (currentLine) lines.push(currentLine);
+              return lines.join("<br>");
+            };
+            const formattedExplanation = rawExplanation ? wrapText(rawExplanation, 32) : "Let us check how is it working";
+            diagramRendered = await this.renderWorkflowDiagram(mermaidCode, formattedExplanation, transitionBgFramePath);
+          } catch (diagramErr) {
+            pipelineLogger.warn(`Mermaid render failed: ${diagramErr instanceof Error ? diagramErr.message : diagramErr}. Falling back to blurred frame.`, "DirectUploader");
+          }
+        }
 
-        // Wrap text to fit the portrait video width (1080px)
+        // Fallback: If no diagram was generated/rendered, capture the last frame of the main video and blur it
+        if (!diagramRendered) {
+          const mainDuration = await this.getVideoDuration(mainVideoPath);
+          const frameTime = Math.max(0, mainDuration - 0.5).toFixed(2);
+          await new Promise<void>((resolve, reject) => {
+            const cmd = `${config.binaries.ffmpeg} -y -ss ${frameTime} -i "${mainVideoPath}" -vframes 1 "${transitionBgFramePath}"`;
+            exec(cmd, (err) => (err ? reject(err) : resolve()));
+          });
+        }
+
+        // Wrap text for the fallback drawtext filter if needed
         const wrapText = (text: string, maxLineLength = 32): string => {
           const words = text.split(/\s+/);
           const lines: string[] = [];
@@ -4697,11 +4731,13 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         const fontSize = rawExplanation ? 36 : 54;
         const transitionDuration = ttsDuration + 0.5;
 
-        const filterStr = [
-          `[0:v]boxblur=20:20,colorlevels=romax=0.35:gomax=0.35:bomax=0.35[bg]`,
-          `[bg]drawtext=textfile='${escapedTextFilePath}':fontsize=${fontSize}:fontcolor=white:x=(w-tw)/2:y=(h-th)/2:shadowcolor=black:shadowx=3:shadowy=3[v]`,
-          `[1:a]volume=3.5[a]`
-        ].join(";");
+        const filterStr = diagramRendered
+          ? `[0:v]copy[v];[1:a]volume=3.5[a]`
+          : [
+              `[0:v]boxblur=20:20,colorlevels=romax=0.35:gomax=0.35:bomax=0.35[bg]`,
+              `[bg]drawtext=textfile='${escapedTextFilePath}':fontsize=${fontSize}:fontcolor=white:x=(w-tw)/2:y=(h-th)/2:shadowcolor=black:shadowx=3:shadowy=3[v]`,
+              `[1:a]volume=3.5[a]`
+            ].join(";");
 
         const compileCmd =
           `${config.binaries.ffmpeg} -y ` +
@@ -4794,6 +4830,207 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       }
       const numberTts = path.join(context.tempDir, "verdict_number.mp3");
       if (fs.existsSync(numberTts)) fs.unlinkSync(numberTts);
+    }
+  }
+
+  private async renderWorkflowDiagram(
+    mermaidCode: string,
+    explanationText: string,
+    outputPath: string,
+  ): Promise<boolean> {
+    const W = 1080;
+    const H = 1920;
+
+    let html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      width: ${W}px;
+      height: ${H}px;
+      background: #0B0B0B;
+      font-family: Arial, sans-serif;
+      color: #fff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 60px;
+      overflow: hidden;
+      position: relative;
+    }
+    
+    body::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background-image: radial-gradient(circle, rgba(255,184,0,0.06) 1px, transparent 1px);
+      background-size: 32px 32px;
+      pointer-events: none;
+    }
+
+    .container {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: space-between;
+      border: 2px solid rgba(255,184,0,0.15);
+      border-radius: 20px;
+      background: rgba(13,13,13,0.9);
+      padding: 60px 40px;
+      box-shadow: 0 0 50px rgba(0,0,0,0.8);
+      position: relative;
+    }
+
+    .container::before, .container::after {
+      content: '';
+      position: absolute;
+      width: 40px;
+      height: 40px;
+      border-color: #FFB800;
+      border-style: solid;
+    }
+    .container::before {
+      top: 15px; left: 15px;
+      border-width: 3px 0 0 3px;
+    }
+    .container::after {
+      bottom: 15px; right: 15px;
+      border-width: 0 3px 3px 0;
+    }
+
+    .title {
+      font-size: 42px;
+      font-weight: 800;
+      color: #FFB800;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      text-align: center;
+      text-shadow: 0 0 20px rgba(255,184,0,0.3);
+      margin-bottom: 20px;
+    }
+
+    .mermaid-box {
+      flex: 1;
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      overflow: hidden;
+    }
+
+    svg {
+      max-width: 90% !important;
+      max-height: 900px !important;
+      height: auto !important;
+    }
+
+    .node rect, .node circle, .node polygon {
+      fill: #141414 !important;
+      stroke: #FFB800 !important;
+      stroke-width: 2px !important;
+    }
+    .node .label {
+      color: #fff !important;
+      font-family: Arial, sans-serif !important;
+      font-weight: bold !important;
+      font-size: 20px !important;
+    }
+    .edgePath .path {
+      stroke: #FFB800 !important;
+      stroke-width: 3px !important;
+    }
+    .edgeLabel rect {
+      fill: #0B0B0B !important;
+    }
+    .edgeLabel span {
+      color: #FF8A00 !important;
+      font-family: Arial, sans-serif !important;
+      font-size: 16px !important;
+      font-weight: bold !important;
+    }
+    .marker {
+      fill: #FFB800 !important;
+      stroke: none !important;
+    }
+    
+    .footer {
+      font-size: 26px;
+      color: #ccc;
+      text-align: center;
+      margin-top: 30px;
+      font-style: italic;
+      line-height: 1.4;
+      max-width: 90%;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="title">Execution Workflow</div>
+    <div class="mermaid-box">
+      <pre class="mermaid">
+${mermaidCode}
+      </pre>
+    </div>
+    <div class="footer">${explanationText}</div>
+  </div>
+  <script>
+    mermaid.initialize({
+      theme: 'dark',
+      startOnLoad: true,
+      securityLevel: 'loose',
+      themeVariables: {
+        background: '#141414',
+        primaryColor: '#141414',
+        primaryTextColor: '#fff',
+        lineColor: '#FFB800',
+        transitionColor: '#FF8A00',
+      }
+    });
+  </script>
+</body>
+</html>`;
+
+    try {
+      const puppeteer = (await new Function("return import('puppeteer-core')")()).default;
+      const browser = await puppeteer.launch({
+        executablePath: config.binaries.chrome,
+        headless: true,
+        args: [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+          "--force-color-profile=srgb",
+        ],
+      });
+
+      try {
+        const page = await browser.newPage();
+        await page.setViewport({ width: W, height: H, deviceScaleFactor: 1 });
+        await page.setContent(html, { waitUntil: "networkidle0" });
+        await page.waitForSelector(".mermaid svg", { timeout: 3000 }).catch(() => {});
+        await new Promise((resolve) => setTimeout(resolve, 800));
+
+        const shot = await page.screenshot({
+          type: "png",
+          clip: { x: 0, y: 0, width: W, height: H },
+        });
+
+        await sharp(shot).toFile(outputPath);
+        return true;
+      } finally {
+        await browser.close();
+      }
+    } catch (err) {
+      pipelineLogger.error("Failed to render Mermaid diagram in Puppeteer", err instanceof Error ? err : new Error(String(err)), "DirectUploader");
+      return false;
     }
   }
 }
