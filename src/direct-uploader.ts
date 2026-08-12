@@ -1661,6 +1661,16 @@ ${this.theme.analysisRules}`;
     const pending = this.pending.get(id);
     if (pending) {
       pending.finalVideoPath = finalVideoPath;
+      if (pending.timer) {
+        clearTimeout(pending.timer);
+        pending.timer = setTimeout(() => {
+          pipelineLogger.info(
+            `Review timeout for ${id} — auto-publishing.`,
+            "DirectUploader",
+          );
+          this.onPublish(id);
+        }, 60000);
+      }
     }
 
     // Update context in DB
@@ -1674,6 +1684,10 @@ ${this.theme.analysisRules}`;
     const explanationLine = metadata.howItWorks
       ? `💡 *How It Works:* ${escapeMarkdown(metadata.howItWorks)}\n\n`
       : "";
+    const hasTimer = !!(pending && pending.timer);
+    const timerText = hasTimer
+      ? `⏳ _Auto-publishes in 1 minute if no action taken._`
+      : `⏳ _Waiting for review action..._`;
     const caption =
       `📋 *Review your Short*\n\n` +
       fallbackWarningLine +
@@ -1681,7 +1695,7 @@ ${this.theme.analysisRules}`;
       `*Description:* ${escapeMarkdown(metadata.description.slice(0, 200))}…\n\n` +
       explanationLine +
       statusText + `\n\n` +
-      `⏳ _Waiting for review action..._`;
+      timerText;
 
     if (job.context.telegramMeta.messageId) {
       // Compress if needed for Telegram
@@ -1965,13 +1979,27 @@ ${this.theme.analysisRules}`;
         const explanationLine = metadata.howItWorks
           ? `💡 *How It Works:* ${escapeMarkdown(metadata.howItWorks)}\n\n`
           : "";
+        if (pending.timer) {
+          clearTimeout(pending.timer);
+          pending.timer = setTimeout(() => {
+            pipelineLogger.info(
+              `Review timeout for ${id} — auto-publishing.`,
+              "DirectUploader",
+            );
+            this.onPublish(id);
+          }, 60000);
+        }
+        const hasTimer = !!pending.timer;
+        const timerText = hasTimer
+          ? `⏳ _Auto-publishes in 1 minute if no action taken._`
+          : `⏳ _Waiting for review action..._`;
         const caption =
           `📋 *Review your Short* _(updated)_\n\n` +
           `*Title:* ${escapeMarkdown(metadata.title)}\n\n` +
           `*Description:* ${escapeMarkdown(metadata.description.slice(0, 200))}…\n\n` +
           explanationLine +
           (pending.musicCaptionLine || "") +
-          `⏳ _Auto-publishes in 2 minutes if no action taken._`;
+          timerText;
 
         await this.telegram.updateReviewCaption(
           pending.chatId,
@@ -3457,28 +3485,13 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       const outputFilePath = path.join(config.paths.outputDir, outputFileName);
       fs.copyFileSync(finalVideoPath, outputFilePath);
 
-      // 5 — Auto-publish
+      // 5 — Manual Review with Auto-publish timeout
       pipelineLogger.checkpoint(
-        "Compilation complete — auto-publishing",
+        "Compilation complete — sending for manual review with 60s auto-publish timeout",
         true,
         id,
       );
-      const pendingUpload: PendingUpload = {
-        id,
-        chatId,
-        messageId,
-        reviewMessageId:
-          (context as any).settingsReviewMessageId ?? messageId,
-        metadata,
-        finalVideoPath,
-        outputFilePath,
-        outputFileName,
-        originalImagePath: context.originalImagePath,
-        context,
-        lastMusicTrack: context.selectedMusicTrack,
-      };
-      this.pending.set(id, pendingUpload);
-      await this.uploadAndReport(pendingUpload);
+      await this.sendForManualReview(context, finalVideoPath, "");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       pipelineLogger.error(
@@ -3916,6 +3929,10 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     const explanationLine = metadata.howItWorks
       ? `💡 *How It Works:* ${escapeMarkdown(metadata.howItWorks)}\n\n`
       : "";
+    const isCompileFailure = bannerLine && bannerLine.includes("Auto-publish aborted");
+    const timerText = isCompileFailure
+      ? `⏳ _Waiting for review action..._`
+      : `⏳ _Auto-publishes in 1 minute if no action taken._`;
     const caption =
       bannerLine +
       `📋 *Review your Short*\n\n` +
@@ -3924,7 +3941,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       `*Description:* ${escapeMarkdown(metadata.description.slice(0, 200))}…\n\n` +
       explanationLine +
       musicCaptionLine +
-      `⏳ _Waiting for review action..._`;
+      timerText;
 
     const reviewMessageId = await this.telegram.sendVideoForReview(
       chatId,
@@ -3934,7 +3951,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       messageId,
     );
 
-    this.pending.set(id, {
+    const pendingUpload: PendingUpload = {
       id,
       chatId,
       messageId,
@@ -3947,16 +3964,32 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       context,
       lastMusicTrack: context.selectedMusicTrack,
       musicCaptionLine,
-    });
+    };
+
+    if (!isCompileFailure) {
+      pendingUpload.timer = setTimeout(() => {
+        pipelineLogger.info(
+          `Review timeout for ${id} — auto-publishing.`,
+          "DirectUploader",
+        );
+        this.onPublish(id);
+      }, 60000);
+    }
+
+    this.pending.set(id, pendingUpload);
 
     this.db.updateJob(id, {
       status: "final_review",
-      currentStep: "Auto-publish aborted. Waiting for manual publish review.",
+      currentStep: isCompileFailure
+        ? "Auto-publish aborted. Waiting for manual publish review."
+        : "Waiting for manual publish review (60s timer)",
       context,
     });
 
     pipelineLogger.checkpoint(
-      "Manual review sent to Telegram",
+      isCompileFailure
+        ? "Manual review sent to Telegram"
+        : "Manual review sent to Telegram with 60s auto-publish timer",
       true,
       `${id} — waiting for user publish/cancel`,
     );
@@ -4315,6 +4348,21 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       });
     }
 
+    if (pendingUpload.timer) {
+      clearTimeout(pendingUpload.timer);
+      pendingUpload.timer = setTimeout(() => {
+        pipelineLogger.info(
+          `Review timeout for ${id} — auto-publishing.`,
+          "DirectUploader",
+        );
+        this.onPublish(id);
+      }, 60000);
+    }
+    const hasTimer = !!pendingUpload.timer;
+    const timerText = hasTimer
+      ? `⏳ _Auto-publishes in 1 minute if no action taken._`
+      : `⏳ _Waiting for review action..._`;
+
     const statusText = context.useVoiceover ? "🔊 Voiceover: **ON**" : "🔇 Voiceover: **OFF**";
     const fallbackWarningLine = context.metadataIsFallback
       ? `❌ *AI metadata FAILED — generic template in use. Tap 🔄 Regenerate!*\n\n`
@@ -4330,7 +4378,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       explanationLine +
       statusText + `\n\n` +
       (pendingUpload.musicCaptionLine || "") +
-      `⏳ _Waiting for review action..._`;
+      timerText;
 
     const newMsgId = await this.telegram.editReviewVideo(
       chatId,
