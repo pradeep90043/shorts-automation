@@ -1013,8 +1013,8 @@ Description: ${description}\n`;
       }
 
       const prompt = viral
-        ? `You are a viral YouTube Shorts growth hacker for ${this.theme.channelDescriptor} called "${this.profile.brandName}". ${contentContext} Generate the most scroll-stopping, curiosity-gap, high-CTR metadata possible based on the text.\n${this.theme.titleRules}\n${this.theme.descriptionRules(this.profile.brandName)}\n${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} describing the content.\nReturn ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate","voiceoverScript":"...","howItWorks":"..."}}`
-        : `You are a YouTube Shorts strategist for ${this.theme.channelDescriptor} called "${this.profile.brandName}". ${contentContext} Generate SEO-optimised metadata based on the text.\n${this.theme.titleRules}\n${this.theme.descriptionRules(this.profile.brandName)}\n${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} describing the content.\nReturn ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate","voiceoverScript":"...","howItWorks":"..."}}`;
+        ? `You are a viral YouTube Shorts growth hacker for ${this.theme.channelDescriptor} called "${this.profile.brandName}". ${contentContext} Generate the most scroll-stopping, curiosity-gap, high-CTR metadata possible based on the text.\n${this.theme.titleRules}\n${this.theme.descriptionRules(this.profile.brandName)}\n${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} describing the content. Additionally, generate a 'howItWorks' field containing a detailed, clear, and educational explanation (approx 2-3 sentences, 30-50 words) explaining how the code snippet or trick works step-by-step to add original educational value.\nReturn ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate","voiceoverScript":"...","howItWorks":"..."}}`
+        : `You are a YouTube Shorts strategist for ${this.theme.channelDescriptor} called "${this.profile.brandName}". ${contentContext} Generate SEO-optimised metadata based on the text.\n${this.theme.titleRules}\n${this.theme.descriptionRules(this.profile.brandName)}\n${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} describing the content. Additionally, generate a 'howItWorks' field containing a detailed, clear, and educational explanation (approx 2-3 sentences, 30-50 words) explaining how the code snippet or trick works step-by-step to add original educational value.\nReturn ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate","voiceoverScript":"...","howItWorks":"..."}}`;
       
       // Retry timeouts once — the free API is intermittently slow. If
       // FreeLLMAPI still fails, Gemini gets one attempt with the same prompt
@@ -1117,7 +1117,7 @@ Rules:
 - tags: 10-12 specific tags covering the topic, theme, and audience (no spaces in tags).
 - mood: Determine the emotional tone or theme of the content. Choose exactly one of: "funny", "sad", or "other" (for general, educational, or motivational content).
 - voiceoverScript: ${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} that describes the content. It should sound very natural, hook the viewer immediately, and explain what is happening or read the meme text in an entertaining way.
-- howItWorks: A brief 1-2 sentence explanation (max 15-20 words / 120 characters) explaining how the code or trick works. It should be concise and sound like a quick summary of the technical mechanism.
+- howItWorks: A detailed, clear, and educational explanation (approx 2-3 sentences, 30-50 words) explaining how the code snippet or trick works. This step-by-step commentary adds original educational value to reuse of other creators' videos, so explain the logic or mechanics thoroughly and clearly.
 - ${this.theme.analysisRules}`;
 
     if (context?.userPrompt) {
@@ -1212,7 +1212,8 @@ ${this.theme.descriptionRules(this.profile.brandName)}
 KEYWORDS: ${this.theme.keywordsRule}
 THUMBNAIL: Max 5 words, highly clickable, curiosity driven.
 FILENAME: SEO-friendly filename (e.g., viral-short-video-2026.mp4).
-MOOD: Determine emotional tone: "funny", "serious", "emotional", "motivational", "technical", "horror", "romantic", "sad", or "other".
+- MOOD: Determine emotional tone: "funny", "serious", "emotional", "motivational", "technical", "horror", "romantic", "sad", or "other".
+- howItWorks: A detailed, clear, and educational explanation (approx 2-3 sentences, 30-50 words) explaining how the code snippet or trick works. This step-by-step commentary adds original educational value to reuse of other creators' videos, so explain the logic or mechanics thoroughly and clearly.
 ${this.theme.analysisRules}`;
 
     if (context?.userPrompt) {
@@ -4655,7 +4656,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         });
 
         // Wrap text to fit the portrait video width (1080px)
-        const wrapText = (text: string, maxLineLength = 26): string => {
+        const wrapText = (text: string, maxLineLength = 32): string => {
           const words = text.split(/\s+/);
           const lines: string[] = [];
           let currentLine = "";
@@ -4672,12 +4673,12 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         };
 
         const introText = "Let us check how is it working:";
-        const wrappedExplanation = rawExplanation ? wrapText(rawExplanation, 26) : "";
+        const wrappedExplanation = rawExplanation ? wrapText(rawExplanation, 32) : "";
         const screenText = wrappedExplanation ? `${introText}\n\n${wrappedExplanation}` : "Let us check\nhow is it working";
         fs.writeFileSync(transitionTextPath, screenText, "utf8");
 
         const escapedTextFilePath = transitionTextPath.replace(/\\/g, "/").replace(/:/g, "\\:");
-        const fontSize = rawExplanation ? 44 : 54;
+        const fontSize = rawExplanation ? 36 : 54;
         const transitionDuration = ttsDuration + 0.5;
 
         const filterStr = [
