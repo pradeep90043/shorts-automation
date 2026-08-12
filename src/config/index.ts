@@ -42,6 +42,7 @@ export interface WatchConfig {
   moodFilter?: string[]; // preferred moods as a hint to the AI metadata prompt
   viralThreshold: number; // 0-100 minimum viral score to include (default: 50, fail-open)
   excludeChannels?: string[]; // list of channels to ignore/exclude
+  outroVersion?: "v1" | "v2"; // Outro version: v1 (old) or v2 (with middle transition clip)
 }
 
 export interface FacebookConfig {
@@ -283,6 +284,11 @@ function loadWatchConfig(prefix?: string): WatchConfig {
     Math.max(0, parseInt(env("WATCH_VIRAL_THRESHOLD") || "50", 10)),
   );
 
+  const outroVersionRaw = (env("WATCH_OUTRO_VERSION") || "v1").toLowerCase();
+  const outroVersion = (["v1", "v2"].includes(outroVersionRaw)
+    ? outroVersionRaw
+    : "v1") as "v1" | "v2";
+
   return {
     channels,
     dailyCount: parseInt(env("WATCH_DAILY_COUNT") || "5", 10),
@@ -294,6 +300,7 @@ function loadWatchConfig(prefix?: string): WatchConfig {
     moodFilter,
     viralThreshold,
     excludeChannels,
+    outroVersion,
   };
 }
 

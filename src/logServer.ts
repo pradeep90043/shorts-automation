@@ -1054,6 +1054,8 @@ export function startLogServer(): void {
           }
         }
 
+        const outroVersion = body.outroVersion || pUrl.searchParams.get("outroVersion") || "";
+
         const profile = config.profiles.find(
           (p) => (p.key || p.brandName).toLowerCase() === pKey,
         );
@@ -1070,6 +1072,9 @@ export function startLogServer(): void {
           }
           if (excludeChannels !== undefined) {
             profile.watch.excludeChannels = excludeChannels;
+          }
+          if (outroVersion && ["v1", "v2"].includes(outroVersion)) {
+            profile.watch.outroVersion = outroVersion as "v1" | "v2";
           }
         }
 

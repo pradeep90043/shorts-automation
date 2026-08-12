@@ -4393,6 +4393,9 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       path.join(tempDir, "vd_seg2_s.mp3"),
       path.join(tempDir, "vd_silence.mp3"),
       path.join(tempDir, "vd_concat.txt"),
+      path.join(tempDir, "transition_tts.mp3"),
+      path.join(tempDir, "transition_bg_frame.png"),
+      path.join(tempDir, "transition_clip.mp4"),
     ];
 
     // Per-profile config: avatar asset file + Whisper transcript timings
@@ -4619,25 +4622,96 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         });
       }
 
-      // 4 — Concat main video + verdict clip
-      // Normalize scale and fps on both inputs so concat never fails on resolution
-      // or frame-rate mismatch (avatar clip is 24fps; main video is typically 30fps).
-      const concatFilter =
-        `[0:v]scale=1080:1920:force_original_aspect_ratio=decrease,` +
-        `pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[v0];` +
-        `[1:v]scale=1080:1920:force_original_aspect_ratio=decrease,` +
-        `pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[v1];` +
-        `[0:a]aresample=44100[a0];[1:a]aresample=44100[a1];` +
-        `[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]`;
-      const concatCmd =
-        `${config.binaries.ffmpeg} -y ` +
-        `-i "${mainVideoPath}" ` +
-        `-i "${verdictClipPath}" ` +
-        `-filter_complex "${concatFilter}" ` +
-        `-map "[v]" -map "[a]" ` +
-        `-c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p ` +
-        `-c:a aac ` +
-        `"${outputPath}"`;
+      // 3.5 — Generate transition clip (if Outro Version is v2)
+      const transitionClipPath = path.join(tempDir, "transition_clip.mp4");
+      const transitionTtsPath = path.join(tempDir, "transition_tts.mp3");
+      const transitionBgFramePath = path.join(tempDir, "transition_bg_frame.png");
+      const hasTransition = profileKey === "codeorcap" && this.profile.watch?.outroVersion === "v2";
+
+      if (hasTransition) {
+        pipelineLogger.info("Generating V2 transition clip ('Let us check how is it working')...", "DirectUploader");
+        
+        let ttsDuration = 2.0;
+        try {
+          ttsDuration = await this.tts.generateVoiceover("Let us check how is it working.", transitionTtsPath, "codeorcap");
+        } catch (err) {
+          pipelineLogger.warn(`Transition TTS failed: ${err instanceof Error ? err.message : err}. Using default duration.`, "DirectUploader");
+        }
+
+        const mainDuration = await this.getVideoDuration(mainVideoPath);
+        const frameTime = Math.max(0, mainDuration - 0.5).toFixed(2);
+        await new Promise<void>((resolve, reject) => {
+          const cmd = `${config.binaries.ffmpeg} -y -ss ${frameTime} -i "${mainVideoPath}" -vframes 1 "${transitionBgFramePath}"`;
+          exec(cmd, (err) => (err ? reject(err) : resolve()));
+        });
+
+        const transitionDuration = ttsDuration + 0.5;
+        const filterStr = [
+          `[0:v]boxblur=20:20,colorlevels=romax=0.35:gomax=0.35:bomax=0.35[bg]`,
+          `[bg]drawtext=text='Let us check how is it working':fontsize=54:fontcolor=white:x=(w-tw)/2:y=(h-th)/2:shadowcolor=black:shadowx=3:shadowy=3[v]`,
+          `[1:a]volume=3.5[a]`
+        ].join(";");
+
+        const compileCmd =
+          `${config.binaries.ffmpeg} -y ` +
+          `-loop 1 -t ${transitionDuration.toFixed(2)} -i "${transitionBgFramePath}" ` +
+          `-i "${transitionTtsPath}" ` +
+          `-filter_complex "${filterStr}" ` +
+          `-map "[v]" -map "[a]" ` +
+          `-c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p -r 30 ` +
+          `-c:a aac -ar 44100 -ac 2 ` +
+          `"${transitionClipPath}"`;
+
+        await new Promise<void>((resolve, reject) => {
+          exec(compileCmd, (err) => (err ? reject(err) : resolve()));
+        });
+        pipelineLogger.info("✓ Transition clip generated successfully.", "DirectUploader");
+      }
+
+      // 4 — Concat main video + optional transition + verdict clip
+      // Normalize scale and fps on all inputs so concat never fails on resolution
+      // or frame-rate mismatch.
+      let concatFilter = "";
+      let concatCmd = "";
+
+      if (hasTransition) {
+        concatFilter =
+          `[0:v]scale=1080:1920:force_original_aspect_ratio=decrease,` +
+          `pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[v0];` +
+          `[1:v]scale=1080:1920:force_original_aspect_ratio=decrease,` +
+          `pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[v1];` +
+          `[2:v]scale=1080:1920:force_original_aspect_ratio=decrease,` +
+          `pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[v2];` +
+          `[0:a]aresample=44100[a0];[1:a]aresample=44100[a1];[2:a]aresample=44100[a2];` +
+          `[v0][a0][v1][a1][v2][a2]concat=n=3:v=1:a=1[v][a]`;
+        concatCmd =
+          `${config.binaries.ffmpeg} -y ` +
+          `-i "${mainVideoPath}" ` +
+          `-i "${transitionClipPath}" ` +
+          `-i "${verdictClipPath}" ` +
+          `-filter_complex "${concatFilter}" ` +
+          `-map "[v]" -map "[a]" ` +
+          `-c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p ` +
+          `-c:a aac ` +
+          `"${outputPath}"`;
+      } else {
+        concatFilter =
+          `[0:v]scale=1080:1920:force_original_aspect_ratio=decrease,` +
+          `pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[v0];` +
+          `[1:v]scale=1080:1920:force_original_aspect_ratio=decrease,` +
+          `pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[v1];` +
+          `[0:a]aresample=44100[a0];[1:a]aresample=44100[a1];` +
+          `[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]`;
+        concatCmd =
+          `${config.binaries.ffmpeg} -y ` +
+          `-i "${mainVideoPath}" ` +
+          `-i "${verdictClipPath}" ` +
+          `-filter_complex "${concatFilter}" ` +
+          `-map "[v]" -map "[a]" ` +
+          `-c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p ` +
+          `-c:a aac ` +
+          `"${outputPath}"`;
+      }
 
       await new Promise<void>((resolve, reject) => {
         exec(concatCmd, (err, _stdout, stderr) => {
