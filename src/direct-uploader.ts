@@ -645,6 +645,7 @@ Use this to write a voiceover script that matches the content arc of the video. 
           voiceoverScript: (data as any).voiceoverScript,
           howItWorks: (data as any).howItWorks,
           diagramWorkflow: (data as any).diagramWorkflow,
+          diagramTitle: (data as any).diagramTitle,
         };
       }
 
@@ -1014,8 +1015,8 @@ Description: ${description}\n`;
       }
 
       const prompt = viral
-        ? `You are a viral YouTube Shorts growth hacker for ${this.theme.channelDescriptor} called "${this.profile.brandName}". ${contentContext} Generate the most scroll-stopping, curiosity-gap, high-CTR metadata possible based on the text.\n${this.theme.titleRules}\n${this.theme.descriptionRules(this.profile.brandName)}\n${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} describing the content. Additionally, generate a 'howItWorks' field containing a detailed, clear, and educational explanation (approx 2-3 sentences, 30-50 words) explaining how the code snippet or trick works step-by-step to add original educational value. Also, generate a 'diagramWorkflow' field containing a valid, simple Mermaid.js flowchart (graph TD) with 3-5 nodes explaining the execution workflow of the code to add original educational value. Use double quotes around node labels.\nReturn ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate","voiceoverScript":"...","howItWorks":"...","diagramWorkflow":"..."}}`
-        : `You are a YouTube Shorts strategist for ${this.theme.channelDescriptor} called "${this.profile.brandName}". ${contentContext} Generate SEO-optimised metadata based on the text.\n${this.theme.titleRules}\n${this.theme.descriptionRules(this.profile.brandName)}\n${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} describing the content. Additionally, generate a 'howItWorks' field containing a detailed, clear, and educational explanation (approx 2-3 sentences, 30-50 words) explaining how the code snippet or trick works step-by-step to add original educational value. Also, generate a 'diagramWorkflow' field containing a valid, simple Mermaid.js flowchart (graph TD) with 3-5 nodes explaining the execution workflow of the code to add original educational value. Use double quotes around node labels.\nReturn ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate","voiceoverScript":"...","howItWorks":"...","diagramWorkflow":"..."}}`;
+        ? `You are a viral YouTube Shorts growth hacker for ${this.theme.channelDescriptor} called "${this.profile.brandName}". ${contentContext} Generate the most scroll-stopping, curiosity-gap, high-CTR metadata possible based on the text.\n${this.theme.titleRules}\n${this.theme.descriptionRules(this.profile.brandName)}\n${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} describing the content. Additionally, generate a 'howItWorks' field containing a detailed, clear, and educational explanation (approx 2-3 sentences, 30-50 words) explaining how the code snippet or trick works step-by-step to add original educational value. Also, generate a 'diagramTitle' field (a 2-4 word diagram title) and a 'diagramWorkflow' field containing a valid, simple Mermaid.js flowchart (graph TD/LR) with 3-5 nodes explaining the process/timeline/workflow to add original educational value. Use double quotes around node labels.\nReturn ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate","voiceoverScript":"...","howItWorks":"...","diagramWorkflow":"...","diagramTitle":"..."}}`
+        : `You are a YouTube Shorts strategist for ${this.theme.channelDescriptor} called "${this.profile.brandName}". ${contentContext} Generate SEO-optimised metadata based on the text.\n${this.theme.titleRules}\n${this.theme.descriptionRules(this.profile.brandName)}\n${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} describing the content. Additionally, generate a 'howItWorks' field containing a detailed, clear, and educational explanation (approx 2-3 sentences, 30-50 words) explaining how the code snippet or trick works step-by-step to add original educational value. Also, generate a 'diagramTitle' field (a 2-4 word diagram title) and a 'diagramWorkflow' field containing a valid, simple Mermaid.js flowchart (graph TD/LR) with 3-5 nodes explaining the process/timeline/workflow to add original educational value. Use double quotes around node labels.\nReturn ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate","voiceoverScript":"...","howItWorks":"...","diagramWorkflow":"...","diagramTitle":"..."}}`;
       
       // Retry timeouts once — the free API is intermittently slow. If
       // FreeLLMAPI still fails, Gemini gets one attempt with the same prompt
@@ -1119,7 +1120,8 @@ Rules:
 - mood: Determine the emotional tone or theme of the content. Choose exactly one of: "funny", "sad", or "other" (for general, educational, or motivational content).
 - voiceoverScript: ${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} that describes the content. It should sound very natural, hook the viewer immediately, and explain what is happening or read the meme text in an entertaining way.
 - howItWorks: A detailed, clear, and educational explanation (approx 2-3 sentences, 30-50 words) explaining how the code snippet or trick works. This step-by-step commentary adds original educational value to reuse of other creators' videos, so explain the logic or mechanics thoroughly and clearly.
-- diagramWorkflow: A valid, simple Mermaid.js flowchart (graph TD) explaining the logic or execution workflow of the code snippet (3-5 nodes max). Use double quotes around node labels (e.g. A[\"Start\"] --> B[\"Check condition\"]). Node IDs must be simple alphanumeric characters. Keep it clean and valid.
+- diagramTitle: A brief 2-4 word title for the diagram (e.g. "Execution Flow", "State Lifecycle", "Timeline", "Fact Check", "How it works").
+- diagramWorkflow: A valid, simple Mermaid.js flowchart (graph TD or graph LR) explaining the logic, execution, process, timeline, or steps of the topic (3-5 nodes max). Use double quotes around node labels (e.g. A[\"Start\"] --> B[\"Check condition\"]). Node IDs must be simple alphanumeric characters. Keep it clean and valid.
 - ${this.theme.analysisRules}`;
 
     if (context?.userPrompt) {
@@ -1136,7 +1138,7 @@ Rules:
     }
 
     prompt += `\nReturn ONLY a raw JSON object — no markdown, no explanation:
-{"title":"...","description":"...","tags":["...","..."],"mood":"funny" | "sad" | "other", "factCheckScore": 10, "verdict": "...", "voiceoverScript": "...", "howItWorks": "...", "diagramWorkflow": "..."}`;
+{"title":"...","description":"...","tags":["...","..."],"mood":"funny" | "sad" | "other", "factCheckScore": 10, "verdict": "...", "voiceoverScript": "...", "howItWorks": "...", "diagramWorkflow": "...", "diagramTitle": "..."}`;
 
     for (let attempt = 0; attempt < AI_MAX_ATTEMPTS; attempt++) {
       try {
@@ -1216,7 +1218,8 @@ THUMBNAIL: Max 5 words, highly clickable, curiosity driven.
 FILENAME: SEO-friendly filename (e.g., viral-short-video-2026.mp4).
 - MOOD: Determine emotional tone: "funny", "serious", "emotional", "motivational", "technical", "horror", "romantic", "sad", or "other".
 - howItWorks: A detailed, clear, and educational explanation (approx 2-3 sentences, 30-50 words) explaining how the code snippet or trick works. This step-by-step commentary adds original educational value to reuse of other creators' videos, so explain the logic or mechanics thoroughly and clearly.
-- diagramWorkflow: A valid, simple Mermaid.js flowchart (graph TD) explaining the logic or execution workflow of the code snippet (3-5 nodes max). Use double quotes around node labels (e.g. A[\"Start\"] --> B[\"Check condition\"]). Node IDs must be simple alphanumeric characters. Keep it clean and valid.
+- diagramTitle: A brief 2-4 word title for the diagram (e.g. "Execution Flow", "State Lifecycle", "Timeline", "Fact Check", "How it works").
+- diagramWorkflow: A valid, simple Mermaid.js flowchart (graph TD or graph LR) explaining the logic, execution, process, timeline, or steps of the topic (3-5 nodes max). Use double quotes around node labels (e.g. A[\"Start\"] --> B[\"Check condition\"]). Node IDs must be simple alphanumeric characters. Keep it clean and valid.
 ${this.theme.analysisRules}`;
 
     if (context?.userPrompt) {
@@ -1233,7 +1236,7 @@ ${this.theme.analysisRules}`;
     }
 
     prompt += `\nReturn ONLY raw JSON — no markdown:
-{"title":"...","description":"...","primaryKeyword":"...","secondaryKeywords":["..."],"tags":["..."],"hashtags":["..."],"thumbnailText":"...","filename":"...","mood":"funny" | "sad" | "other","factCheckScore":10,"verdict":"...","howItWorks":"...","diagramWorkflow":"..."}`;
+{"title":"...","description":"...","primaryKeyword":"...","secondaryKeywords":["..."],"tags":["..."],"hashtags":["..."],"thumbnailText":"...","filename":"...","mood":"funny" | "sad" | "other","factCheckScore":10,"verdict":"...","howItWorks":"...","diagramWorkflow":"...","diagramTitle":"..."}`;
 
     for (let attempt = 0; attempt < AI_MAX_ATTEMPTS; attempt++) {
       try {
@@ -4689,7 +4692,8 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
               return lines.join("<br>");
             };
             const formattedExplanation = rawExplanation ? wrapText(rawExplanation, 32) : "Let us check how is it working";
-            diagramRendered = await this.renderWorkflowDiagram(mermaidCode, formattedExplanation, transitionBgFramePath);
+            const diagramTitle = context.metadata?.diagramTitle || "Execution Workflow";
+            diagramRendered = await this.renderWorkflowDiagram(mermaidCode, diagramTitle, formattedExplanation, transitionBgFramePath);
           } catch (diagramErr) {
             pipelineLogger.warn(`Mermaid render failed: ${diagramErr instanceof Error ? diagramErr.message : diagramErr}. Falling back to blurred frame.`, "DirectUploader");
           }
@@ -4835,6 +4839,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
 
   private async renderWorkflowDiagram(
     mermaidCode: string,
+    diagramTitle: string,
     explanationText: string,
     outputPath: string,
   ): Promise<boolean> {
@@ -4973,7 +4978,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
 </head>
 <body>
   <div class="container">
-    <div class="title">Execution Workflow</div>
+    <div class="title">${diagramTitle}</div>
     <div class="mermaid-box">
       <pre class="mermaid">
 ${mermaidCode}
