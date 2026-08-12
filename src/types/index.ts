@@ -105,6 +105,7 @@ export interface VideoMetadata {
   factCheckScore?: number;
   verdict?: string;
   voiceoverScript?: string;
+  howItWorks?: string; // explanation for the middle transition clip
 }
 
 export interface ReviewSettings {
