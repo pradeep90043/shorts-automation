@@ -36,8 +36,8 @@ export interface WatchConfig {
   scheduleTime: string; // "HH:MM" 24h, local time — when the daily batch is selected
   gapHours: number; // spacing between each of the day's picks being published
   adminChatId: number; // Telegram chat that receives the auto-published results; 0 = feature disabled
-  // Niche + viral search (optional — defaults to 'channels' mode for backward compatibility)
-  searchMode: "channels" | "hashtags" | "both"; // default: 'channels'
+  // Niche + viral search (optional — defaults to 'hashtags' mode)
+  searchMode: "channels" | "hashtags" | "both"; // default: 'hashtags'
   nicheHashtags?: string[]; // override auto-generated hashtags from niche/mood mapping
   moodFilter?: string[]; // preferred moods as a hint to the AI metadata prompt
   viralThreshold: number; // 0-100 minimum viral score to include (default: 50, fail-open)
@@ -257,10 +257,10 @@ function loadWatchConfig(prefix?: string): WatchConfig {
         .filter(Boolean),
     ),
   ];
-  const searchModeRaw = (env("WATCH_SEARCH_MODE") || "channels").toLowerCase();
+  const searchModeRaw = (env("WATCH_SEARCH_MODE") || "hashtags").toLowerCase();
   const searchMode = (["channels", "hashtags", "both"].includes(searchModeRaw)
     ? searchModeRaw
-    : "channels") as WatchConfig["searchMode"];
+    : "hashtags") as WatchConfig["searchMode"];
 
   const nicheHashtagsRaw = env("WATCH_NICHE_HASHTAGS") || "";
   const nicheHashtags = nicheHashtagsRaw
