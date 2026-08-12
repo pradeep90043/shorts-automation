@@ -329,6 +329,7 @@ async function getDashboardData() {
       defaultHashtags,
       watchedChannels: profile.watch?.channels || [],
       excludeChannels: profile.watch?.excludeChannels || [],
+      outroVersion: profile.watch?.outroVersion || "v1",
       scheduleTime: profile.watch?.scheduleTime || "09:00",
       gapHours: profile.watch?.gapHours || 3,
       queueCount: queue.length,
@@ -442,6 +443,7 @@ async function getDashboardData() {
         defaultHashtags: buildHashtagsForNiche({ niche: fb.niche } as any),
         watchedChannels: [],
         excludeChannels: [],
+        outroVersion: "v1",
         scheduleTime: "09:00",
         gapHours: 3,
         queueCount: queue.length,
@@ -1383,6 +1385,28 @@ export function startLogServer(): void {
     }
 
     const urlObj = new URL(url, `http://${req.headers.host || "localhost"}`);
+    const acceptsText = req.headers["accept"] && req.headers["accept"].includes("text/plain");
+    const wantsRaw = urlObj.searchParams.get("raw") === "true" ||
+                     urlObj.searchParams.get("text") === "true" ||
+                     urlObj.pathname === "/logs/raw" ||
+                     urlObj.pathname === "/logs/text" ||
+                     (urlObj.pathname === "/logs" && acceptsText && !urlObj.searchParams.get("stream"));
+
+    if (wantsRaw) {
+      res.writeHead(200, {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "no-store, no-cache, must-revalidate",
+        "Access-Control-Allow-Origin": "*",
+      });
+      if (fs.existsSync(COMBINED_LOG)) {
+        const lines = readLastLines(COMBINED_LOG, 2000);
+        res.end(lines.join("\n"));
+      } else {
+        res.end("Log file not found on the server.");
+      }
+      return;
+    }
+
     const isStream = urlObj.pathname === "/logs/stream" ||
                      urlObj.searchParams.get("stream") === "true" ||
                      (req.headers["accept"] && req.headers["accept"].includes("text/event-stream"));
