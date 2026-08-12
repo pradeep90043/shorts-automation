@@ -1665,11 +1665,15 @@ ${this.theme.analysisRules}`;
     const fallbackWarningLine = job.context.metadataIsFallback
       ? `❌ *AI metadata FAILED — generic template in use. Tap 🔄 Regenerate!*\n\n`
       : "";
+    const explanationLine = metadata.howItWorks
+      ? `💡 *How It Works:* ${escapeMarkdown(metadata.howItWorks)}\n\n`
+      : "";
     const caption =
       `📋 *Review your Short*\n\n` +
       fallbackWarningLine +
       `*Title:* ${escapeMarkdown(metadata.title)}\n\n` +
       `*Description:* ${escapeMarkdown(metadata.description.slice(0, 200))}…\n\n` +
+      explanationLine +
       statusText + `\n\n` +
       `⏳ _Waiting for review action..._`;
 
@@ -1952,10 +1956,14 @@ ${this.theme.analysisRules}`;
         pending.context.metadataIsFallback = false;
         pending.metadata = metadata;
 
+        const explanationLine = metadata.howItWorks
+          ? `💡 *How It Works:* ${escapeMarkdown(metadata.howItWorks)}\n\n`
+          : "";
         const caption =
           `📋 *Review your Short* _(updated)_\n\n` +
           `*Title:* ${escapeMarkdown(metadata.title)}\n\n` +
           `*Description:* ${escapeMarkdown(metadata.description.slice(0, 200))}…\n\n` +
+          explanationLine +
           (pending.musicCaptionLine || "") +
           `⏳ _Auto-publishes in 2 minutes if no action taken._`;
 
@@ -3899,12 +3907,16 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     const fallbackWarningLine = context.metadataIsFallback
       ? `❌ *AI metadata FAILED — generic template in use. Tap 🔄 Regenerate!*\n\n`
       : "";
+    const explanationLine = metadata.howItWorks
+      ? `💡 *How It Works:* ${escapeMarkdown(metadata.howItWorks)}\n\n`
+      : "";
     const caption =
       bannerLine +
       `📋 *Review your Short*\n\n` +
       fallbackWarningLine +
       `*Title:* ${escapeMarkdown(metadata.title)}\n\n` +
       `*Description:* ${escapeMarkdown(metadata.description.slice(0, 200))}…\n\n` +
+      explanationLine +
       musicCaptionLine +
       `⏳ _Waiting for review action..._`;
 
@@ -4301,11 +4313,15 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     const fallbackWarningLine = context.metadataIsFallback
       ? `❌ *AI metadata FAILED — generic template in use. Tap 🔄 Regenerate!*\n\n`
       : "";
+    const explanationLine = metadata.howItWorks
+      ? `💡 *How It Works:* ${escapeMarkdown(metadata.howItWorks)}\n\n`
+      : "";
     const caption =
       `📋 *Review your Short*\n\n` +
       fallbackWarningLine +
       `*Title:* ${escapeMarkdown(metadata.title)}\n\n` +
       `*Description:* ${escapeMarkdown(metadata.description.slice(0, 200))}…\n\n` +
+      explanationLine +
       statusText + `\n\n` +
       (pendingUpload.musicCaptionLine || "") +
       `⏳ _Waiting for review action..._`;
