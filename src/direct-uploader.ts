@@ -643,6 +643,7 @@ Use this to write a voiceover script that matches the content arc of the video. 
           primaryKeyword: (data as any).primaryKeyword,
           mood: (data as any).mood,
           voiceoverScript: (data as any).voiceoverScript,
+          howItWorks: (data as any).howItWorks,
         };
       }
 
@@ -1012,8 +1013,8 @@ Description: ${description}\n`;
       }
 
       const prompt = viral
-        ? `You are a viral YouTube Shorts growth hacker for ${this.theme.channelDescriptor} called "${this.profile.brandName}". ${contentContext} Generate the most scroll-stopping, curiosity-gap, high-CTR metadata possible based on the text.\n${this.theme.titleRules}\n${this.theme.descriptionRules(this.profile.brandName)}\n${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} describing the content.\nReturn ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate","voiceoverScript":"..."}}`
-        : `You are a YouTube Shorts strategist for ${this.theme.channelDescriptor} called "${this.profile.brandName}". ${contentContext} Generate SEO-optimised metadata based on the text.\n${this.theme.titleRules}\n${this.theme.descriptionRules(this.profile.brandName)}\n${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} describing the content.\nReturn ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate","voiceoverScript":"..."}}`;
+        ? `You are a viral YouTube Shorts growth hacker for ${this.theme.channelDescriptor} called "${this.profile.brandName}". ${contentContext} Generate the most scroll-stopping, curiosity-gap, high-CTR metadata possible based on the text.\n${this.theme.titleRules}\n${this.theme.descriptionRules(this.profile.brandName)}\n${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} describing the content.\nReturn ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate","voiceoverScript":"...","howItWorks":"..."}}`
+        : `You are a YouTube Shorts strategist for ${this.theme.channelDescriptor} called "${this.profile.brandName}". ${contentContext} Generate SEO-optimised metadata based on the text.\n${this.theme.titleRules}\n${this.theme.descriptionRules(this.profile.brandName)}\n${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} describing the content.\nReturn ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate","voiceoverScript":"...","howItWorks":"..."}}`;
       
       // Retry timeouts once — the free API is intermittently slow. If
       // FreeLLMAPI still fails, Gemini gets one attempt with the same prompt
@@ -1116,6 +1117,7 @@ Rules:
 - tags: 10-12 specific tags covering the topic, theme, and audience (no spaces in tags).
 - mood: Determine the emotional tone or theme of the content. Choose exactly one of: "funny", "sad", or "other" (for general, educational, or motivational content).
 - voiceoverScript: ${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} that describes the content. It should sound very natural, hook the viewer immediately, and explain what is happening or read the meme text in an entertaining way.
+- howItWorks: A brief 1-2 sentence explanation (max 15-20 words / 120 characters) explaining how the code or trick works. It should be concise and sound like a quick summary of the technical mechanism.
 - ${this.theme.analysisRules}`;
 
     if (context?.userPrompt) {
@@ -1132,7 +1134,7 @@ Rules:
     }
 
     prompt += `\nReturn ONLY a raw JSON object — no markdown, no explanation:
-{"title":"...","description":"...","tags":["...","..."],"mood":"funny" | "sad" | "other", "factCheckScore": 10, "verdict": "...", "voiceoverScript": "..."}`;
+{"title":"...","description":"...","tags":["...","..."],"mood":"funny" | "sad" | "other", "factCheckScore": 10, "verdict": "...", "voiceoverScript": "...", "howItWorks": "..."}`;
 
     for (let attempt = 0; attempt < AI_MAX_ATTEMPTS; attempt++) {
       try {
@@ -1227,7 +1229,7 @@ ${this.theme.analysisRules}`;
     }
 
     prompt += `\nReturn ONLY raw JSON — no markdown:
-{"title":"...","description":"...","primaryKeyword":"...","secondaryKeywords":["..."],"tags":["..."],"hashtags":["..."],"thumbnailText":"...","filename":"...","mood":"funny" | "sad" | "other","factCheckScore":10,"verdict":"..."}`;
+{"title":"...","description":"...","primaryKeyword":"...","secondaryKeywords":["..."],"tags":["..."],"hashtags":["..."],"thumbnailText":"...","filename":"...","mood":"funny" | "sad" | "other","factCheckScore":10,"verdict":"...","howItWorks":"..."}`;
 
     for (let attempt = 0; attempt < AI_MAX_ATTEMPTS; attempt++) {
       try {
@@ -4396,6 +4398,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       path.join(tempDir, "transition_tts.mp3"),
       path.join(tempDir, "transition_bg_frame.png"),
       path.join(tempDir, "transition_clip.mp4"),
+      path.join(tempDir, "transition_text.txt"),
     ];
 
     // Per-profile config: avatar asset file + Whisper transcript timings
@@ -4626,14 +4629,20 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       const transitionClipPath = path.join(tempDir, "transition_clip.mp4");
       const transitionTtsPath = path.join(tempDir, "transition_tts.mp3");
       const transitionBgFramePath = path.join(tempDir, "transition_bg_frame.png");
+      const transitionTextPath = path.join(tempDir, "transition_text.txt");
       const hasTransition = profileKey === "codeorcap" && this.profile.watch?.outroVersion === "v2";
 
       if (hasTransition) {
-        pipelineLogger.info("Generating V2 transition clip ('Let us check how is it working')...", "DirectUploader");
+        pipelineLogger.info("Generating V2 transition clip explaining how it works...", "DirectUploader");
         
+        const rawExplanation = context.metadata?.howItWorks;
+        const speechScript = rawExplanation 
+          ? `Let us check how is it working. ${rawExplanation}`
+          : "Let us check how is it working.";
+
         let ttsDuration = 2.0;
         try {
-          ttsDuration = await this.tts.generateVoiceover("Let us check how is it working.", transitionTtsPath, "codeorcap");
+          ttsDuration = await this.tts.generateVoiceover(speechScript, transitionTtsPath, "codeorcap");
         } catch (err) {
           pipelineLogger.warn(`Transition TTS failed: ${err instanceof Error ? err.message : err}. Using default duration.`, "DirectUploader");
         }
@@ -4645,10 +4654,35 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
           exec(cmd, (err) => (err ? reject(err) : resolve()));
         });
 
+        // Wrap text to fit the portrait video width (1080px)
+        const wrapText = (text: string, maxLineLength = 26): string => {
+          const words = text.split(/\s+/);
+          const lines: string[] = [];
+          let currentLine = "";
+          for (const word of words) {
+            if ((currentLine + " " + word).trim().length <= maxLineLength) {
+              currentLine = currentLine ? currentLine + " " + word : word;
+            } else {
+              if (currentLine) lines.push(currentLine);
+              currentLine = word;
+            }
+          }
+          if (currentLine) lines.push(currentLine);
+          return lines.join("\n");
+        };
+
+        const introText = "Let us check how is it working:";
+        const wrappedExplanation = rawExplanation ? wrapText(rawExplanation, 26) : "";
+        const screenText = wrappedExplanation ? `${introText}\n\n${wrappedExplanation}` : "Let us check\nhow is it working";
+        fs.writeFileSync(transitionTextPath, screenText, "utf8");
+
+        const escapedTextFilePath = transitionTextPath.replace(/\\/g, "/").replace(/:/g, "\\:");
+        const fontSize = rawExplanation ? 44 : 54;
         const transitionDuration = ttsDuration + 0.5;
+
         const filterStr = [
           `[0:v]boxblur=20:20,colorlevels=romax=0.35:gomax=0.35:bomax=0.35[bg]`,
-          `[bg]drawtext=text='Let us check how is it working':fontsize=54:fontcolor=white:x=(w-tw)/2:y=(h-th)/2:shadowcolor=black:shadowx=3:shadowy=3[v]`,
+          `[bg]drawtext=textfile='${escapedTextFilePath}':fontsize=${fontSize}:fontcolor=white:x=(w-tw)/2:y=(h-th)/2:shadowcolor=black:shadowx=3:shadowy=3[v]`,
           `[1:a]volume=3.5[a]`
         ].join(";");
 
