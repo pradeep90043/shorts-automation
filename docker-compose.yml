@@ -11,6 +11,7 @@ services:
       - TZ=Asia/Kolkata
     depends_on:
       - freellmapi
+      - postgres
     volumes:
       - ./output:/app/output
       - ./assets/music:/app/assets/music
@@ -33,6 +34,19 @@ services:
       - ENCRYPTION_KEY=${FREELLMAPI_ENCRYPTION_KEY}
     volumes:
       - freellmapi-data:/app/server/data
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=botuser
+      - POSTGRES_PASSWORD=botpass
+      - POSTGRES_DB=shortsbot
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
 
   # Automatic DuckDNS IP updater (keeps shorts-dashboard.duckdns.org pointing to server IP)
   duckdns:
@@ -67,3 +81,4 @@ volumes:
   freellmapi-data:
   caddy_data:
   caddy_config:
+  postgres-data:
