@@ -106,6 +106,7 @@ export interface VideoMetadata {
   verdict?: string;
   voiceoverScript?: string;
   howItWorks?: string; // explanation for the middle transition clip
+  diagramWorkflow?: string; // Mermaid flowchart representing the code execution logic
 }
 
 export interface ReviewSettings {
