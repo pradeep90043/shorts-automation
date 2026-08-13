@@ -1279,6 +1279,44 @@ export class TelegramService implements ITelegramService {
     return id;
   }
 
+  public runInteractiveReel(
+    reelUrl: string,
+    chatId: number,
+    anchorMessageId: number,
+    from: { id: number; username?: string; first_name?: string } = { id: 0 },
+    knownCreatorUsername?: string,
+  ): string {
+    const id = `gen-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const tempGenDir = path.join(config.paths.tempDir, id);
+    fs.mkdirSync(tempGenDir, { recursive: true });
+
+    this.sendMessage(
+      chatId,
+      `📥 *Injected Reel* — Downloading & preparing frame...\n\`ID: ${id}\``,
+      anchorMessageId,
+    ).catch(() => {});
+
+    this.processInstagramReel(
+      reelUrl,
+      tempGenDir,
+      id,
+      chatId,
+      anchorMessageId,
+      from,
+      undefined, // NO PRESET SETTINGS => Presents the settings review screen!
+      knownCreatorUsername,
+    ).catch((err) => {
+      pipelineLogger.error(`Interactive-reel pipeline failed for ${id}`, err, "Telegram");
+      this.sendMessage(
+        chatId,
+        `❌ Ingest failed: ${err instanceof Error ? err.message : err}`,
+        anchorMessageId,
+      ).catch(() => {});
+    });
+
+    return id;
+  }
+
   private parseCaptionMetadata(
     caption?: string,
   ): { title: string; description: string } | undefined {

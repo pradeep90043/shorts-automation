@@ -278,6 +278,10 @@ async function getDashboardData() {
   const channels = config.profiles.map((profile, idx) => {
     const pKey = (profile.key || profile.brandName).toLowerCase();
     const wState = watchStates.find((w) => w.profile_key === pKey);
+    pipelineLogger.info(
+      `[DashboardAPI] Profile [${pKey}] current memory watch config: ${JSON.stringify(profile.watch)}`,
+      "ControlCenter",
+    );
 
     const profileHistory = reelHistory.filter(
       (r) => r.profile_key === pKey || r.channel?.toLowerCase().includes(pKey),
@@ -820,6 +824,7 @@ export function startLogServer(): void {
         const data = await getDashboardData();
         res.writeHead(200, {
           "Content-Type": "application/json",
+          "Cache-Control": "no-store, no-cache, must-revalidate",
           "Access-Control-Allow-Origin": "*",
         });
         res.end(JSON.stringify(data));
@@ -876,6 +881,12 @@ export function startLogServer(): void {
           `UPDATE watch_state SET queue = queue || $1::jsonb WHERE profile_key = $2`,
           [JSON.stringify([newItem]), pKey],
         );
+
+        // Sync with active watcher's in-memory store so it is not overwritten
+        const watcher = activeWatchers.get(pKey);
+        if (watcher) {
+          await watcher.store.load();
+        }
 
         res.writeHead(200, {
           "Content-Type": "application/json",
@@ -1080,6 +1091,10 @@ export function startLogServer(): void {
           if (outroVersion && ["v1", "v2"].includes(outroVersion)) {
             profile.watch.outroVersion = outroVersion as "v1" | "v2";
           }
+          pipelineLogger.info(
+            `[UpdateConfig] Setting watch config for profile [${pKey}] to memory: ${JSON.stringify(profile.watch)}`,
+            "ControlCenter",
+          );
 
           const pool = await getPool();
           await pool.query(
@@ -1088,6 +1103,10 @@ export function startLogServer(): void {
              ON CONFLICT (profile_key) DO UPDATE
                SET watch_config = EXCLUDED.watch_config`,
             [pKey, JSON.stringify(profile.watch)],
+          );
+          pipelineLogger.info(
+            `[UpdateConfig] Saved watch config for profile [${pKey}] to database successfully.`,
+            "ControlCenter",
           );
         }
 

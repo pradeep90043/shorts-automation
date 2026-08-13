@@ -308,6 +308,20 @@ export interface ITelegramService {
     ) => Promise<boolean>,
   ): void;
   registerSettingsReviewCallback(cb: (code: string, id: string) => void): void;
+  runPresetReel(
+    reelUrl: string,
+    chatId: number,
+    anchorMessageId: number,
+    from?: { id: number; username?: string; first_name?: string },
+    knownCreatorUsername?: string,
+  ): string;
+  runInteractiveReel(
+    reelUrl: string,
+    chatId: number,
+    anchorMessageId: number,
+    from?: { id: number; username?: string; first_name?: string },
+    knownCreatorUsername?: string,
+  ): string;
 }
 
 export interface IImageAnalyzer {
