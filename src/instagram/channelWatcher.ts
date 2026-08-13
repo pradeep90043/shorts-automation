@@ -32,7 +32,7 @@ function isSessionError(err: Error): boolean {
 }
 
 export class ChannelWatcher {
-  private store: WatchStore;
+  public store: WatchStore;
   private history: ReelHistoryStore;
   private db: JobDatabase;
   private rateLimitedUntil: number | null = null;
@@ -545,16 +545,27 @@ export class ChannelWatcher {
     const readyToFire = queue.find((item) => !item.fired && now >= new Date(item.scheduledAt).getTime());
     if (readyToFire) {
       if (readyToFire.url) {
-        const jobId = this.telegram.runPresetReel(
-          readyToFire.url,
-          this.profile.watch.adminChatId,
-          0,
-          undefined,
-          readyToFire.channel,
-        );
+        const isManual = readyToFire.channel === "manual_inject";
+        const jobId = isManual
+          ? this.telegram.runInteractiveReel(
+              readyToFire.url,
+              this.profile.watch.adminChatId,
+              0,
+              undefined,
+              readyToFire.channel,
+            )
+          : this.telegram.runPresetReel(
+              readyToFire.url,
+              this.profile.watch.adminChatId,
+              0,
+              undefined,
+              readyToFire.channel,
+            );
         await this.store.markFired(readyToFire.shortcode, jobId);
         pipelineLogger.info(
-          `[${this.profile.brandName}] Auto-publishing reel @${readyToFire.channel}/${readyToFire.shortcode} (jobId: ${jobId})`,
+          isManual
+            ? `[${this.profile.brandName}] Interactive manual ingest triggered for reel @${readyToFire.channel}/${readyToFire.shortcode} (jobId: ${jobId})`
+            : `[${this.profile.brandName}] Auto-publishing reel @${readyToFire.channel}/${readyToFire.shortcode} (jobId: ${jobId})`,
           "ChannelWatcher",
         );
       } else {
