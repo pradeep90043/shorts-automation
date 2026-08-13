@@ -710,6 +710,8 @@ export class ChannelWatcher {
       channelSequence: this.store.getChannelSequence(),
       currentSlot: this.store.getCurrentSlot(),
       queue: this.store.getQueue(),
+      outroVersion: this.profile.watch.outroVersion,
+      searchMode: this.profile.watch.searchMode,
     };
   }
 }

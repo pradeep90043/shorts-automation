@@ -1278,6 +1278,9 @@
   renderChannelsList(null);
   fetchDashboardData();
   connectSSE();
+  if (window.location.pathname === '/logs' || window.location.pathname.startsWith('/logs/')) {
+    switchTab('logs');
+  }
   setInterval(fetchDashboardData, 10000);
 </script>
 </body>
