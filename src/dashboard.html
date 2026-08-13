@@ -234,6 +234,12 @@
         </div>
       </div>
 
+      <!-- PENDING SETTINGS REVIEWS -->
+      <div class="table-card" id="pending-reviews-section" style="display:none;margin-bottom:24px;">
+        <div style="font-size:16px;font-weight:800;color:#fff;margin-bottom:14px;">🛠 Pending Settings Reviews</div>
+        <div id="pending-reviews-list" style="display:flex;flex-direction:column;gap:12px;"></div>
+      </div>
+
       <!-- RECENT ACTIVITY TABLE -->
       <div class="table-card">
         <div style="font-size:16px;font-weight:800;color:#fff;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;">
@@ -1273,15 +1279,120 @@
     es.onerror=()=>{ es.close(); setTimeout(connectSSE,3000); };
   }
 
+  async function fetchPendingReviews() {
+    try {
+      const res = await fetch('/api/pending-reviews');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      renderPendingReviews(data.reviews || []);
+    } catch(e) { console.error('Failed to fetch pending reviews:', e); }
+  }
+
+  function renderPendingReviews(reviews) {
+    const section = document.getElementById('pending-reviews-section');
+    const container = document.getElementById('pending-reviews-list');
+    if (!section || !container) return;
+
+    if (reviews.length === 0) {
+      section.style.display = 'none';
+      container.innerHTML = '';
+      return;
+    }
+
+    section.style.display = 'block';
+    let html = '';
+    reviews.forEach(review => {
+      const remainingText = review.remainingSeconds > 0 
+        ? '⏳ Auto-starts in ' + review.remainingSeconds + 's' 
+        : '🚀 Starting…';
+      
+      html += '<div class="pending-review-card" style="background:var(--card);border:1px solid var(--card-border);border-radius:8px;padding:16px;margin-bottom:12px;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">' +
+          '<div>' +
+            '<span style="font-weight:700;color:#fff;font-size:14px;">🛠 Review Settings for #' + review.shortcode + '</span>' +
+            '<span style="font-size:11px;color:var(--text-muted);margin-left:8px;">Profile: ' + review.profile.toUpperCase() + '</span>' +
+          '</div>' +
+          '<span class="status-badge status-warning">' + remainingText + '</span>' +
+        '</div>' +
+        (review.originalCaption ? '<div style="font-size:11px;color:var(--text-dim);background:var(--bg);padding:8px 12px;border-radius:6px;margin-bottom:14px;max-height:80px;overflow-y:auto;font-family:var(--font-mono);border-left:3px solid var(--primary);">' + review.originalCaption + '</div>' : '') +
+        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:16px;">' +
+          '<div>' +
+            '<label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">🎭 Tone/Mood</label>' +
+            '<select class="select-field" style="width:100%;" onchange="actionReview(\'' + review.id + '\', \'md\' + this.value)">' +
+              '<option value="technical" ' + (review.mood === 'technical' ? 'selected' : '') + '>Technical</option>' +
+              '<option value="humor" ' + (review.mood === 'humor' ? 'selected' : '') + '>Humor</option>' +
+              '<option value="stories" ' + (review.mood === 'stories' ? 'selected' : '') + '>Stories</option>' +
+              '<option value="action" ' + (review.mood === 'action' ? 'selected' : '') + '>Action</option>' +
+            '</select>' +
+          '</div>' +
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:center;">' +
+            '<label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text);cursor:pointer;user-select:none;">' +
+              '<input type="checkbox" ' + (review.settings.voiceover ? 'checked' : '') + ' onchange="actionReview(\'' + review.id + '\', \'vo\')"> 🔊 Voiceover' +
+            '</label>' +
+            '<label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text);cursor:pointer;user-select:none;">' +
+              '<input type="checkbox" ' + (review.settings.originalAudio ? 'checked' : '') + ' onchange="actionReview(\'' + review.id + '\', \'oa\')"> 🔊 Orig Audio' +
+            '</label>' +
+            '<label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text);cursor:pointer;user-select:none;">' +
+              '<input type="checkbox" ' + (review.settings.captions ? 'checked' : '') + ' onchange="actionReview(\'' + review.id + '\', \'cc\')"> 💬 Captions' +
+            '</label>' +
+            '<label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text);cursor:pointer;user-select:none;">' +
+              '<input type="checkbox" ' + (review.settings.sticker ? 'checked' : '') + ' onchange="actionReview(\'' + review.id + '\', \'sk\')"> 🏷️ Sticker' +
+            '</label>' +
+          '</div>' +
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">' +
+            '<div>' +
+              '<label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Crop Top</label>' +
+              '<select class="select-field" style="width:100%;" onchange="actionReview(\'' + review.id + '\', \'ct\' + this.value)">' +
+                [0,5,10,15,20,25,30,35].map(v => '<option value="' + v + '" ' + (review.settings.cropTopPct === v ? 'selected' : '') + '>' + v + '%</option>').join('') +
+              '</select>' +
+            '</div>' +
+            '<div>' +
+              '<label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Crop Bottom</label>' +
+              '<select class="select-field" style="width:100%;" onchange="actionReview(\'' + review.id + '\', \'cb\' + this.value)">' +
+                [0,5,10,15,20,25,30,35].map(v => '<option value="' + v + '" ' + (review.settings.cropBottomPct === v ? 'selected' : '') + '>' + v + '%</option>').join('') +
+              '</select>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+        '<div style="display:flex;justify-content:flex-end;gap:10px;border-top:1px solid var(--card-border);padding-top:12px;">' +
+          '<button class="btn-icon" style="background:#21262d;color:var(--danger);border-color:rgba(248,81,73,.4);" onclick="actionReview(\'' + review.id + '\', \'can\')">❌ Cancel</button>' +
+          '<button class="btn-primary" style="background:#238636;border-color:#2ea043;" onclick="actionReview(\'' + review.id + '\', \'go\')">▶️ Start Process</button>' +
+        '</div>' +
+      '</div>';
+    });
+    container.innerHTML = html;
+  }
+
+  async function actionReview(id, code) {
+    try {
+      const res = await fetch('/api/action-review', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, code })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(data.message || 'Settings updated', 'ok');
+        fetchPendingReviews();
+      } else {
+        showToast(data.message || 'Action failed', 'err');
+      }
+    } catch(e) {
+      showToast('Error sending review action', 'err');
+    }
+  }
+
   /* ─── INIT ─── */
   renderHeaderAudienceCards(null);
   renderChannelsList(null);
   fetchDashboardData();
+  fetchPendingReviews();
   connectSSE();
   if (window.location.pathname === '/logs' || window.location.pathname.startsWith('/logs/')) {
     switchTab('logs');
   }
   setInterval(fetchDashboardData, 10000);
+  setInterval(fetchPendingReviews, 3000);
 </script>
 </body>
 </html>
