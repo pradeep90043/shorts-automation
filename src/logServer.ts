@@ -766,6 +766,7 @@ async function getChannelDetails(pKey: string) {
       scheduleTime: profile.watch?.scheduleTime || "09:00",
       gapHours: profile.watch?.gapHours || 3,
       watchedChannels: profile.watch?.channels || [],
+      outroVersion: profile.watch?.outroVersion || "v1",
       currentSlot,
       totalSlots: profile.watch?.dailyCount || 6,
       progressPct: Math.min(

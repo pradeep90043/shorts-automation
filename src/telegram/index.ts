@@ -793,6 +793,7 @@ export class TelegramService implements ITelegramService {
           statusMsg += `• *Daily Count:* \`${details.dailyCount}\` reels\n`;
           statusMsg += `• *Staggered Spacing:* \`${details.gapHours}h\` apart\n`;
           statusMsg += `• *Admin Chat ID:* \`${details.adminChatId}\`\n`;
+          statusMsg += `• *Outro Version:* \`${details.outroVersion || "v1"}\`\n`;
           if (details.channels.length > 0) {
             statusMsg += `• *Watched Channels:* ${details.channels.map((c: string) => `@${escapeMarkdown(c)}`).join(", ")}\n`;
           }

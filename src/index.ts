@@ -50,15 +50,28 @@ async function bootstrap() {
     for (const row of rows) {
       const pKey = row.profile_key.toLowerCase();
       const profile = config.profiles.find((p) => (p.key || p.brandName).toLowerCase() === pKey);
-      if (profile && row.watch_config) {
-        pipelineLogger.info(
-          `Overriding watch configuration for profile [${profile.brandName}] from database: ${row.watch_config.dailyCount} reels/day, ${row.watch_config.channels?.length || 0} watched channels`,
-          "Bootstrap",
-        );
-        profile.watch = {
-          ...profile.watch,
-          ...row.watch_config,
-        };
+      let dbConfig = row.watch_config;
+      if (dbConfig) {
+        if (typeof dbConfig === "string") {
+          try {
+            dbConfig = JSON.parse(dbConfig);
+          } catch (e) {
+            pipelineLogger.warn(
+              `Failed to parse watch_config string for profile [${pKey}]: ${dbConfig}`,
+              "Bootstrap",
+            );
+          }
+        }
+        if (profile && typeof dbConfig === "object") {
+          pipelineLogger.info(
+            `Overriding watch configuration for profile [${profile.brandName}] from database: ${JSON.stringify(dbConfig)}`,
+            "Bootstrap",
+          );
+          profile.watch = {
+            ...profile.watch,
+            ...dbConfig,
+          };
+        }
       }
     }
   } catch (err) {
