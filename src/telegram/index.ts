@@ -785,7 +785,7 @@ export class TelegramService implements ITelegramService {
           const details = service.watcher!.getStatusDetails?.();
           if (!details) continue;
 
-          const active = (details.channels.length > 0 || details.searchMode === "hashtags" || details.searchMode === "both") && details.adminChatId > 0;
+          const active = details.adminChatId > 0;
           
           let statusMsg = `📋 *Scheduler Status: [${service.profile.brandName}]*\n`;
           statusMsg += `• *Status:* ${active ? "🟢 Active" : "🔴 Disabled"}\n`;
