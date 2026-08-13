@@ -123,7 +123,7 @@ export class DirectUploader {
   private facebook: FacebookPublisher;
   private telegram: TelegramService;
   private db: JobDatabase;
-  private profile: ChannelProfile;
+  public profile: ChannelProfile;
   private tts: TTSService;
 
   private get theme() {
@@ -161,7 +161,7 @@ export class DirectUploader {
   private analyzer = new ImageAnalyzer();
   private queue = new JobQueue(1);
   private pending = new Map<string, PendingUpload>();
-  private pendingSettingsReviews = new Map<
+  public pendingSettingsReviews = new Map<
     string,
     {
       context: PipelineContext;
@@ -170,6 +170,7 @@ export class DirectUploader {
       reviewMessageId: number;
       chatId: number;
       messageId: number;
+      startTime: number;
     }
   >();
   private uploaded = new Map<
@@ -1824,12 +1825,13 @@ ${this.theme.analysisRules}`;
         reviewMessageId,
         chatId,
         messageId,
+        startTime: Date.now(),
       });
     });
   }
 
   /** Handles st_* button taps (and the 60s timeout, which fires "go"). */
-  private onSettingsAction(code: string, id: string): void {
+  public onSettingsAction(code: string, id: string): void {
     const entry = this.pendingSettingsReviews.get(id);
     if (!entry) return;
     const settings = entry.context.reviewSettings!;
@@ -1936,6 +1938,7 @@ ${this.theme.analysisRules}`;
 
     // Every adjustment resets the 60s auto-start timer
     clearTimeout(entry.timer);
+    entry.startTime = Date.now();
     entry.timer = setTimeout(() => {
       pipelineLogger.info(
         `Settings review timeout for ${id} — proceeding with current settings.`,

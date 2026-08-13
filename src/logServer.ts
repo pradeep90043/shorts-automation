@@ -7,6 +7,7 @@ import { config } from "./config";
 import { getPool } from "./utils/pgClient";
 import { getChannelCredentials, saveChannelCredentials } from "./utils/credentialStore";
 import { activeWatchers } from "./instagram/channelWatcher";
+import { DirectUploader } from "./direct-uploader";
 import { ViralAnalyzer } from "./utils/viral-analyzer";
 import { buildHashtagsForNiche } from "./instagram/nicheSearcher";
 import { computeViralScore } from "./utils/viralScore";
@@ -905,6 +906,112 @@ export function startLogServer(): void {
           JSON.stringify({
             success: false,
             message: "Error injecting link into database queue",
+          }),
+        );
+      }
+      return;
+    }
+
+    if (
+      req.method === "GET" &&
+      (url === "/api/pending-reviews" || url.startsWith("/api/pending-reviews?"))
+    ) {
+      try {
+        const reviews: any[] = [];
+        for (const uploader of DirectUploader.instances) {
+          if (!uploader.pendingSettingsReviews) continue;
+          for (const [id, review] of uploader.pendingSettingsReviews.entries()) {
+            const elapsed = Date.now() - review.startTime;
+            const remaining = Math.max(0, 60000 - elapsed);
+            reviews.push({
+              id,
+              profile: uploader.profile.key,
+              shortcode: review.context.shortcode,
+              channel: review.context.channel,
+              mood: review.context.metadata?.mood || "technical",
+              settings: review.context.reviewSettings || {
+                voiceover: true,
+                originalAudio: false,
+                captions: true,
+                cropTopPct: 0,
+                cropBottomPct: 15,
+                sticker: true,
+              },
+              remainingSeconds: Math.max(0, Math.round(remaining / 1000)),
+              originalCaption: review.context.captionMetadata?.description || "",
+            });
+          }
+        }
+
+        res.writeHead(200, {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        });
+        res.end(
+          JSON.stringify({
+            success: true,
+            reviews,
+          }),
+        );
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            success: false,
+            message: "Error fetching pending reviews",
+          }),
+        );
+      }
+      return;
+    }
+
+    if (
+      req.method === "POST" &&
+      (url === "/api/action-review" || url.startsWith("/api/action-review?"))
+    ) {
+      try {
+        const body = await parseJsonBody(req);
+        const id = body.id;
+        const code = body.code;
+
+        if (!id || !code) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({
+              success: false,
+              message: "Missing id or code parameter",
+            }),
+          );
+          return;
+        }
+
+        let handled = false;
+        for (const uploader of DirectUploader.instances) {
+          if (uploader.pendingSettingsReviews && uploader.pendingSettingsReviews.has(id)) {
+            uploader.onSettingsAction(code, id);
+            handled = true;
+            break;
+          }
+        }
+
+        res.writeHead(200, {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        });
+        res.end(
+          JSON.stringify({
+            success: handled,
+            message: handled
+              ? `Review action '${code}' executed successfully.`
+              : "Review not found or already processed.",
+          }),
+        );
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            success: false,
+            message: "Error executing review action",
           }),
         );
       }
