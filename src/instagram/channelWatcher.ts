@@ -207,7 +207,11 @@ export class ChannelWatcher {
 
   public async start(): Promise<void> {
     const { channels, adminChatId, searchMode } = this.profile.watch;
-    const isHashtagMode = searchMode === "hashtags" || searchMode === "both";
+    let activeSearchMode = searchMode || "hashtags";
+    if (activeSearchMode === "channels" && (!channels || channels.length === 0)) {
+      activeSearchMode = "hashtags";
+    }
+    const isHashtagMode = activeSearchMode === "hashtags" || activeSearchMode === "both";
     if ((channels.length === 0 && !isHashtagMode) || !adminChatId) {
       return; // feature not configured for this profile
     }
@@ -235,9 +239,9 @@ export class ChannelWatcher {
       });
     }, 60 * 1000);
 
-    const modeDesc = searchMode === "hashtags"
+    const modeDesc = activeSearchMode === "hashtags"
       ? `hashtag search (threshold=${this.profile.watch.viralThreshold})`
-      : searchMode === "both"
+      : activeSearchMode === "both"
       ? `channels + hashtag search (threshold=${this.profile.watch.viralThreshold})`
       : `${channels.length} channel(s) (${channels.join(", ")})`;
     pipelineLogger.info(
@@ -353,9 +357,14 @@ export class ChannelWatcher {
     const { searchMode, channels, dailyCount, nicheHashtags, viralThreshold, excludeChannels = [] } = this.profile.watch;
     const excludes = new Set(excludeChannels.map(c => c.toLowerCase().trim()));
 
+    let activeSearchMode = searchMode || "hashtags";
+    if (activeSearchMode === "channels" && (!channels || channels.length === 0)) {
+      activeSearchMode = "hashtags";
+    }
+
     // ── Hashtag search (hashtags | both mode) ───────────────────────────────
     this.hashtagReelPool = [];
-    if (searchMode === "hashtags" || searchMode === "both") {
+    if (activeSearchMode === "hashtags" || activeSearchMode === "both") {
       const hashtags = buildHashtagsForNiche(this.profile.theme, undefined, nicheHashtags);
       pipelineLogger.info(
         `[${this.profile.brandName}] Searching hashtags: #${hashtags.join(", #")} (threshold=${viralThreshold})`,
@@ -392,7 +401,7 @@ export class ChannelWatcher {
 
     // ── Channel-list pool (channels | both mode, or hashtag fallback) ───────
     const pool: Array<{ shortcode: string; url: string; channel: string }> = [];
-    if (searchMode === "channels" || searchMode === "both" || this.hashtagReelPool.length === 0) {
+    if (activeSearchMode === "channels" || activeSearchMode === "both" || this.hashtagReelPool.length === 0) {
       for (const channel of channels) {
         if (excludes.has(channel.toLowerCase().trim())) {
           continue;
@@ -418,6 +427,27 @@ export class ChannelWatcher {
       for (let i = pool.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [pool[i], pool[j]] = [pool[j], pool[i]];
+      }
+    }
+
+    if (pool.length === 0 && activeSearchMode === "channels") {
+      pipelineLogger.info(
+        `[${this.profile.brandName}] Watchlist pool is empty — falling back to hashtags search`,
+        "ChannelWatcher",
+      );
+      const hashtags = buildHashtagsForNiche(this.profile.theme, undefined, nicheHashtags);
+      try {
+        this.hashtagReelPool = await this.searchViralReelsWithFallback(
+          hashtags,
+          viralThreshold,
+          20,
+        );
+      } catch (err) {
+        pipelineLogger.error(
+          `[${this.profile.brandName}] Fallback hashtag search failed`,
+          err,
+          "ChannelWatcher",
+        );
       }
     }
 
