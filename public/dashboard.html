@@ -25,9 +25,33 @@
 
     @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(1.15)} }
     @keyframes fadeIn { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
+    @keyframes stepSweep { 0%{left:-100%} 100%{left:120%} }
+    @keyframes stepGlow { 0%,100%{box-shadow:0 0 0 1px var(--primary),0 0 8px rgba(88,166,255,.3)} 50%{box-shadow:0 0 0 2px var(--primary),0 0 18px rgba(88,166,255,.55)} }
+    @keyframes elapsedTick { from{opacity:.6} to{opacity:1} }
     tr:hover td { background: var(--card-hover) !important; }
     input:focus, select:focus { border-color: var(--primary) !important; outline: none; }
     button:hover { filter: brightness(1.12); }
+
+    /* ── PIPELINE STEP CARDS ── */
+    .step-card { background:var(--card);padding:10px 8px 8px;border-radius:8px;border:1px solid var(--card-border);transition:border-color .3s,box-shadow .3s,background .3s;text-align:center;position:relative;overflow:hidden; }
+    .step-card.step-idle { border-color:var(--card-border); }
+    .step-card.step-active { border-color:var(--primary);animation:stepGlow 1.8s ease-in-out infinite; }
+    .step-card.step-done { border-color:var(--success);background:rgba(63,185,80,.05); }
+    .step-card.step-failed { border-color:var(--danger);background:rgba(248,81,73,.05); }
+    .step-bar-track { background:rgba(255,255,255,.08);border-radius:4px;height:5px;overflow:hidden;margin:6px 0 4px;position:relative; }
+    .step-bar-fill { height:100%;border-radius:4px;transition:width 1s ease,background .3s; }
+    .step-bar-sweep { position:absolute;top:0;width:40%;height:100%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.45),transparent);animation:stepSweep 1.4s linear infinite;pointer-events:none; }
+    .step-elapsed { font-size:9px;font-family:var(--font-mono);color:var(--primary);animation:elapsedTick .8s ease-in-out infinite alternate; }
+    .step-done-elapsed { font-size:9px;font-family:var(--font-mono);color:var(--success); }
+    .step-idle-metric { font-size:9px;color:var(--text-dim);font-family:var(--font-mono); }
+
+    /* ── COMPACT SOURCE CARD ── */
+    .source-compact-card { display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--card-border);border-radius:8px;padding:10px 12px; }
+    .source-compact-thumb { width:44px;height:44px;border-radius:6px;background:#000;object-fit:cover;flex-shrink:0;border:1px solid var(--card-border); }
+    .source-compact-info { flex:1;min-width:0; }
+    .source-compact-shortcode { font-size:12px;font-weight:700;color:var(--primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+    .source-compact-url { font-size:10px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px; }
+    .source-compact-status { font-size:10px;font-weight:700;flex-shrink:0; }
 
     /* TOPBAR */
     #topbar { display:flex; align-items:center; justify-content:space-between; padding:12px 20px; border-bottom:1px solid var(--card-border); background:var(--card); position:sticky; top:0; z-index:100; flex-wrap:wrap; gap:12px; }
@@ -199,24 +223,18 @@
     <div id="tab-overview" class="tab-pane active">
       <div id="alerts-container" style="margin-bottom:20px;"></div>
 
-      <div id="overview-active-profiles-section" style="margin-bottom:24px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-          <div style="font-size:16px;font-weight:800;color:#fff;">📺 Active Channel Profiles</div>
-          <div style="font-size:11px;color:var(--text-muted);">Queue status, limits & audience per channel</div>
-        </div>
-        <div id="overview-channels-cards-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;"></div>
-      </div>
 
-      <!-- INJECT SECTION -->
-      <div class="table-card" id="inject-workflow-section" style="margin-bottom:24px;">
+      <!-- INJECT SECTION: only shown when All Channels selected -->
+      <div class="table-card" id="inject-workflow-section" style="margin-bottom:24px;display:block;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
           <div>
             <div style="font-size:16px;font-weight:700;color:#fff;">＋ Inject Source Reel</div>
-            <div style="font-size:12px;color:var(--text-muted);">Paste Instagram Reel URL to trigger AI transcription, caption rendering, and multi-platform publishing</div>
+            <div style="font-size:12px;color:var(--text-muted);" id="inject-section-subtitle">Paste Instagram Reel URL to trigger AI transcription, caption rendering, and multi-platform publishing</div>
           </div>
-          <div style="display:flex;align-items:center;gap:10px;">
-            <label style="font-size:11px;font-weight:700;color:var(--text-muted);">Target:</label>
+          <div style="display:flex;align-items:center;gap:10px;" id="inject-channel-selector-wrap">
+            <label style="font-size:11px;font-weight:700;color:var(--text-muted);" id="inject-channel-label">Target:</label>
             <select class="input-field" id="inject-target-channel-select" style="width:160px;padding:6px 10px;font-weight:600;"></select>
+            <span id="inject-locked-channel-badge" style="display:none;font-size:11px;font-weight:700;color:var(--primary);background:rgba(56,139,253,.15);border:1px solid rgba(56,139,253,.4);padding:4px 12px;border-radius:8px;">—</span>
           </div>
         </div>
         <div style="display:flex;gap:10px;margin-bottom:16px;">
@@ -226,19 +244,132 @@
         <!-- 6-STEP PIPELINE STEPPER -->
         <div id="live-workflow-stepper" style="background:var(--bg);border:1px solid var(--card-border);border-radius:8px;padding:14px;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-            <span style="font-weight:700;font-size:12px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;">Live 6-Step Pipeline</span>
+            <span style="font-weight:700;font-size:12px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;">⚙ Live Pipeline</span>
             <span id="stepper-status-badge" class="status-badge status-published">System Ready</span>
           </div>
-          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;text-align:center;" id="pipeline-steps">
-            <div class="step-card" id="step-1" style="background:var(--card);padding:10px 6px;border-radius:6px;border:1px solid var(--card-border);transition:all .3s;"><div style="font-size:16px;margin-bottom:2px;">📥</div><div style="font-size:11px;font-weight:700;color:#fff;">1. Fetch Reel</div><div style="font-size:9px;color:var(--text-muted);">Downloading HD</div></div>
-            <div class="step-card" id="step-2" style="background:var(--card);padding:10px 6px;border-radius:6px;border:1px solid var(--card-border);transition:all .3s;"><div style="font-size:16px;margin-bottom:2px;">🧠</div><div style="font-size:11px;font-weight:700;color:#fff;">2. AI Analysis</div><div style="font-size:9px;color:var(--text-muted);">Hook & Sentiment</div></div>
-            <div class="step-card" id="step-3" style="background:var(--card);padding:10px 6px;border-radius:6px;border:1px solid var(--card-border);transition:all .3s;"><div style="font-size:16px;margin-bottom:2px;">🎨</div><div style="font-size:11px;font-weight:700;color:#fff;">3. Captions</div><div style="font-size:9px;color:var(--text-muted);">Word Overlays</div></div>
-            <div class="step-card" id="step-4" style="background:var(--card);padding:10px 6px;border-radius:6px;border:1px solid var(--card-border);transition:all .3s;"><div style="font-size:16px;margin-bottom:2px;">🎵</div><div style="font-size:11px;font-weight:700;color:#fff;">4. Audio Check</div><div style="font-size:9px;color:var(--text-muted);">AcoustID & BGM</div></div>
-            <div class="step-card" id="step-5" style="background:var(--card);padding:10px 6px;border-radius:6px;border:1px solid var(--card-border);transition:all .3s;"><div style="font-size:16px;margin-bottom:2px;">🚀</div><div style="font-size:11px;font-weight:700;color:#fff;">5. Dispatch</div><div style="font-size:9px;color:var(--text-muted);">Insta / YT / FB</div></div>
-            <div class="step-card" id="step-6" style="background:var(--card);padding:10px 6px;border-radius:6px;border:1px solid var(--card-border);transition:all .3s;"><div style="font-size:16px;margin-bottom:2px;">✅</div><div style="font-size:11px;font-weight:700;color:#fff;">6. Published</div><div style="font-size:9px;color:var(--text-muted);">Live Multi-Links</div></div>
+
+          <!-- COMPACT SOURCE + OUTPUT ROW -->
+          <div id="pipeline-preview-row" style="margin-bottom:12px;display:flex;gap:10px;flex-wrap:wrap;">
+            <!-- SOURCE: rich card with full-height portrait preview image + link/shortcode -->
+            <div id="source-preview-card" style="flex:1;min-width:320px;display:none;background:var(--card);border:1px solid var(--card-border);border-radius:8px;padding:12px;display:flex;gap:12px;align-items:stretch;">
+              <div style="position:relative;width:105px;min-height:150px;border-radius:8px;overflow:hidden;background:#0d1117;flex-shrink:0;border:1px solid var(--card-border);display:flex;align-items:center;justify-content:center;">
+                <img id="source-thumb-img" src="" alt="Source Preview" style="width:100%;height:100%;object-fit:cover;display:none;"
+                  onload="this.style.display='block';document.getElementById('source-thumb-fallback').style.display='none';"
+                  onerror="this.style.display='none';document.getElementById('source-thumb-fallback').style.display='flex';" />
+                <div id="source-thumb-fallback" style="font-size:28px;display:flex;flex-direction:column;align-items:center;gap:4px;color:var(--text-muted);">
+                  <span>📥</span>
+                  <span style="font-size:9px;text-transform:uppercase;letter-spacing:0.5px;font-weight:700;">Reel Frame</span>
+                </div>
+              </div>
+              <div class="source-compact-info" style="display:flex;flex-direction:column;justify-content:space-between;flex:1;min-width:0;">
+                <div>
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:6px;">
+                    <span class="source-compact-shortcode" id="source-shortcode-label" style="font-size:13px;font-weight:700;color:var(--primary);">—</span>
+                    <span class="source-compact-status" id="source-status-label" style="font-size:10px;font-weight:700;color:var(--success);background:rgba(63,185,80,.12);border:1px solid rgba(63,185,80,.3);padding:2px 8px;border-radius:4px;">✓ Queued</span>
+                  </div>
+                  <div class="source-compact-url" id="source-url-label" style="font-size:11px;color:var(--text-muted);word-break:break-all;line-height:1.35;margin-bottom:8px;">—</div>
+                </div>
+                <div style="display:flex;align-items:center;justify-content:flex-end;">
+                  <a id="source-open-link" href="#" target="_blank" title="Open on Instagram" style="color:var(--primary);font-size:11px;font-weight:700;text-decoration:none;padding:6px 12px;border:1px solid rgba(88,166,255,.3);border-radius:6px;background:rgba(88,166,255,.08);display:inline-flex;align-items:center;gap:4px;">Open Instagram ↗</a>
+                </div>
+              </div>
+            </div>
+            <!-- OUTPUT: video preview card + published platforms links -->
+            <div id="output-preview-card" style="flex:1;min-width:320px;background:var(--card);border:1px solid var(--success);border-radius:8px;padding:12px;display:none;">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                <div style="font-size:12px;font-weight:700;color:var(--success);display:flex;align-items:center;gap:6px;">
+                  <span>🎬</span> Output Video Ready
+                </div>
+                <div style="display:flex;gap:6px;">
+                  <button class="btn-primary" style="font-size:11px;padding:4px 10px;" onclick="publishPreview()">🚀 Publish</button>
+                  <button onclick="discardPreview()" style="font-size:11px;padding:4px 10px;background:rgba(248,81,73,.1);border:1px solid rgba(248,81,73,.4);color:#f85149;border-radius:6px;cursor:pointer;">🗑 Discard</button>
+                </div>
+              </div>
+              <video id="output-video-player" controls preload="metadata" playsinline
+                style="width:100%;max-height:180px;border-radius:6px;background:#000;object-fit:contain;display:block;margin-bottom:8px;">
+              </video>
+              <!-- PUBLISHED CHANNELS ROW -->
+              <div id="published-links-container" style="display:none;padding-top:8px;border-top:1px solid var(--card-border);">
+                <div style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;margin-bottom:6px;letter-spacing:0.5px;">Published Channels:</div>
+                <div id="published-links-row" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+              </div>
+            </div>
           </div>
+
+          <!-- STEP CARDS -->
+          <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:7px;" id="pipeline-steps">
+
+            <div class="step-card step-idle" id="step-1">
+              <div style="font-size:18px;margin-bottom:2px;">📥</div>
+              <div style="font-size:10px;font-weight:700;color:#fff;line-height:1.2;">1. Fetch</div>
+              <div class="step-detail" id="step-detail-1" style="font-size:8px;color:var(--text-muted);margin:2px 0 4px;min-height:11px;line-height:1.3;">Waiting…</div>
+              <div class="step-bar-track">
+                <div id="step-bar-fill-1" class="step-bar-fill" style="width:0%;background:var(--primary);"></div>
+                <div id="step-bar-sweep-1" class="step-bar-sweep" style="display:none;"></div>
+              </div>
+              <div id="step-metric-1" class="step-idle-metric">—</div>
+            </div>
+
+            <div class="step-card step-idle" id="step-2">
+              <div style="font-size:18px;margin-bottom:2px;">🧠</div>
+              <div style="font-size:10px;font-weight:700;color:#fff;line-height:1.2;">2. AI Vision</div>
+              <div class="step-detail" id="step-detail-2" style="font-size:8px;color:var(--text-muted);margin:2px 0 4px;min-height:11px;line-height:1.3;">Waiting…</div>
+              <div class="step-bar-track">
+                <div id="step-bar-fill-2" class="step-bar-fill" style="width:0%;background:var(--primary);"></div>
+                <div id="step-bar-sweep-2" class="step-bar-sweep" style="display:none;"></div>
+              </div>
+              <div id="step-metric-2" class="step-idle-metric">—</div>
+            </div>
+
+            <div class="step-card step-idle" id="step-3">
+              <div style="font-size:18px;margin-bottom:2px;">🎨</div>
+              <div style="font-size:10px;font-weight:700;color:#fff;line-height:1.2;">3. Captions</div>
+              <div class="step-detail" id="step-detail-3" style="font-size:8px;color:var(--text-muted);margin:2px 0 4px;min-height:11px;line-height:1.3;">Waiting…</div>
+              <div class="step-bar-track">
+                <div id="step-bar-fill-3" class="step-bar-fill" style="width:0%;background:var(--primary);"></div>
+                <div id="step-bar-sweep-3" class="step-bar-sweep" style="display:none;"></div>
+              </div>
+              <div id="step-metric-3" class="step-idle-metric">—</div>
+            </div>
+
+            <div class="step-card step-idle" id="step-4">
+              <div style="font-size:18px;margin-bottom:2px;">🎵</div>
+              <div style="font-size:10px;font-weight:700;color:#fff;line-height:1.2;">4. Audio</div>
+              <div class="step-detail" id="step-detail-4" style="font-size:8px;color:var(--text-muted);margin:2px 0 4px;min-height:11px;line-height:1.3;">Waiting…</div>
+              <div class="step-bar-track">
+                <div id="step-bar-fill-4" class="step-bar-fill" style="width:0%;background:var(--primary);"></div>
+                <div id="step-bar-sweep-4" class="step-bar-sweep" style="display:none;"></div>
+              </div>
+              <div id="step-metric-4" class="step-idle-metric">—</div>
+            </div>
+
+            <div class="step-card step-idle" id="step-5">
+              <div style="font-size:18px;margin-bottom:2px;">🎬</div>
+              <div style="font-size:10px;font-weight:700;color:#fff;line-height:1.2;">5. Render</div>
+              <div class="step-detail" id="step-detail-5" style="font-size:8px;color:var(--text-muted);margin:2px 0 4px;min-height:11px;line-height:1.3;">Waiting…</div>
+              <div class="step-bar-track">
+                <div id="step-bar-fill-5" class="step-bar-fill" style="width:0%;background:var(--primary);"></div>
+                <div id="step-bar-sweep-5" class="step-bar-sweep" style="display:none;"></div>
+              </div>
+              <div id="step-metric-5" class="step-idle-metric">—</div>
+            </div>
+
+            <div class="step-card step-idle" id="step-6">
+              <div style="font-size:18px;margin-bottom:2px;">🚀</div>
+              <div style="font-size:10px;font-weight:700;color:#fff;line-height:1.2;">6. Publish</div>
+              <div class="step-detail" id="step-detail-6" style="font-size:8px;color:var(--text-muted);margin:2px 0 4px;min-height:11px;line-height:1.3;">Waiting…</div>
+              <div class="step-bar-track">
+                <div id="step-bar-fill-6" class="step-bar-fill" style="width:0%;background:var(--success);"></div>
+                <div id="step-bar-sweep-6" class="step-bar-sweep" style="display:none;"></div>
+              </div>
+              <div id="step-metric-6" class="step-idle-metric">—</div>
+            </div>
+
+          </div>
+
         </div>
       </div>
+
 
       <!-- PENDING SETTINGS REVIEWS -->
       <div class="table-card" id="pending-reviews-section" style="display:none;margin-bottom:24px;">
@@ -461,6 +592,9 @@
 <div id="toast">✓ Notification</div>
 
 <script>
+  /* ─── BASE URL: works both as file:// and via server ─── */
+  const BASE_URL = window.location.protocol === 'file:' ? 'http://127.0.0.1:3002' : '';
+
   /* ─── STATE ─── */
   let activeTab = 'overview';
   let autoScroll = true;
@@ -522,37 +656,68 @@
     if (tab === 'viral' && globalDashboardData && globalDashboardData.viralAnalytics) {
       setTimeout(() => renderViralCharts(globalDashboardData.viralAnalytics), 60);
     }
-    if (tab === 'config') {
-      renderConfigTab(globalDashboardData ? globalDashboardData.channels : null);
-    }
   }
 
   /* ─── CHANNEL FOCUS ─── */
   function focusChannelProfile(key) {
     focusedChannel = key;
     selectedAnalyticsChannel = key;
+
     const bar = document.getElementById('channel-focus-tabs-bar');
     const titleEl = document.getElementById('channel-focus-title');
-    const profilesSection = document.getElementById('overview-active-profiles-section');
     const injectSection = document.getElementById('inject-workflow-section');
-    const NAMES = { codeorcap:'CodeOrCap (@codeorcap)', storiyum:'Storiyum (@storiyum)', prompt_gag:'PromptGag (@prompt_gag)' };
-    if (key === 'all') {
-      if (bar) bar.style.display = 'none';
-      if (profilesSection) profilesSection.style.display = '';
-      if (injectSection) injectSection.style.display = '';
+    const injectChannelWrap = document.getElementById('inject-channel-selector-wrap');
+    const injectSel = document.getElementById('inject-target-channel-select');
+
+    // Build display name from live channel data if available
+    let displayName = key;
+    if (globalDashboardData && globalDashboardData.channels) {
+      const ch = globalDashboardData.channels.find(c => c.key === key);
+      if (ch) displayName = ch.name + ' (' + (ch.handle || '@' + key) + ')';
     } else {
-      if (bar) bar.style.display = 'flex';
-      if (titleEl) titleEl.textContent = NAMES[key] || key;
-      if (profilesSection) profilesSection.style.display = 'none';
-      if (injectSection) injectSection.style.display = 'none';
-      const sel = document.getElementById('inject-target-channel-select');
-      if (sel) sel.value = key;
+      const NAMES = { codeorcap:'CodeOrCap (@codeorcap)', storiyum:'Storiyum (@storiyum)', prompt_gag:'PromptGag (@prompt_gag)' };
+      displayName = NAMES[key] || key;
     }
+
+    if (key === 'all') {
+      // ALL CHANNELS: hide focus bar, show inject section, show all analytics
+      if (bar) bar.style.display = 'none';
+      if (injectChannelWrap) injectChannelWrap.style.display = 'flex';
+      const injectSection = document.getElementById('inject-workflow-section');
+      if (injectSection) injectSection.style.display = 'block';
+      // Reset viral channel pills to 'all'
+      document.querySelectorAll('#viral-channel-pills .pill-btn').forEach(b => b.classList.remove('active'));
+      const allPill = document.querySelector('#viral-channel-pills .pill-btn[data-ch="all"]');
+      if (allPill) allPill.classList.add('active');
+    } else {
+      // SPECIFIC CHANNEL: show focus bar, hide inject section entirely
+      if (bar) bar.style.display = 'flex';
+      if (titleEl) titleEl.textContent = displayName;
+      const injectSection = document.getElementById('inject-workflow-section');
+      if (injectSection) injectSection.style.display = 'none';
+      // Lock inject dropdown to focused channel
+      if (injectSel) injectSel.value = key;
+      if (injectChannelWrap) {
+        injectChannelWrap.style.display = 'flex';
+        const badge = document.getElementById('inject-locked-channel-badge');
+        if (badge) badge.textContent = displayName;
+      }
+      // Sync viral channel pills to focused channel
+      document.querySelectorAll('#viral-channel-pills .pill-btn').forEach(b => b.classList.remove('active'));
+      const chPill = document.querySelector('#viral-channel-pills .pill-btn[data-ch="' + key + '"]');
+      if (chPill) chPill.classList.add('active');
+    }
+
     renderHeaderAudienceCards(globalDashboardData ? globalDashboardData.channels : null);
     if (globalDashboardData) {
       renderQueueTable(globalDashboardData.queue);
       renderActivityTable(globalDashboardData.recentHistory);
       renderConfigTab(globalDashboardData.channels);
+      // Re-render viral analytics filtered to focused channel
+      if (globalDashboardData.viralAnalytics) {
+        renderViralLeaderboard(globalDashboardData.viralAnalytics.leaderboard);
+        if (activeTab === 'viral') renderViralCharts(globalDashboardData.viralAnalytics);
+      }
     }
   }
 
@@ -566,7 +731,7 @@
   /* ─── FETCH ─── */
   async function fetchDashboardData() {
     try {
-      const res = await fetch('/api/dashboard');
+      const res = await fetch(BASE_URL + '/api/dashboard');
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
       globalDashboardData = data;
@@ -639,7 +804,23 @@
         opt.value = c.key; opt.textContent = c.name + ' (' + c.handle + ')';
         sel.appendChild(opt);
       });
+      // If a channel is focused, pre-select it
+      if (focusedChannel !== 'all') sel.value = focusedChannel;
     });
+    // Sync locked badge visibility based on focusedChannel
+    const badge = document.getElementById('inject-locked-channel-badge');
+    const dropdown = document.getElementById('inject-target-channel-select');
+    if (badge && dropdown) {
+      if (focusedChannel !== 'all') {
+        const ch = list.find(c => c.key === focusedChannel);
+        badge.textContent = ch ? ch.name + ' (' + ch.handle + ')' : focusedChannel;
+        badge.style.display = 'inline-block';
+        dropdown.style.display = 'none';
+      } else {
+        badge.style.display = 'none';
+        dropdown.style.display = '';
+      }
+    }
   }
 
   /* ─── CHANNELS LIST / CARDS ─── */
@@ -680,12 +861,25 @@
     /* Viral channel pills */
     const vPills = document.getElementById('viral-channel-pills');
     if (vPills) {
-      vPills.innerHTML = '<button class="pill-btn active" onclick="filterAnalyticsChannel(\'all\',this)">All Channels</button>';
+      vPills.innerHTML = '';
+      const allPill = document.createElement('button');
+      allPill.className = 'pill-btn' + (selectedAnalyticsChannel === 'all' ? ' active' : '');
+      allPill.setAttribute('data-ch', 'all');
+      allPill.textContent = 'All Channels';
+      allPill.onclick = function() {
+        focusChannelProfile('all');
+        filterAnalyticsChannel('all', this);
+      };
+      vPills.appendChild(allPill);
       list.forEach(c => {
         const pill = document.createElement('button');
-        pill.className = 'pill-btn';
+        pill.className = 'pill-btn' + (selectedAnalyticsChannel === c.key ? ' active' : '');
+        pill.setAttribute('data-ch', c.key);
         pill.textContent = c.name;
-        pill.onclick = function() { filterAnalyticsChannel(c.key, this); };
+        pill.onclick = function() {
+          focusChannelProfile(c.key);
+          filterAnalyticsChannel(c.key, this);
+        };
         vPills.appendChild(pill);
       });
     }
@@ -719,7 +913,7 @@
       });
     });
   }
-
+ 
   /* ─── ACTIVITY TABLE ─── */
   function renderActivityTable(history) {
     const body = document.getElementById('activity-table-body');
@@ -822,22 +1016,20 @@
     if (globalDashboardData) renderQueueTable(globalDashboardData.queue);
   }
 
-  /* ─── PIPELINE STEPPER ─── */
-  function animateLiveStepper() {
+  /* ─── PREVIEW ACTIONS ─── */
+  function publishPreview() {
+    showToast('✅ Reel approved — dispatching to platforms!');
+    const outCard = document.getElementById('output-preview-card');
+    if (outCard) outCard.style.display = 'none';
     const badge = document.getElementById('stepper-status-badge');
-    if (badge) { badge.className='status-badge status-processing'; badge.textContent='Pipeline Active'; }
-    [1,2,3,4,5,6].forEach((s, idx) => {
-      setTimeout(() => {
-        [1,2,3,4,5,6].forEach(st => {
-          const el = document.getElementById('step-' + st);
-          if (!el) return;
-          if (st === s) { el.style.borderColor='var(--primary)'; el.style.background='rgba(88,166,255,.15)'; el.style.boxShadow='0 0 12px rgba(88,166,255,.4)'; }
-          else if (st < s) { el.style.borderColor='var(--success)'; el.style.background='rgba(46,160,67,.1)'; el.style.boxShadow='none'; }
-          else { el.style.borderColor='var(--card-border)'; el.style.background='var(--card)'; el.style.boxShadow='none'; }
-        });
-        if (idx === 5 && badge) setTimeout(() => { badge.className='status-badge status-published'; badge.textContent='Reel Live!'; }, 800);
-      }, idx * 700);
-    });
+    if (badge) { badge.className = 'status-badge status-published'; badge.textContent = '✓ Published'; }
+    fetchDashboardData();
+  }
+
+  function discardPreview() {
+    if (!confirm('Discard this rendered video?')) return;
+    showToast('🗑 Reel discarded', 'warn');
+    resetAllSteps();
   }
 
   /* ─── INJECT LINK ─── */
@@ -847,15 +1039,40 @@
     const url = (urlInput ? urlInput.value.trim() : '');
     const targetChannel = (chanSelect ? chanSelect.value : null) || (focusedChannel !== 'all' ? focusedChannel : 'codeorcap');
     if (!url) { showToast('Please enter a valid Instagram or Video URL', 'warn'); return; }
-    animateLiveStepper();
+
+    const scMatch = url.match(/\/reel\/([\w-]{5,20})/) || url.match(/\/p\/([\w-]{5,20})/);
+    const shortcode = scMatch ? scMatch[1] : '';
+
+    // Immediately reset old reel steps & update source card to show the new reel
+    resetAllSteps();
+    setPipelineSource(url, shortcode);
+    setStepState(1, 'active', 'Injecting into ' + targetChannel.toUpperCase() + '…');
+    startElapsedTicker();
+    startStuckWatcher();
+
     try {
-      const res = await fetch('/api/inject-link', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ profile:targetChannel, url }) });
+      const res = await fetch(BASE_URL + '/api/inject-link', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile: targetChannel, url })
+      });
       const data = await res.json();
-      if (data.success) { showToast('Link injected into ' + targetChannel + ' workflow!'); if (urlInput) urlInput.value = ''; fetchDashboardData(); }
-      else showToast(data.message || 'Failed to inject link', 'err');
-    } catch { showToast('Error sending inject request', 'err'); }
+      if (data.success) {
+        showToast('⚡ Reel injected into ' + targetChannel + ' pipeline!');
+        if (urlInput) urlInput.value = '';
+        setStepState(1, 'active', 'Queued in database — awaiting runner…');
+        fetchDashboardData();
+      } else {
+        showToast(data.message || 'Failed to inject link', 'err');
+        setStepState(1, 'failed', data.message || 'Injection failed');
+      }
+    } catch {
+      showToast('Error sending inject request', 'err');
+      setStepState(1, 'failed', 'Network error');
+    }
   }
 
+  /* ─── CONFIG TAB ─── */
   function renderConfigTab(channels) {
     const container = document.getElementById('config-cards-list');
     if (!container) return;
@@ -908,31 +1125,6 @@
           '<div><label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">On Queue Empty</label><select class="select-field" style="width:100%;"><option>Wait for new reels</option><option>Auto-fetch watchlist</option><option>Pause bot</option></select></div>' +
           '<div><label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Retry Failed After</label><select class="select-field" style="width:100%;"><option>30 minutes</option><option>1 hour</option><option>3 hours</option><option>Don\'t retry</option></select></div>' +
           '<div><label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Max Queue Slots</label><select class="select-field" style="width:100%;"><option>6 slots</option><option>10 slots</option><option>20 slots</option><option>Unlimited</option></select></div>' +
-        '</div>' +
-        '<div style="margin-top:20px;border-top:1px solid var(--card-border);padding-top:16px;">' +
-          '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">' +
-            '<div><div style="font-size:12px;font-weight:700;color:var(--text);">Instagram Credentials</div>' +
-            '<div style="font-size:11px;color:var(--text-muted);margin-top:2px;">Stored in database — survives redeployments</div></div>' +
-            '<div style="display:flex;gap:8px;">' +
-            '<button class="btn-icon auto-session-btn" style="background:var(--primary-bg);color:var(--primary);border-color:var(--primary);">🔑 Auto-Login</button>' +
-            '<button class="btn-icon save-creds-btn" style="background:var(--success-bg);color:var(--success);border-color:var(--success);">💾 Save Credentials</button>' +
-            '</div>' +
-          '</div>' +
-          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
-            '<div><label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Username</label>' +
-            '<input class="input-field cred-username" type="text" placeholder="instagram_username" style="width:100%;font-family:var(--font-mono);font-size:12px;"></div>' +
-            '<div><label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Email</label>' +
-            '<input class="input-field cred-email" type="email" placeholder="account@email.com" style="width:100%;font-family:var(--font-mono);font-size:12px;"></div>' +
-            '<div><label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Password</label>' +
-            '<div style="position:relative;">' +
-            '<input class="input-field cred-password" type="password" placeholder="••••••••" style="width:100%;font-family:var(--font-mono);font-size:12px;padding-right:36px;">' +
-            '<button class="cred-eye-btn" type="button" tabindex="-1" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:13px;padding:0;">👁</button>' +
-            '</div></div>' +
-            '<div><label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Session ID</label>' +
-            '<input class="input-field cred-session" type="password" placeholder="••••••••" style="width:100%;font-family:var(--font-mono);font-size:12px;padding-right:36px;">' +
-            '</div>' +
-          '</div>' +
-          '<div class="cred-updated" style="margin-top:8px;font-size:10px;color:var(--text-dim);"></div>' +
         '</div>';
       const rangeInput = card.querySelector('.cfg-range');
       rangeInput.oninput = function() {
@@ -963,14 +1155,6 @@
           outroVersionSelect ? outroVersionSelect.value : 'v1'
         );
       };
-      card.querySelector('.cred-eye-btn').onclick = function() {
-        const pwdInput = card.querySelector('.cred-password');
-        pwdInput.type = pwdInput.type === 'password' ? 'text' : 'password';
-        this.textContent = pwdInput.type === 'password' ? '👁' : '🙈';
-      };
-      card.querySelector('.save-creds-btn').onclick = () => triggerSaveCredentials(c.key, card);
-      card.querySelector('.auto-session-btn').onclick = () => triggerAutoSession(c.key, card);
-      loadCredentialsIntoCard(c.key, card);
       container.appendChild(card);
     });
   }
@@ -1150,7 +1334,7 @@
   /* ─── API ACTIONS ─── */
   async function triggerUpdateConfig(profileKey, limitVal, searchMode, nicheHashtags, watchedChannels, excludeChannels, outroVersion) {
     try {
-      const res = await fetch('/api/update-config',{
+      const res = await fetch(BASE_URL + '/api/update-config',{
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({
@@ -1168,57 +1352,9 @@
       fetchDashboardData();
     } catch { showToast('Failed to save config','err'); }
   }
-  async function triggerSaveCredentials(profileKey, card) {
-    const username = card.querySelector('.cred-username').value.trim();
-    const email = card.querySelector('.cred-email').value.trim();
-    const password = card.querySelector('.cred-password').value;
-    const sessionId = card.querySelector('.cred-session').value;
-    const isPlaceholder = (v) => !v || v.includes('••••');
-    try {
-      const payload = { profile: profileKey, instagramUsername: username, instagramEmail: email };
-      if (!isPlaceholder(password)) payload.instagramPassword = password;
-      if (!isPlaceholder(sessionId)) payload.instagramSessionId = sessionId;
-      const res = await fetch('/api/channel-credentials',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-      const data = await res.json();
-      showToast(data.message || 'Credentials saved', data.success === false ? 'err' : 'ok');
-      if (data.success) loadCredentialsIntoCard(profileKey, card);
-    } catch { showToast('Failed to save credentials','err'); }
-  }
-  async function loadCredentialsIntoCard(profileKey, card) {
-    try {
-      const res = await fetch('/api/channel-credentials?profile=' + profileKey);
-      const data = await res.json();
-      if (!data.success) return;
-      card.querySelector('.cred-username').value = data.instagramUsername || '';
-      card.querySelector('.cred-email').value = data.instagramEmail || '';
-      if (data.instagramPassword) card.querySelector('.cred-password').value = data.instagramPassword;
-      if (data.instagramSessionId) card.querySelector('.cred-session').value = data.instagramSessionId;
-      const updEl = card.querySelector('.cred-updated');
-      if (updEl && data.updatedAt) updEl.textContent = 'Last saved: ' + new Date(data.updatedAt).toLocaleString();
-      else if (updEl && data.hasCredentials) updEl.textContent = 'Credentials stored in database';
-    } catch {}
-  }
-  async function triggerAutoSession(profileKey, card) {
-    const btn = card.querySelector('.auto-session-btn');
-    const orig = btn.textContent;
-    btn.textContent = '⏳ Logging in...';
-    btn.disabled = true;
-    try {
-      const res = await fetch('/api/auto-session', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({profile: profileKey})});
-      const data = await res.json();
-      if (data.success) {
-        showToast(data.message || 'Session ID saved!', 'ok');
-        loadCredentialsIntoCard(profileKey, card);
-      } else {
-        showToast(data.message || 'Auto-login failed', 'err');
-      }
-    } catch { showToast('Auto-login request failed', 'err'); }
-    btn.textContent = orig;
-    btn.disabled = false;
-  }
   async function triggerRetryFailed(shortcode, profileKey) {
     try {
-      await fetch('/api/retry-failed',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({shortcode,profile:profileKey})});
+      await fetch(BASE_URL + '/api/retry-failed',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({shortcode,profile:profileKey})});
       showToast('Retrying reel #' + shortcode);
       fetchDashboardData();
     } catch { showToast('Retry failed','err'); }
@@ -1226,7 +1362,7 @@
   async function triggerRemoveQueue(shortcode, profileKey) {
     if (!confirm('Remove reel #' + shortcode + ' from queue?')) return;
     try {
-      await fetch('/api/remove-queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({shortcode,profile:profileKey})});
+      await fetch(BASE_URL + '/api/remove-queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({shortcode,profile:profileKey})});
       showToast('Reel #' + shortcode + ' removed','warn');
       fetchDashboardData();
     } catch { showToast('Remove failed','err'); }
@@ -1235,7 +1371,7 @@
     const pKey = (focusedChannel !== 'all' ? focusedChannel : null) || 'codeorcap';
     showToast('Starting queue for ' + pKey + '...');
     try {
-      const res = await fetch('/api/force-start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({profile:pKey})});
+      const res = await fetch(BASE_URL + '/api/force-start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({profile:pKey})});
       const data = await res.json();
       showToast(data.message || '⚡ Queue force-started!', data.success===false?'warn':'ok');
       setTimeout(fetchDashboardData, 1500);
@@ -1245,7 +1381,7 @@
     const pKey = (focusedChannel !== 'all' ? focusedChannel : null) || 'codeorcap';
     showToast('Restarting queue for ' + pKey + '...');
     try {
-      const res = await fetch('/api/restart-queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({profile:pKey})});
+      const res = await fetch(BASE_URL + '/api/restart-queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({profile:pKey})});
       const data = await res.json();
       showToast(data.message || '🔄 Queue restarted!');
       setTimeout(fetchDashboardData, 1500);
@@ -1299,15 +1435,469 @@
     if (channelsContainer) channelsContainer.style.display = (mode !== 'hashtags') ? 'block' : 'none';
   }
 
-  function connectSSE() {
-    const es=new EventSource('/logs?stream=true');
-    es.onmessage=e=>appendLogLine(e.data);
-    es.onerror=()=>{ es.close(); setTimeout(connectSSE,3000); };
+  /* ════════════════════════════════════════════════════════════════════════
+     ── REAL-TIME PIPELINE STEP ENGINE ──────────────────────────────────────
+     Tracks which of the 6 steps is currently active by scanning SSE log lines.
+     Each step card gets: real-time animated percentage progress bar + timer + badges.
+  ════════════════════════════════════════════════════════════════════════ */
+
+  const STEP_CONFIG = [
+    {
+      n: 1, label: 'Fetch',
+      estSec: 8,
+      startKw: ['downloading content', 'auto-publishing reel', 'interactive manual ingest triggered', 'manual inject queued', 'using puppeteer to retrieve', 'attempting download'],
+      doneKw:  ['video downloaded →', 'video downloaded', 'instagram frame extracted', 'original post caption captured'],
+      failKw:  ['failed to download content', 'failed to download via puppeteer', 'downloadreel failed'],
+      stuckMs: 5 * 60 * 1000,
+    },
+    {
+      n: 2, label: 'AI Vision',
+      estSec: 15,
+      startKw: ['running unified ai vision', 'generating metadata via ai vision', 'attempting text-only ai metadata', 'including original reel caption as prompt context'],
+      doneKw:  ['unified ai vision completed', 'ai recommended settings', 'metadata generated', 'viral metadata generated', 'using hardcoded template metadata'],
+      failKw:  [],
+      stuckMs: 10 * 60 * 1000,
+    },
+    {
+      n: 3, label: 'Captions',
+      estSec: 6,
+      startKw: ['rendering animated text layers', 'skipping remotion rendering', 'burned timed captions', 'overlaid'],
+      doneKw:  ['burned timed captions onto video', 'skipping remotion rendering as per user request', 'detected raw video duration'],
+      failKw:  ['remotion render failed'],
+      stuckMs: 8 * 60 * 1000,
+    },
+    {
+      n: 4, label: 'Audio',
+      estSec: 6,
+      startKw: ['mixing background music', 'mixing background music + voiceover', 'mixing audio'],
+      doneKw:  ['compilation complete', 'sending for manual review', 'manual review sent'],
+      failKw:  ['audio mix failed'],
+      stuckMs: 5 * 60 * 1000,
+    },
+    {
+      n: 5, label: 'Render',
+      estSec: 18,
+      startKw: ['sending for manual review', 'manual review sent', 'review timeout', 'compilation complete'],
+      doneKw:  ['review timeout', 'auto-publishing', 'upload %', 'starting youtube', 'starting instagram', 'starting facebook', 'starting reel upload', 'uploading video binary'],
+      failKw:  ['upload cancelled by user'],
+      stuckMs: 20 * 60 * 1000,
+    },
+    {
+      n: 6, label: 'Publish',
+      estSec: 25,
+      startKw: ['upload', 'starting youtube', 'starting instagram reel upload', 'starting facebook', 'uploading video binary'],
+      doneKw:  ['✓ all uploads complete', 'all uploads complete', 'marked published'],
+      failKw:  ['all upload attempts failed'],
+      stuckMs: 15 * 60 * 1000,
+    },
+  ];
+
+  const stepState = {}; // { 1: { status:'idle'|'active'|'done'|'failed', startMs, doneMs, detail, explicitPct } }
+  const stepProgress = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
+  const publishedLinks = { youtube: '', instagram: '', facebook: '' };
+  let currentActiveShortcode = '';
+  for (let i = 1; i <= 6; i++) stepState[i] = { status: 'idle', startMs: 0, doneMs: 0, detail: '', explicitPct: 0 };
+  let elapsedTimerHandle = null;
+  let stuckWatcherHandle = null;
+
+  function fmtElapsed(ms) {
+    const s = Math.floor(ms / 1000);
+    if (s < 60) return s + 's';
+    return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
   }
+
+  function computeStepProgressPct(n) {
+    if (stepState[n].explicitPct) return stepState[n].explicitPct;
+    if (stepState[n].status === 'done') return 100;
+    if (stepState[n].status !== 'active' || !stepState[n].startMs) return 0;
+    const elapsedSec = (Date.now() - stepState[n].startMs) / 1000;
+    const estSec = STEP_CONFIG[n - 1]?.estSec || 15;
+    // Smooth dynamic curve that climbs fast and asymptotically approaches ~95%
+    const pct = Math.min(95, Math.round(100 * (1 - Math.exp(-elapsedSec / (estSec * 0.65)))));
+    return Math.max(5, pct);
+  }
+
+  function setStepState(n, status, detail, explicitPct) {
+    const card = document.getElementById('step-' + n);
+    const detailEl = document.getElementById('step-detail-' + n);
+    const fillEl = document.getElementById('step-bar-fill-' + n);
+    const sweepEl = document.getElementById('step-bar-sweep-' + n);
+    const metricEl = document.getElementById('step-metric-' + n);
+    if (!card) return;
+
+    const prev = stepState[n];
+    stepState[n].status = status;
+    if (detail) stepState[n].detail = detail;
+    if (typeof explicitPct === 'number') stepState[n].explicitPct = explicitPct;
+
+    card.classList.remove('step-idle', 'step-active', 'step-done', 'step-failed');
+
+    if (status === 'active') {
+      if (!prev.startMs || prev.status !== 'active') stepState[n].startMs = Date.now();
+      card.classList.add('step-active');
+      const pct = computeStepProgressPct(n);
+      if (fillEl) { fillEl.style.width = pct + '%'; fillEl.style.background = 'var(--primary)'; }
+      if (sweepEl) sweepEl.style.display = '';
+      if (detailEl) { detailEl.style.color = 'var(--primary)'; detailEl.textContent = stepState[n].detail || 'Processing…'; }
+      const elapsed = Date.now() - stepState[n].startMs;
+      if (metricEl) { metricEl.className = 'step-elapsed'; metricEl.textContent = `${pct}% (${fmtElapsed(elapsed)})`; }
+      const badge = document.getElementById('stepper-status-badge');
+      if (badge) { badge.className = 'status-badge status-warning'; badge.textContent = '⚡ Step ' + n + ' Running'; }
+    } else if (status === 'done') {
+      stepState[n].doneMs = Date.now();
+      card.classList.add('step-done');
+      const took = fmtElapsed(stepState[n].doneMs - (stepState[n].startMs || stepState[n].doneMs));
+      if (fillEl) { fillEl.style.width = '100%'; fillEl.style.background = 'var(--success)'; }
+      if (sweepEl) sweepEl.style.display = 'none';
+      if (detailEl) { detailEl.style.color = 'var(--success)'; detailEl.textContent = stepState[n].detail || 'Done'; }
+      if (metricEl) { metricEl.className = 'step-done-elapsed'; metricEl.textContent = '✓ 100% (' + took + ')'; }
+    } else if (status === 'failed') {
+      card.classList.add('step-failed');
+      if (fillEl) { fillEl.style.width = '100%'; fillEl.style.background = 'var(--danger)'; }
+      if (sweepEl) sweepEl.style.display = 'none';
+      if (detailEl) { detailEl.style.color = 'var(--danger)'; detailEl.textContent = stepState[n].detail || 'Failed'; }
+      if (metricEl) { metricEl.className = 'step-idle-metric'; metricEl.style.color = 'var(--danger)'; metricEl.textContent = '✗ Failed'; }
+      const badge = document.getElementById('stepper-status-badge');
+      if (badge) { badge.className = 'status-badge status-failed'; badge.textContent = '✗ Step ' + n + ' Failed'; }
+    } else { // idle
+      card.classList.add('step-idle');
+      if (fillEl) { fillEl.style.width = '0%'; fillEl.style.background = 'var(--primary)'; }
+      if (sweepEl) sweepEl.style.display = 'none';
+      if (detailEl) { detailEl.style.color = 'var(--text-muted)'; detailEl.textContent = 'Waiting…'; }
+      if (metricEl) { metricEl.className = 'step-idle-metric'; metricEl.style.color = ''; metricEl.textContent = '—'; }
+    }
+  }
+
+  function startElapsedTicker() {
+    if (elapsedTimerHandle) return;
+    elapsedTimerHandle = setInterval(() => {
+      for (let i = 1; i <= 6; i++) {
+        if (stepState[i].status === 'active' && stepState[i].startMs) {
+          const elapsed = Date.now() - stepState[i].startMs;
+          const pct = computeStepProgressPct(i);
+          const fillEl = document.getElementById('step-bar-fill-' + i);
+          const metricEl = document.getElementById('step-metric-' + i);
+          if (fillEl) fillEl.style.width = pct + '%';
+          if (metricEl) metricEl.textContent = `${pct}% (${fmtElapsed(elapsed)})`;
+        }
+      }
+    }, 600);
+  }
+
+  function resetAllSteps() {
+    if (elapsedTimerHandle) { clearInterval(elapsedTimerHandle); elapsedTimerHandle = null; }
+    if (stuckWatcherHandle) { clearInterval(stuckWatcherHandle); stuckWatcherHandle = null; }
+    for (let i = 1; i <= 6; i++) {
+      stepState[i] = { status: 'idle', startMs: 0, doneMs: 0, detail: '', explicitPct: 0 };
+      stepProgress[i] = 0;
+      setStepState(i, 'idle');
+    }
+    publishedLinks.youtube = '';
+    publishedLinks.instagram = '';
+    publishedLinks.facebook = '';
+    currentActiveShortcode = '';
+
+    const badge = document.getElementById('stepper-status-badge');
+    if (badge) { badge.className = 'status-badge status-published'; badge.textContent = 'System Ready'; }
+    const src = document.getElementById('source-preview-card');
+    const out = document.getElementById('output-preview-card');
+    const pubContainer = document.getElementById('published-links-container');
+    const pubRow = document.getElementById('published-links-row');
+    if (src) src.style.display = 'none';
+    if (out) out.style.display = 'none';
+    if (pubContainer) pubContainer.style.display = 'none';
+    if (pubRow) pubRow.innerHTML = '';
+  }
+
+  function setPipelineSource(url, shortcode) {
+    const src = document.getElementById('source-preview-card');
+    const scEl = document.getElementById('source-shortcode-label');
+    const urlEl = document.getElementById('source-url-label');
+    const linkEl = document.getElementById('source-open-link');
+    const thumbImg = document.getElementById('source-thumb-img');
+    const thumbFallback = document.getElementById('source-thumb-fallback');
+    if (!src) return;
+    currentActiveShortcode = shortcode || '';
+    if (scEl) scEl.textContent = shortcode ? '#' + shortcode : (url || '—');
+    if (urlEl) urlEl.textContent = url || '';
+    if (linkEl) linkEl.href = url || '#';
+
+    // Load source thumbnail
+    if (thumbImg) {
+      thumbImg.style.display = 'none';
+      if (thumbFallback) thumbFallback.style.display = 'flex';
+      if (shortcode) {
+        // Try backend frame endpoint first
+        thumbImg.src = BASE_URL + '/api/source-frame?shortcode=' + encodeURIComponent(shortcode) + '&t=' + Date.now();
+      }
+    }
+    src.style.display = '';
+  }
+
+  function updateSourceThumbnail() {
+    const thumbImg = document.getElementById('source-thumb-img');
+    if (thumbImg && currentActiveShortcode) {
+      thumbImg.src = BASE_URL + '/api/source-frame?shortcode=' + encodeURIComponent(currentActiveShortcode) + '&t=' + Date.now();
+    }
+  }
+
+  function setPipelineOutput(videoUrl) {
+    const out = document.getElementById('output-preview-card');
+    const vid = document.getElementById('output-video-player');
+    if (!out || !vid) return;
+    const url = videoUrl || (BASE_URL + '/api/video-preview?t=' + Date.now());
+    if (vid.src !== url) {
+      vid.src = url;
+      vid.load();
+    }
+    out.style.display = '';
+    const badge = document.getElementById('stepper-status-badge');
+    if (badge) { badge.className = 'status-badge status-published'; badge.textContent = '🎬 Preview Ready'; }
+  }
+
+  function addPublishedLink(platform, url) {
+    if (!url || publishedLinks[platform] === url) return;
+    publishedLinks[platform] = url;
+    const container = document.getElementById('published-links-container');
+    const row = document.getElementById('published-links-row');
+    if (!container || !row) return;
+    container.style.display = 'block';
+
+    const badges = {
+      youtube:   { label: '▶ YouTube Shorts', color: '#ff4444', bg: 'rgba(255,0,0,0.15)', border: 'rgba(255,0,0,0.35)' },
+      instagram: { label: '📷 Instagram Reel', color: '#e1306c', bg: 'rgba(225,48,108,0.15)', border: 'rgba(225,48,108,0.35)' },
+      facebook:  { label: '📘 Facebook Reel',  color: '#1877f2', bg: 'rgba(24,119,242,0.15)', border: 'rgba(24,119,242,0.35)' },
+    };
+    const b = badges[platform] || { label: platform.toUpperCase(), color: '#58a6ff', bg: 'rgba(88,166,255,.15)', border: 'rgba(88,166,255,.35)' };
+
+    // Check if badge element already exists
+    let btn = document.getElementById('pub-badge-' + platform);
+    if (!btn) {
+      btn = document.createElement('a');
+      btn.id = 'pub-badge-' + platform;
+      btn.target = '_blank';
+      btn.style.cssText = `color:${b.color};background:${b.bg};border:1px solid ${b.border};text-decoration:none;font-size:11px;font-weight:700;padding:5px 10px;border-radius:6px;display:inline-flex;align-items:center;gap:5px;transition:transform .15s;`;
+      btn.onmouseenter = () => btn.style.transform = 'scale(1.04)';
+      btn.onmouseleave = () => btn.style.transform = 'scale(1)';
+      row.appendChild(btn);
+    }
+    btn.href = url;
+    btn.innerHTML = `${b.label} <span style="font-size:9px;opacity:0.8;">↗</span>`;
+  }
+
+  /* ── Log line → step detection ── */
+  function parseLogForStepUpdate(msg, label, level) {
+    const m = msg.toLowerCase();
+    const lbl = (label || '').toLowerCase();
+    const lvl = (level || 'info').toLowerCase();
+
+    // ── Ignore unrelated background ChannelWatcher channel discovery/scraping logs ──
+    if (lbl === 'channelwatcher') {
+      if (
+        m.includes('failed to fetch reels from @') ||
+        m.includes('failed to list reels for') ||
+        m.includes('hashtag search failed') ||
+        m.includes('excluding reel') ||
+        m.includes('no unseen reels from @')
+      ) {
+        return;
+      }
+    }
+
+    // ── Trigger: new reel firing → reset stepper and show source card ────────
+    if (m.includes('manual inject queued') || m.includes('auto-publishing reel') || m.includes('interactive manual ingest triggered')) {
+      resetAllSteps();
+      const scMatch = msg.match(/#([\w-]{5,20})/) || msg.match(/@[\w.]+\/([\w-]{5,20})/);
+      const urlMatch = msg.match(/(https?:\/\/[^\s\)]+)/i);
+      const sc = scMatch ? scMatch[1] : '';
+      const url = urlMatch ? urlMatch[1] : (sc ? `https://www.instagram.com/reel/${sc}/` : '');
+      if (sc || url) setPipelineSource(url, sc);
+      setStepState(1, 'active', 'Fetching reel…');
+      startElapsedTicker();
+      startStuckWatcher();
+      return;
+    }
+
+    // ── Catch "Downloading content: URL" ──────────────────────────────────────
+    if (m.includes('downloading content:') && (lbl === 'downloader' || lbl === 'instagram')) {
+      const urlMatch = msg.match(/(https?:\/\/[^\s]+)/i);
+      if (urlMatch) {
+        const url = urlMatch[1];
+        const scMatch = url.match(/\/reel\/([\w-]{5,20})/) || url.match(/\/p\/([\w-]{5,20})/);
+        setPipelineSource(url, scMatch ? scMatch[1] : '');
+      }
+      if (stepState[1].status === 'idle') {
+        setStepState(1, 'active', 'Downloading…');
+        startElapsedTicker();
+        startStuckWatcher();
+      }
+      return;
+    }
+
+    // ── Frame ready or downloaded → update source thumbnail ──────────────────
+    if (m.includes('instagram frame extracted') || m.includes('video downloaded')) {
+      updateSourceThumbnail();
+    }
+
+    // ── Render complete / compilation complete → show output video preview ───
+    if (m.includes('compilation complete') || m.includes('video optimized successfully') || m.includes('output ready')) {
+      setPipelineOutput();
+      setStepState(5, 'done', 'Video rendered');
+    }
+
+    // ── Platform upload percentage (e.g. YouTubeService: Upload 84%) ─────────
+    const upMatch = msg.match(/upload\s+(\d+)%/i);
+    if (upMatch) {
+      const pct = parseInt(upMatch[1], 10);
+      setStepState(6, 'active', `Uploading to YouTube (${pct}%)`, pct);
+    }
+
+    // ── Capture Published Platform URLs ──────────────────────────────────────
+    // YouTube
+    const ytMatch = msg.match(/(https?:\/\/(?:www\.)?(?:youtube\.com\/shorts\/|youtu\.be\/)[\w-]+)/i);
+    if (ytMatch) addPublishedLink('youtube', ytMatch[1]);
+
+    // Instagram
+    const igMatch = msg.match(/(https?:\/\/(?:www\.)?instagram\.com\/reel\/[\w-]+)/i);
+    if (igMatch && !msg.includes('downloading content')) addPublishedLink('instagram', igMatch[1]);
+
+    // Facebook
+    const fbMatch = msg.match(/(https?:\/\/(?:www\.)?facebook\.com\/(?:watch\/\?v=[\w]+|[\w.]+\/videos\/[\w]+))/i);
+    if (fbMatch) addPublishedLink('facebook', fbMatch[1]);
+
+    // ── Non-fatal warnings & fallbacks (do NOT fail step!) ────────────────────
+    const isNonFatal =
+      lvl === 'warn' ||
+      m.includes('falling back') ||
+      m.includes('continuing without') ||
+      m.includes('fallback') ||
+      m.includes('retrying') ||
+      m.includes('skipping');
+
+    if (isNonFatal) {
+      // Find currently active step and update detail text without marking failed
+      for (let i = 1; i <= 6; i++) {
+        if (stepState[i].status === 'active') {
+          const snippet = msg.length > 42 ? msg.slice(0, 40) + '…' : msg;
+          stepState[i].detail = snippet;
+          const detailEl = document.getElementById('step-detail-' + i);
+          if (detailEl) detailEl.textContent = snippet;
+          break;
+        }
+      }
+      return;
+    }
+
+    // ── Walk steps for start / done / fail transitions ────────────────────────
+    for (const cfg of STEP_CONFIG) {
+      const n = cfg.n;
+      const cur = stepState[n].status;
+
+      // FAIL keywords (only on active step and only for fatal errors)
+      if (cur === 'active' && cfg.failKw && cfg.failKw.length > 0 && cfg.failKw.some(k => m.includes(k))) {
+        const snippet = msg.length > 45 ? msg.slice(0, 43) + '…' : msg;
+        setStepState(n, 'failed', snippet);
+        const badge = document.getElementById('stepper-status-badge');
+        if (badge) { badge.className = 'status-badge status-failed'; badge.textContent = '✗ Step ' + n + ': ' + cfg.label + ' Failed'; }
+        return;
+      }
+
+      // DONE keywords
+      if (cur === 'active' && cfg.doneKw.some(k => m.includes(k))) {
+        const snippet = msg.length > 45 ? msg.slice(0, 43) + '…' : msg;
+        setStepState(n, 'done', snippet);
+        return;
+      }
+
+      // START keywords
+      if (cur === 'idle' && cfg.startKw.some(k => m.includes(k))) {
+        for (let p = 1; p < n; p++) {
+          if (stepState[p].status === 'idle' || stepState[p].status === 'active') {
+            setStepState(p, 'done', 'Done');
+          }
+        }
+        const snippet = msg.length > 45 ? msg.slice(0, 43) + '…' : msg;
+        setStepState(n, 'active', snippet);
+        startElapsedTicker();
+        startStuckWatcher();
+        return;
+      }
+
+      // UPDATE active step detail text
+      if (cur === 'active' && cfg.startKw.some(k => m.includes(k))) {
+        const detailEl = document.getElementById('step-detail-' + n);
+        if (detailEl && msg.length > 3) {
+          const snippet = msg.length > 45 ? msg.slice(0, 43) + '…' : msg;
+          stepState[n].detail = snippet;
+          detailEl.textContent = snippet;
+        }
+        return;
+      }
+    }
+
+    // ── Fatal Pipeline Error on active step (level === 'error') ──────────────
+    if (lvl === 'error' && (lbl === 'directuploader' || lbl === 'pipeline')) {
+      for (let i = 1; i <= 6; i++) {
+        if (stepState[i].status === 'active') {
+          const snippet = msg.length > 45 ? msg.slice(0, 43) + '…' : msg;
+          setStepState(i, 'failed', snippet);
+          const badge = document.getElementById('stepper-status-badge');
+          if (badge) { badge.className = 'status-badge status-failed'; badge.textContent = '✗ Step ' + i + ' Error'; }
+          break;
+        }
+      }
+    }
+
+    // ── All uploads complete → close out pipeline ─────────────────────────────
+    if (m.includes('all uploads complete') || m.includes('marked published')) {
+      for (let i = 1; i <= 6; i++) {
+        if (stepState[i].status !== 'done' && stepState[i].status !== 'failed') {
+          setStepState(i, 'done', i === 6 ? 'Published!' : 'Done');
+        }
+      }
+      setPipelineOutput();
+      const badge = document.getElementById('stepper-status-badge');
+      if (badge) { badge.className = 'status-badge status-published'; badge.textContent = '✓ All Platforms Live!'; }
+    }
+  }
+
+  // ── Stuck step watcher: auto-fail a step if it stays active too long ────────
+  function startStuckWatcher() {
+    if (stuckWatcherHandle) return;
+    stuckWatcherHandle = setInterval(() => {
+      const now = Date.now();
+      for (const cfg of STEP_CONFIG) {
+        const n = cfg.n;
+        if (stepState[n].status === 'active' && stepState[n].startMs) {
+          const elapsed = now - stepState[n].startMs;
+          if (elapsed > cfg.stuckMs) {
+            setStepState(n, 'failed', `Stuck >${Math.round(cfg.stuckMs / 60000)}m — no response`);
+            const badge = document.getElementById('stepper-status-badge');
+            if (badge) { badge.className = 'status-badge status-failed'; badge.textContent = '✗ Step ' + n + ' Timed Out'; }
+          }
+        }
+      }
+      const allSettled = Object.values(stepState).every((s) => s.status !== 'active');
+      if (allSettled) { clearInterval(stuckWatcherHandle); stuckWatcherHandle = null; }
+    }, 5000);
+  }
+
+  function connectSSE() {
+    const es = new EventSource(BASE_URL + '/logs?stream=true');
+    es.onmessage = (e) => {
+      appendLogLine(e.data);
+      try {
+        const o = JSON.parse(e.data);
+        parseLogForStepUpdate(o.message || '', o.label || '', o.level || 'info');
+      } catch {}
+    };
+    es.onerror = () => { es.close(); setTimeout(connectSSE, 3000); };
+  }
+
 
   async function fetchPendingReviews() {
     try {
-      const res = await fetch('/api/pending-reviews');
+      const res = await fetch(BASE_URL + '/api/pending-reviews');
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
       renderPendingReviews(data.reviews || []);
@@ -1391,7 +1981,7 @@
 
   async function actionReview(id, code) {
     try {
-      const res = await fetch('/api/action-review', {
+      const res = await fetch(BASE_URL + '/api/action-review', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, code })
@@ -1414,6 +2004,9 @@
   fetchDashboardData();
   fetchPendingReviews();
   connectSSE();
+  if (window.location.pathname === '/logs' || window.location.pathname.startsWith('/logs/')) {
+    switchTab('logs');
+  }
   setInterval(fetchDashboardData, 10000);
   setInterval(fetchPendingReviews, 3000);
 </script>

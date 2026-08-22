@@ -284,10 +284,10 @@ function loadWatchConfig(prefix?: string): WatchConfig {
     Math.max(0, parseInt(env("WATCH_VIRAL_THRESHOLD") || "50", 10)),
   );
 
-  const outroVersionRaw = (env("WATCH_OUTRO_VERSION") || "v1").toLowerCase();
+  const outroVersionRaw = (env("WATCH_OUTRO_VERSION") || "v2").toLowerCase();
   const outroVersion = (["v1", "v2"].includes(outroVersionRaw)
     ? outroVersionRaw
-    : "v1") as "v1" | "v2";
+    : "v2") as "v1" | "v2";
 
   const primaryAdminChatId = process.env.WATCH_ADMIN_CHAT_ID ? parseInt(process.env.WATCH_ADMIN_CHAT_ID, 10) : 0;
   const adminChatId = parseInt(env("WATCH_ADMIN_CHAT_ID") || "0", 10) || primaryAdminChatId;

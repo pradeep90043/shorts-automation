@@ -922,13 +922,10 @@ Use this to write a voiceover script that matches the content arc of the video. 
       }
     }
 
-    const hasTranscriptWords = !!context.transcript?.words?.length;
     context.aiRecommendedSettings = {
-      voiceover: rec?.voiceover ?? !!context.metadata?.voiceoverScript,
-      originalAudio: rec?.originalAudio ?? !!context.hasOriginalAudio,
-      captions:
-        rec?.captions ??
-        (hasTranscriptWords || !!context.metadata?.voiceoverScript),
+      voiceover: rec?.voiceover ?? true,
+      originalAudio: rec?.originalAudio ?? false,
+      captions: rec?.captions ?? true,
       cropTopPct: calculatedCropTop,
       cropBottomPct: calculatedCropBottom,
       sticker: true, // always ON by default for all profiles
@@ -1768,14 +1765,13 @@ ${this.theme.analysisRules}`;
 
     if (!context.reviewSettings) {
       context.reviewSettings = {
-        ...(context.aiRecommendedSettings ?? {
-          voiceover: !!context.metadata?.voiceoverScript,
-          originalAudio: !!context.hasOriginalAudio,
-          captions: false,
-          cropTopPct: 0,
-          cropBottomPct: 0,
-          sticker: false,
-        }),
+        voiceover: true,
+        originalAudio: false,
+        captions: true,
+        cropTopPct: 0,
+        cropBottomPct: 0,
+        sticker: true,
+        ...(context.aiRecommendedSettings ?? {}),
       };
     }
 
@@ -4579,6 +4575,25 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         scoreFadeOutStart = (end - 0.40).toFixed(2);
       }
 
+      // Cross-platform font path resolution for drawtext filters
+      const fontCandidates = [
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/Library/Fonts/Arial Bold.ttf",
+        "/Library/Fonts/Arial.ttf",
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "C:/Windows/Fonts/arialbd.ttf",
+        "C:/Windows/Fonts/arial.ttf",
+      ];
+      let fontFile = "'Arial'";
+      for (const fc of fontCandidates) {
+        if (fs.existsSync(fc)) {
+          fontFile = `'${fc}'`;
+          break;
+        }
+      }
+
       // 3 — Render score PNG (CodeOrCap only)
       const scorePngPath = path.join(tempDir, "verdict_score.png");
       if (cfg.scoreEnabled) await this.renderScorePng(score, scorePngPath);
@@ -4586,10 +4601,6 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       const verdictClipPath = path.join(tempDir, "verdict_clip.mp4");
 
       if (useAvatarBg) {
-        // Avatar mode: original audio from clip + optional score PNG + verdict drawtext
-        // Font path escaped for FFmpeg filter parser (single-quotes bypass : parsing)
-        const fontFile = `'C:/Windows/Fonts/arialbd.ttf'`;
-
         let filterComplex: string;
         let mapArgs: string;
         let extraInputs = "";
@@ -4704,50 +4715,50 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       const transitionTtsPath = path.join(tempDir, "transition_tts.mp3");
       const transitionBgFramePath = path.join(tempDir, "transition_bg_frame.png");
       const transitionTextPath = path.join(tempDir, "transition_text.txt");
-      const hasTransition = profileKey === "codeorcap" && this.profile.watch?.outroVersion === "v2";
+      const hasTransition = profileKey === "codeorcap" && (this.profile.watch?.outroVersion || "v2") === "v2";
 
       if (hasTransition) {
         pipelineLogger.info("Generating V2 transition clip explaining how it works...", "DirectUploader");
         
-        const rawExplanation = context.metadata?.howItWorks;
-        const speechScript = rawExplanation 
-          ? `Let us check how is it working. ${rawExplanation}`
-          : "Let us check how is it working.";
+        const workflowData = this.deriveTranscriptionWorkflow(context);
+        const rawExplanation = workflowData.explanation;
+        const speechScript = `Let us check how is it working. ${rawExplanation}`;
 
-        let ttsDuration = 2.0;
+        let ttsDuration = 3.5;
         try {
           ttsDuration = await this.tts.generateVoiceover(speechScript, transitionTtsPath, "codeorcap");
         } catch (err) {
           pipelineLogger.warn(`Transition TTS failed: ${err instanceof Error ? err.message : err}. Using default duration.`, "DirectUploader");
         }
 
-        // Generate the background diagram image using Puppeteer if Mermaid code is present
-        const mermaidCode = context.metadata?.diagramWorkflow;
+        // Generate the background diagram image using Puppeteer
         let diagramRendered = false;
-        if (mermaidCode && mermaidCode.trim().length > 10) {
-          try {
-            pipelineLogger.info("Attempting to render Mermaid workflow diagram...", "DirectUploader");
-            const wrapText = (text: string, maxLineLength = 32): string => {
-              const words = text.split(/\s+/);
-              const lines: string[] = [];
-              let currentLine = "";
-              for (const word of words) {
-                if ((currentLine + " " + word).trim().length <= maxLineLength) {
-                  currentLine = currentLine ? currentLine + " " + word : word;
-                } else {
-                  if (currentLine) lines.push(currentLine);
-                  currentLine = word;
-                }
+        try {
+          pipelineLogger.info("Attempting to render workflow diagram...", "DirectUploader");
+          const wrapText = (text: string, maxLineLength = 36): string => {
+            const words = text.split(/\s+/);
+            const lines: string[] = [];
+            let currentLine = "";
+            for (const word of words) {
+              if ((currentLine + " " + word).trim().length <= maxLineLength) {
+                currentLine = currentLine ? currentLine + " " + word : word;
+              } else {
+                if (currentLine) lines.push(currentLine);
+                currentLine = word;
               }
-              if (currentLine) lines.push(currentLine);
-              return lines.join("<br>");
-            };
-            const formattedExplanation = rawExplanation ? wrapText(rawExplanation, 32) : "Let us check how is it working";
-            const diagramTitle = context.metadata?.diagramTitle || "Execution Workflow";
-            diagramRendered = await this.renderWorkflowDiagram(mermaidCode, diagramTitle, formattedExplanation, transitionBgFramePath);
-          } catch (diagramErr) {
-            pipelineLogger.warn(`Mermaid render failed: ${diagramErr instanceof Error ? diagramErr.message : diagramErr}. Falling back to blurred frame.`, "DirectUploader");
-          }
+            }
+            if (currentLine) lines.push(currentLine);
+            return lines.join("<br>");
+          };
+          const formattedExplanation = wrapText(rawExplanation, 36);
+          diagramRendered = await this.renderWorkflowDiagram(
+            workflowData.mermaidCode,
+            workflowData.diagramTitle,
+            formattedExplanation,
+            transitionBgFramePath,
+          );
+        } catch (diagramErr) {
+          pipelineLogger.warn(`Workflow diagram render failed: ${diagramErr instanceof Error ? diagramErr.message : diagramErr}. Falling back to blurred frame.`, "DirectUploader");
         }
 
         // Fallback: If no diagram was generated/rendered, capture the last frame of the main video and blur it
@@ -4790,7 +4801,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
           ? `[0:v]copy[v];[1:a]volume=3.5[a]`
           : [
               `[0:v]boxblur=20:20,colorlevels=romax=0.35:gomax=0.35:bomax=0.35[bg]`,
-              `[bg]drawtext=textfile='${escapedTextFilePath}':fontsize=${fontSize}:fontcolor=white:x=(w-tw)/2:y=(h-th)/2:shadowcolor=black:shadowx=3:shadowy=3[v]`,
+              `[bg]drawtext=fontfile=${fontFile}:textfile='${escapedTextFilePath}':fontsize=${fontSize}:fontcolor=white:x=(w-tw)/2:y=(h-th)/2:shadowcolor=black:shadowx=3:shadowy=3[v]`,
               `[1:a]volume=3.5[a]`
             ].join(";");
 
@@ -4888,6 +4899,52 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     }
   }
 
+  /**
+   * Derives a structured explanation and a clean Mermaid flowchart from
+   * reel transcription, caption, and AI metadata to power the V2 transition clip.
+   */
+  private deriveTranscriptionWorkflow(context: PipelineContext): {
+    explanation: string;
+    diagramTitle: string;
+    mermaidCode: string;
+  } {
+    const rawExplanation = context.metadata?.howItWorks;
+    const diagramTitle = context.metadata?.diagramTitle || "Execution Workflow";
+    let mermaidCode = (context.metadata?.diagramWorkflow || "")
+      .replace(/```(?:mermaid)?/gi, "")
+      .trim();
+
+    let explanation = rawExplanation?.trim() || "";
+
+    if (!explanation) {
+      // Derive explanation from transcription, caption or title
+      const textSource =
+        context.transcript?.text ||
+        context.captionMetadata?.description ||
+        context.metadata?.title ||
+        "Code execution and logic flow.";
+      const cleanText = textSource.replace(/[\n\r]+/g, " ").trim();
+      explanation =
+        cleanText.length > 20
+          ? cleanText.slice(0, 160) + (cleanText.length > 160 ? "…" : "")
+          : "1. Parses the incoming request and parameters. 2. Executes asynchronous handler logic. 3. Returns the output response.";
+    }
+
+    if (!mermaidCode || !mermaidCode.includes("graph")) {
+      // Auto-generate a clean, valid 4-step flowchart
+      const titleClean = (context.metadata?.title || "Operation")
+        .replace(/["'<>]/g, "")
+        .slice(0, 24);
+      mermaidCode = `graph TD\n  A["📥 1. Receive Input: ${titleClean}"] --> B["⚡ 2. Execute Handler"]\n  B --> C["💾 3. State & Storage"]\n  C --> D["🚀 4. Output Response"]`;
+    }
+
+    return {
+      explanation,
+      diagramTitle,
+      mermaidCode,
+    };
+  }
+
   private async renderWorkflowDiagram(
     mermaidCode: string,
     diagramTitle: string,
@@ -4897,7 +4954,11 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     const W = 1080;
     const H = 1920;
 
-    let html = `<!DOCTYPE html>
+    const sanitizedMermaid = (mermaidCode || "")
+      .replace(/```(?:mermaid)?/gi, "")
+      .trim();
+
+    const html = `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
@@ -4907,135 +4968,124 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     body {
       width: ${W}px;
       height: ${H}px;
-      background: #0B0B0B;
-      font-family: Arial, sans-serif;
+      background: radial-gradient(circle at 50% 30%, #151b26 0%, #080a0f 100%);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       color: #fff;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      padding: 60px;
-      overflow: hidden;
-      position: relative;
-    }
-    
-    body::before {
-      content: '';
-      position: absolute;
-      inset: 0;
-      background-image: radial-gradient(circle, rgba(255,184,0,0.06) 1px, transparent 1px);
-      background-size: 32px 32px;
-      pointer-events: none;
-    }
-
-    .container {
-      width: 100%;
-      height: 100%;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: space-between;
-      border: 2px solid rgba(255,184,0,0.15);
-      border-radius: 20px;
-      background: rgba(13,13,13,0.9);
       padding: 60px 40px;
-      box-shadow: 0 0 50px rgba(0,0,0,0.8);
-      position: relative;
+      overflow: hidden;
     }
-
-    .container::before, .container::after {
-      content: '';
-      position: absolute;
-      width: 40px;
-      height: 40px;
-      border-color: #FFB800;
-      border-style: solid;
-    }
-    .container::before {
-      top: 15px; left: 15px;
-      border-width: 3px 0 0 3px;
-    }
-    .container::after {
-      bottom: 15px; right: 15px;
-      border-width: 0 3px 3px 0;
-    }
-
-    .title {
-      font-size: 42px;
-      font-weight: 800;
-      color: #FFB800;
+    .header-badge {
+      font-size: 24px;
+      font-weight: 700;
+      color: #58a6ff;
+      background: rgba(88,166,255,0.12);
+      border: 1px solid rgba(88,166,255,0.3);
+      padding: 8px 24px;
+      border-radius: 30px;
       text-transform: uppercase;
       letter-spacing: 2px;
-      text-align: center;
-      text-shadow: 0 0 20px rgba(255,184,0,0.3);
       margin-bottom: 20px;
     }
-
-    .mermaid-box {
+    .title {
+      font-size: 44px;
+      font-weight: 900;
+      color: #FFB800;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      text-align: center;
+      text-shadow: 0 0 30px rgba(255,184,0,0.4);
+      margin-bottom: 30px;
+      max-width: 90%;
+    }
+    .diagram-container {
+      width: 100%;
       flex: 1;
+      max-height: 960px;
+      background: rgba(18, 22, 34, 0.85);
+      border: 2px solid rgba(255, 184, 0, 0.25);
+      border-radius: 24px;
+      padding: 40px 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.7);
+    }
+    .mermaid {
       width: 100%;
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 20px;
-      overflow: hidden;
     }
-
     svg {
-      max-width: 90% !important;
-      max-height: 900px !important;
+      max-width: 100% !important;
+      max-height: 860px !important;
       height: auto !important;
     }
-
     .node rect, .node circle, .node polygon {
-      fill: #141414 !important;
-      stroke: #FFB800 !important;
-      stroke-width: 2px !important;
-    }
-    .node .label {
-      color: #fff !important;
-      font-family: Arial, sans-serif !important;
-      font-weight: bold !important;
-      font-size: 20px !important;
-    }
-    .edgePath .path {
+      fill: #1a2233 !important;
       stroke: #FFB800 !important;
       stroke-width: 3px !important;
+      rx: 12px !important;
+      ry: 12px !important;
     }
-    .edgeLabel rect {
-      fill: #0B0B0B !important;
+    .node .label {
+      color: #ffffff !important;
+      font-family: inherit !important;
+      font-weight: 800 !important;
+      font-size: 26px !important;
     }
-    .edgeLabel span {
-      color: #FF8A00 !important;
-      font-family: Arial, sans-serif !important;
-      font-size: 16px !important;
-      font-weight: bold !important;
+    .edgePath .path {
+      stroke: #58a6ff !important;
+      stroke-width: 4px !important;
     }
     .marker {
-      fill: #FFB800 !important;
+      fill: #58a6ff !important;
       stroke: none !important;
     }
-    
-    .footer {
-      font-size: 26px;
-      color: #ccc;
-      text-align: center;
-      margin-top: 30px;
-      font-style: italic;
-      line-height: 1.4;
-      max-width: 90%;
+    .footer-card {
+      margin-top: 35px;
+      background: rgba(13, 17, 23, 0.9);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 18px;
+      padding: 24px 32px;
+      max-width: 95%;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    }
+    .footer-label {
+      font-size: 20px;
+      font-weight: 800;
+      color: #3fb950;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .footer-text {
+      font-size: 28px;
+      color: #e6edf3;
+      text-align: left;
+      font-weight: 600;
+      line-height: 1.45;
     }
   </style>
 </head>
 <body>
-  <div class="container">
-    <div class="title">${diagramTitle}</div>
-    <div class="mermaid-box">
-      <pre class="mermaid">
-${mermaidCode}
-      </pre>
+  <div class="header-badge">💡 How It Works</div>
+  <div class="title">${diagramTitle}</div>
+  <div class="diagram-container">
+    <div class="mermaid">
+${sanitizedMermaid}
     </div>
-    <div class="footer">${explanationText}</div>
+  </div>
+  <div class="footer-card">
+    <div class="footer-label"><span>🔍</span> Logic Breakdown</div>
+    <div class="footer-text">${explanationText}</div>
   </div>
   <script>
     mermaid.initialize({
@@ -5043,11 +5093,11 @@ ${mermaidCode}
       startOnLoad: true,
       securityLevel: 'loose',
       themeVariables: {
-        background: '#141414',
-        primaryColor: '#141414',
+        background: '#1a2233',
+        primaryColor: '#1a2233',
         primaryTextColor: '#fff',
-        lineColor: '#FFB800',
-        transitionColor: '#FF8A00',
+        lineColor: '#58a6ff',
+        transitionColor: '#58a6ff',
       }
     });
   </script>
@@ -5070,9 +5120,9 @@ ${mermaidCode}
       try {
         const page = await browser.newPage();
         await page.setViewport({ width: W, height: H, deviceScaleFactor: 1 });
-        await page.setContent(html, { waitUntil: "networkidle2", timeout: 8000 });
-        await page.waitForSelector(".mermaid svg", { timeout: 3000 }).catch(() => {});
-        await new Promise((resolve) => setTimeout(resolve, 800));
+        await page.setContent(html, { waitUntil: "networkidle2", timeout: 10000 });
+        await page.waitForSelector(".mermaid svg", { timeout: 4000 }).catch(() => {});
+        await new Promise((resolve) => setTimeout(resolve, 600));
 
         const shot = await page.screenshot({
           type: "png",
@@ -5090,12 +5140,12 @@ ${mermaidCode}
       return await Promise.race([
         runWithTimeout(),
         new Promise<boolean>((_, reject) =>
-          setTimeout(() => reject(new Error("Mermaid rendering timed out after 15s")), 15000)
-        )
+          setTimeout(() => reject(new Error("Workflow diagram rendering timed out after 15s")), 15000),
+        ),
       ]);
     } catch (err) {
       pipelineLogger.error(
-        "Failed to render Mermaid diagram in Puppeteer",
+        "Failed to render workflow diagram in Puppeteer",
         err instanceof Error ? err : new Error(String(err)),
         "DirectUploader",
       );

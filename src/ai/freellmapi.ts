@@ -7,7 +7,11 @@ export class FreeLlmApiClient {
   private visionModel: string;
 
   constructor() {
-    this.baseUrl = config.ai.freellmapiUrl.replace(/\/$/, '');
+    let bUrl = (config.ai.freellmapiUrl || "http://localhost:3001").trim().replace(/\/$/, '');
+    if (!bUrl.startsWith('http://') && !bUrl.startsWith('https://')) {
+      bUrl = `http://${bUrl.includes(':') ? bUrl : `localhost:${bUrl}`}`;
+    }
+    this.baseUrl = bUrl;
     this.apiKey = config.ai.freellmapiKey;
     this.model = "auto";
     this.visionModel = "auto";
