@@ -99,6 +99,24 @@ async function bootstrap() {
   cleanupOldMedia();
   setInterval(cleanupOldMedia, 6 * 60 * 60 * 1000);
 
+  // 2c. Supabase free-tier keep-alive: run a lightweight query every 3 days
+  // so the project never goes idle for 7 days and never auto-pauses.
+  const KEEP_ALIVE_INTERVAL_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
+  const supabaseKeepAlive = async () => {
+    try {
+      const { getPool } = require("./utils/pgClient");
+      const pool = await getPool();
+      await pool.query("SELECT 1");
+      pipelineLogger.info("Supabase keep-alive ping sent successfully.", "SupabaseKeepAlive");
+    } catch (err) {
+      pipelineLogger.warn(
+        `Supabase keep-alive ping failed: ${err instanceof Error ? err.message : err}`,
+        "SupabaseKeepAlive"
+      );
+    }
+  };
+  setInterval(supabaseKeepAlive, KEEP_ALIVE_INTERVAL_MS);
+
   if (config.profiles.length === 0) {
     pipelineLogger.error(
       "No channel profiles configured. Set TELEGRAM_BOT_TOKEN (or <PREFIX>_TELEGRAM_BOT_TOKEN_LOCAL/_PROD) in .env.",
