@@ -5054,7 +5054,7 @@ ${mermaidCode}
 </body>
 </html>`;
 
-    try {
+    const runWithTimeout = async () => {
       const puppeteer = (await new Function("return import('puppeteer-core')")()).default;
       const browser = await puppeteer.launch({
         executablePath: config.binaries.chrome,
@@ -5070,7 +5070,7 @@ ${mermaidCode}
       try {
         const page = await browser.newPage();
         await page.setViewport({ width: W, height: H, deviceScaleFactor: 1 });
-        await page.setContent(html, { waitUntil: "networkidle0" });
+        await page.setContent(html, { waitUntil: "networkidle2", timeout: 8000 });
         await page.waitForSelector(".mermaid svg", { timeout: 3000 }).catch(() => {});
         await new Promise((resolve) => setTimeout(resolve, 800));
 
@@ -5082,10 +5082,23 @@ ${mermaidCode}
         await sharp(shot).toFile(outputPath);
         return true;
       } finally {
-        await browser.close();
+        await browser.close().catch(() => {});
       }
+    };
+
+    try {
+      return await Promise.race([
+        runWithTimeout(),
+        new Promise<boolean>((_, reject) =>
+          setTimeout(() => reject(new Error("Mermaid rendering timed out after 15s")), 15000)
+        )
+      ]);
     } catch (err) {
-      pipelineLogger.error("Failed to render Mermaid diagram in Puppeteer", err instanceof Error ? err : new Error(String(err)), "DirectUploader");
+      pipelineLogger.error(
+        "Failed to render Mermaid diagram in Puppeteer",
+        err instanceof Error ? err : new Error(String(err)),
+        "DirectUploader",
+      );
       return false;
     }
   }
