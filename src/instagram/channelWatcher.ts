@@ -729,6 +729,57 @@ export class ChannelWatcher {
     });
   }
 
+  public async triggerQueueProcess(): Promise<void> {
+    await this.store.load();
+    await this.processQueue().catch((err) => {
+      pipelineLogger.error(
+        `[${this.profile.brandName}] triggerQueueProcess failed`,
+        err,
+        "ChannelWatcher",
+      );
+    });
+  }
+
+  /**
+   * Injects a reel from the dashboard / API and immediately fires it,
+   * bypassing the scheduler and updating the store + logging live.
+   */
+  public async injectAndRunReel(reelUrl: string): Promise<string> {
+    const shortcode =
+      reelUrl.split("/reel/")[1]?.split("/")[0] ||
+      reelUrl.split("/p/")[1]?.split("/")[0] ||
+      `injected_${Date.now()}`;
+
+    const jobId = this.telegram.runInteractiveReel(
+      reelUrl,
+      this.profile.watch.adminChatId || 0,
+      0,
+      undefined,
+      "manual_inject",
+    );
+
+    const newItem: QueuedReel = {
+      shortcode,
+      url: reelUrl,
+      channel: "manual_inject",
+      scheduledAt: new Date().toISOString(),
+      fired: true,
+      jobId,
+      addedAt: new Date().toISOString(),
+    };
+
+    await this.store.load();
+    const currentQueue = this.store.getQueue().filter((q) => q.shortcode !== shortcode || q.fired);
+    await this.store.setQueue([newItem, ...currentQueue]);
+
+    pipelineLogger.info(
+      `[${this.profile.brandName}] Interactive manual ingest triggered for reel @manual_inject/${shortcode} (jobId: ${jobId})`,
+      "ChannelWatcher",
+    );
+
+    return jobId;
+  }
+
   public getStatusDetails() {
     return {
       channels: this.profile.watch.channels,

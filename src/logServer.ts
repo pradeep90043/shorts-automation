@@ -833,6 +833,20 @@ export function startLogServer(): void {
   const server = http.createServer(async (req, res) => {
     const url = req.url || "/";
 
+    // ── Global CORS preflight handler ──────────────────────────────────────
+    // Required so the dashboard works when opened as a local file:// URL.
+    // Browsers send an OPTIONS preflight before cross-origin POST/fetch calls.
+    if (req.method === "OPTIONS") {
+      res.writeHead(204, {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        "Access-Control-Max-Age": "86400",
+      });
+      res.end();
+      return;
+    }
+
     if (url === "/api/dashboard" || url.startsWith("/api/dashboard?")) {
       try {
         const data = await getDashboardData();
@@ -881,25 +895,25 @@ export function startLogServer(): void {
           reelUrl.split("/reel/")[1]?.split("/")[0] ||
           reelUrl.split("/p/")[1]?.split("/")[0] ||
           `injected_${Date.now()}`;
-        const newItem = {
-          shortcode,
-          url: reelUrl,
-          channel: "manual_inject",
-          scheduledAt: new Date().toISOString(),
-          fired: false,
-          addedAt: new Date().toISOString(),
-        };
 
-        const pool = await getPool();
-        await pool.query(
-          `UPDATE watch_state SET queue = queue || $1::jsonb WHERE profile_key = $2`,
-          [JSON.stringify([newItem]), pKey],
-        );
-
-        // Sync with active watcher's in-memory store so it is not overwritten
         const watcher = activeWatchers.get(pKey);
+        let jobId = "";
         if (watcher) {
-          await watcher.store.load();
+          jobId = await watcher.injectAndRunReel(reelUrl);
+        } else {
+          const newItem = {
+            shortcode,
+            url: reelUrl,
+            channel: "manual_inject",
+            scheduledAt: new Date().toISOString(),
+            fired: false,
+            addedAt: new Date().toISOString(),
+          };
+          const pool = await getPool();
+          await pool.query(
+            `UPDATE watch_state SET queue = queue || $1::jsonb WHERE profile_key = $2`,
+            [JSON.stringify([newItem]), pKey],
+          );
         }
 
         res.writeHead(200, {
@@ -909,7 +923,8 @@ export function startLogServer(): void {
         res.end(
           JSON.stringify({
             success: true,
-            message: `＋ Reel #${shortcode} injected into [${pKey.toUpperCase()}] queue!`,
+            jobId,
+            message: `⚡ Reel #${shortcode} injected and started in [${pKey.toUpperCase()}]!`,
           }),
         );
       } catch (err) {
@@ -1585,6 +1600,105 @@ export function startLogServer(): void {
       res.write("data: connected\n\n");
       liveReloadClients.add(res);
       req.on("close", () => liveReloadClients.delete(res));
+      return;
+    }
+
+    // ── /api/video-preview — serve latest rendered mp4 for preview ──────────
+    if (req.method === "GET" && url.startsWith("/api/video-preview")) {
+      try {
+        const pUrl = new URL(url, `http://localhost`);
+        const jobId = pUrl.searchParams.get("jobId") || "";
+        const outputDir = path.join(process.cwd(), "output");
+        let targetFile = "";
+        if (jobId) {
+          const files = fs.readdirSync(outputDir).filter(f => f.includes(jobId) && f.endsWith(".mp4"));
+          if (files.length) targetFile = path.join(outputDir, files[0]);
+        }
+        if (!targetFile) {
+          // fallback: most recently modified mp4 in output/
+          const files = fs.readdirSync(outputDir)
+            .filter(f => f.endsWith(".mp4"))
+            .map(f => ({ f, t: fs.statSync(path.join(outputDir, f)).mtimeMs }))
+            .sort((a, b) => b.t - a.t);
+          if (files.length) targetFile = path.join(outputDir, files[0].f);
+        }
+        if (!targetFile || !fs.existsSync(targetFile)) {
+          res.writeHead(404, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+          res.end(JSON.stringify({ success: false, message: "No preview video found yet" }));
+          return;
+        }
+        const stat = fs.statSync(targetFile);
+        res.writeHead(200, {
+          "Content-Type": "video/mp4",
+          "Content-Length": stat.size,
+          "Access-Control-Allow-Origin": "*",
+          "Cache-Control": "no-cache",
+        });
+        fs.createReadStream(targetFile).pipe(res);
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: false, message: "Error serving preview" }));
+      }
+      return;
+    }
+
+    // ── /api/source-frame — serve extracted JPEG frame for source preview ───
+    if (req.method === "GET" && url.startsWith("/api/source-frame")) {
+      try {
+        const tempDir = path.join(process.cwd(), "temp");
+        let targetFile = "";
+
+        if (fs.existsSync(tempDir)) {
+          const genDirs = fs.readdirSync(tempDir)
+            .filter((d) => d.startsWith("gen-"))
+            .map((d) => ({ dir: path.join(tempDir, d), t: fs.statSync(path.join(tempDir, d)).mtimeMs }))
+            .sort((a, b) => b.t - a.t);
+
+          for (const { dir } of genDirs) {
+            const frameJpg = path.join(dir, "original.jpg");
+            const framePng = path.join(dir, "original.png");
+            if (fs.existsSync(frameJpg)) { targetFile = frameJpg; break; }
+            if (fs.existsSync(framePng)) { targetFile = framePng; break; }
+          }
+        }
+
+        if (!targetFile || !fs.existsSync(targetFile)) {
+          res.writeHead(404, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+          res.end(JSON.stringify({ success: false, message: "No source frame available" }));
+          return;
+        }
+
+        const stat = fs.statSync(targetFile);
+        res.writeHead(200, {
+          "Content-Type": targetFile.endsWith(".png") ? "image/png" : "image/jpeg",
+          "Content-Length": stat.size,
+          "Access-Control-Allow-Origin": "*",
+          "Cache-Control": "public, max-age=300",
+        });
+        fs.createReadStream(targetFile).pipe(res);
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: false, message: "Error serving source frame" }));
+      }
+      return;
+    }
+
+    // ── /output/* — serve mp4 files statically for <video> src ─────────────
+    if (req.method === "GET" && url.startsWith("/output/")) {
+      try {
+        const filePath = path.join(process.cwd(), decodeURIComponent(url));
+        if (!fs.existsSync(filePath) || !filePath.endsWith(".mp4")) {
+          res.writeHead(404); res.end(); return;
+        }
+        const stat = fs.statSync(filePath);
+        res.writeHead(200, {
+          "Content-Type": "video/mp4",
+          "Content-Length": stat.size,
+          "Access-Control-Allow-Origin": "*",
+          "Cache-Control": "no-cache",
+        });
+        fs.createReadStream(filePath).pipe(res);
+      } catch { res.writeHead(404); res.end(); }
       return;
     }
 
