@@ -408,6 +408,18 @@ async function getDashboardData() {
   defaultFallbackProfiles.forEach((fb) => {
     if (!channels.some((c) => c.key === fb.key)) {
       const wState = watchStates.find((w) => w.profile_key === fb.key);
+      // Read persisted watch_config from the database so settings like
+      // outroVersion, scheduleTime, gapHours etc. survive server restarts
+      // and are correctly reflected in the dashboard fallback view.
+      let savedWatchConfig: Record<string, any> = {};
+      if (wState?.watch_config) {
+        try {
+          savedWatchConfig = typeof wState.watch_config === "string"
+            ? JSON.parse(wState.watch_config)
+            : wState.watch_config;
+        } catch {}
+      }
+
       const profileHistory = reelHistory.filter(
         (r) =>
           r.profile_key === fb.key || r.channel?.toLowerCase().includes(fb.key),
@@ -443,14 +455,14 @@ async function getDashboardData() {
         isWatchOnly: false,
         dailyTarget: fb.dailyLimit,
         dailyLimit: fb.dailyLimit,
-        searchMode: "hashtags",
-        nicheHashtags: [],
+        searchMode: savedWatchConfig.searchMode || "hashtags",
+        nicheHashtags: savedWatchConfig.nicheHashtags || [],
         defaultHashtags: buildHashtagsForNiche({ niche: fb.niche } as any),
-        watchedChannels: [],
-        excludeChannels: [],
-        outroVersion: "v1",
-        scheduleTime: "09:00",
-        gapHours: 3,
+        watchedChannels: savedWatchConfig.channels || [],
+        excludeChannels: savedWatchConfig.excludeChannels || [],
+        outroVersion: (savedWatchConfig.outroVersion || "v1") as "v1" | "v2",
+        scheduleTime: savedWatchConfig.scheduleTime || "09:00",
+        gapHours: savedWatchConfig.gapHours || 3,
         queueCount: queue.length,
         currentSlot,
         totalSlots,
