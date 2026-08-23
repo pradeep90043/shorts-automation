@@ -428,16 +428,68 @@
       </div>
     </div>
 
-    <!-- TAB: INJECT -->
+    <!-- TAB: INJECT / AI VIDEO STUDIO -->
     <div id="tab-inject" class="tab-pane">
-      <div class="table-card" style="margin-bottom:24px;">
-        <div style="font-size:18px;font-weight:800;color:#fff;margin-bottom:6px;">＋ Direct Reel Ingest & Pipeline</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:18px;">Paste Instagram Reel URL to trigger real-time AI transcription, caption overlay, and publishing</div>
-        <div style="margin-bottom:14px;">
-          <label style="font-size:11px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:6px;">Target Channel</label>
+      <!-- 1. AI FACELESS MULTI-SCENE VIDEO GENERATOR (OPTIONAL CREATOR ENGINE) -->
+      <div class="table-card" style="margin-bottom:20px;border-left:4px solid var(--purple);">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:8px;">
+          <div style="font-size:17px;font-weight:800;color:#fff;display:flex;align-items:center;gap:8px;">
+            <span>🎬 AI Faceless Video Studio</span>
+            <span style="font-size:10px;background:rgba(168,85,247,0.15);color:#c084fc;padding:2px 8px;border-radius:4px;font-weight:700;border:1px solid rgba(168,85,247,0.3);">MULTI-SCENE B-ROLL</span>
+          </div>
+          <span style="font-size:11px;color:var(--text-muted);">Generate 100% original faceless shorts with Pexels B-roll, neural voiceover, and synced subtitles</span>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:14px;margin-bottom:12px;">
+          <div>
+            <label style="font-size:11px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Target Channel Profile</label>
+            <select class="input-field" id="ai-gen-channel-select" style="width:100%;padding:8px 12px;font-weight:600;"></select>
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Format & Target Duration</label>
+            <select class="select-field" id="ai-gen-format-select" style="width:100%;padding:8px 12px;font-size:12px;">
+              <option value="short">📱 9:16 Vertical Short (30-50s) — YouTube Shorts & Reels</option>
+              <option value="5min">📺 16:9 Landscape Long Video (5 Minutes) — YouTube Video</option>
+              <option value="3min">📺 16:9 Landscape Deep-Dive (3 Minutes) — YouTube Video</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Subtitle Animation Style</label>
+            <select class="select-field" id="ai-gen-sub-style" style="width:100%;padding:8px 12px;font-size:12px;">
+              <option value="classic">Classic Gold Accent (Default)</option>
+              <option value="animated_pop">Animated Pop-up / Karaoke (Hormozi Style)</option>
+              <option value="minimal">Minimal Modern Bar</option>
+              <option value="none">No Subtitles</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="margin-bottom:12px;">
+          <label style="font-size:11px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Video Topic or Custom Script</label>
+          <textarea class="input-field" id="ai-gen-topic-input" placeholder="e.g. 5 Weird Quantum Physics Facts or paste your exact full video script here..." style="width:100%;height:70px;padding:8px 12px;font-size:12px;"></textarea>
+        </div>
+
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+          <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:#fff;cursor:pointer;background:rgba(255,255,255,0.03);padding:6px 12px;border-radius:6px;border:1px solid #30363d;">
+            <input type="checkbox" id="ai-gen-autopublish" checked style="accent-color:var(--success);width:15px;height:15px;">
+            <span>🚀 <b>Auto-Publish to YouTube immediately</b> upon generation</span>
+          </label>
+          <button class="btn-primary" id="btn-ai-gen" style="background:#8957e5;border-color:#ab7df6;padding:8px 18px;" onclick="triggerAiFacelessGeneration()">✨ Generate & Publish Video</button>
+        </div>
+
+        <!-- Progress / Result Card -->
+        <div id="ai-gen-result-container" style="display:none;margin-top:16px;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:14px;"></div>
+      </div>
+
+      <!-- 2. DIRECT REEL INGEST & REMIX (DEFAULT CURATOR PIPELINE) -->
+      <div class="table-card" style="margin-bottom:24px;border-left:4px solid var(--primary);">
+        <div style="font-size:17px;font-weight:800;color:#fff;margin-bottom:4px;">📥 Direct Reel Ingest & Remix (Curator Mode)</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px;">Paste Instagram Reel URL to trigger AI watermark removal, custom outro, audio mastering, and publishing</div>
+        <div style="margin-bottom:12px;">
+          <label style="font-size:11px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Target Channel</label>
           <select class="input-field" id="inject-tab-channel-select" style="width:280px;padding:8px 12px;font-weight:600;"></select>
         </div>
-        <div style="display:flex;gap:10px;margin-bottom:16px;">
+        <div style="display:flex;gap:10px;margin-bottom:8px;">
           <input class="input-field" style="font-family:var(--font-mono);" id="inject-tab-url-input" placeholder="https://www.instagram.com/reel/XXXXXXXX/" onkeydown="if(event.key==='Enter')triggerInjectLink('inject-tab-url-input','inject-tab-channel-select')">
           <button class="btn-primary" style="white-space:nowrap;" onclick="triggerInjectLink('inject-tab-url-input','inject-tab-channel-select')">⚡ Ingest Reel</button>
         </div>
@@ -562,9 +614,14 @@
 
     <!-- TAB: CONFIGURATION -->
     <div id="tab-config" class="tab-pane">
-      <div style="max-width:760px;">
-        <div style="font-size:18px;font-weight:800;color:#fff;margin-bottom:4px;">⚙️ Channel Automation Configuration</div>
-        <div style="color:var(--text-muted);margin-bottom:20px;">Set daily reel limits, posting schedules, and automated retry policies per channel profile.</div>
+      <div style="max-width:980px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px;">
+          <div>
+            <div style="font-size:20px;font-weight:800;color:#fff;">⚙️ Channel Profiles & Publishing Store</div>
+            <div style="color:var(--text-muted);font-size:12px;">Manage social credentials, YouTube/Instagram API tokens, watcher settings, and dynamic channels stored in database.</div>
+          </div>
+          <button class="btn-primary" onclick="openAddChannelModal()">➕ Add New Channel</button>
+        </div>
         <div id="config-cards-list"></div>
       </div>
     </div>
@@ -586,6 +643,185 @@
       <div id="log-container" style="background:var(--card);border:1px solid var(--card-border);border-radius:10px;padding:14px;height:60vh;overflow-y:auto;font-family:var(--font-mono);font-size:12px;"></div>
     </div>
 
+  </div>
+<!-- MODAL: ADD CHANNEL -->
+<div id="modal-add-channel" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.75);backdrop-filter:blur(6px);z-index:999;overflow-y:auto;padding:30px 16px;">
+  <div style="max-width:680px;margin:0 auto;background:#161b22;border:1px solid #30363d;border-radius:12px;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,0.8);">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;border-bottom:1px solid #21262d;padding-bottom:12px;">
+      <div>
+        <div style="font-size:18px;font-weight:800;color:#fff;">➕ Configure & Add New Channel</div>
+        <div style="font-size:12px;color:var(--text-muted);">Stored directly in PostgreSQL and activated immediately in real-time.</div>
+      </div>
+      <button class="btn-icon" onclick="closeAddChannelModal()" style="font-size:16px;padding:4px 10px;">✕</button>
+    </div>
+
+    <!-- REQUIRED SECTION -->
+    <div style="background:#0d1117;border:1px solid rgba(56,139,253,0.4);border-radius:8px;padding:16px;margin-bottom:16px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+        <span style="background:var(--primary);color:#000;font-size:10px;font-weight:900;padding:2px 6px;border-radius:4px;letter-spacing:1px;">REQUIRED</span>
+        <span style="font-size:13px;font-weight:700;color:#fff;">Channel Identity & Publishing Destination</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+        <div>
+          <label style="font-size:11px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Channel Key / Slug *</label>
+          <input class="input-field" id="new-ch-key" placeholder="e.g. techmeme" style="font-family:var(--font-mono);">
+          <span style="font-size:10px;color:var(--text-dim);">Lowercase alphanumeric (e.g. techmeme, viralhub)</span>
+        </div>
+        <div>
+          <label style="font-size:11px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Brand Display Name *</label>
+          <input class="input-field" id="new-ch-name" placeholder="e.g. Tech Meme">
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+        <div>
+          <label style="font-size:11px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Brand Handle *</label>
+          <input class="input-field" id="new-ch-handle" placeholder="e.g. @techmeme">
+        </div>
+        <div>
+          <label style="font-size:11px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Niche / Content Category *</label>
+          <input class="input-field" id="new-ch-niche" placeholder="e.g. tech, stories, humor, fitness, gaming, finance..." list="niche-suggestions">
+          <datalist id="niche-suggestions">
+            <option value="tech">Tech & Coding</option>
+            <option value="stories">Stories & Tales</option>
+            <option value="humor">Humor & Memes</option>
+            <option value="fitness">Fitness & Workouts</option>
+            <option value="finance">Finance & Investing</option>
+            <option value="gaming">Gaming & Streaming</option>
+            <option value="motivation">Motivation & Self-Improvement</option>
+            <option value="travel">Travel & Exploration</option>
+            <option value="cooking">Cooking & Food Recipes</option>
+          </datalist>
+          <span style="font-size:10px;color:var(--text-dim);">Type any custom niche (e.g. fitness, crypto, history)</span>
+        </div>
+      </div>
+      <!-- MULTI INSTAGRAM ACCOUNTS -->
+      <div style="margin-top:14px;border-top:1px solid #21262d;padding-top:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
+          <label style="font-size:11px;font-weight:700;color:var(--text-muted);">📷 Instagram Accounts (Broadcast to multiple)</label>
+          <div style="display:flex;gap:6px;">
+            <button type="button" class="btn-icon" style="padding:2px 8px;font-size:10px;color:#58a6ff;border-color:rgba(88,166,255,0.4);" onclick="openPickIgModal('modal')">🔍 Pick from Meta Account</button>
+            <button type="button" class="btn-icon" style="padding:2px 8px;font-size:10px;" onclick="addModalIgRow()">➕ Add Manual</button>
+          </div>
+        </div>
+        <div id="new-ch-ig-list" style="display:flex;flex-direction:column;gap:8px;">
+          <div class="modal-ig-row" style="display:grid;grid-template-columns:140px 1fr 1fr auto;gap:8px;align-items:center;background:rgba(255,255,255,0.02);padding:8px;border-radius:6px;border:1px solid #21262d;">
+            <input class="input-field modal-ig-name" placeholder="Account Name (e.g. Main IG)" value="Main Instagram" style="padding:6px 8px;font-size:11px;">
+            <input class="input-field modal-ig-id" placeholder="Instagram User ID" style="padding:6px 8px;font-size:11px;font-family:var(--font-mono);">
+            <input class="input-field modal-ig-token" type="password" placeholder="Access Token (EAAB...)" style="padding:6px 8px;font-size:11px;font-family:var(--font-mono);">
+            <button type="button" class="btn-icon" style="color:var(--danger);padding:4px 8px;font-size:11px;" onclick="this.closest('.modal-ig-row').remove()" title="Remove">✕</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- MULTI YOUTUBE CHANNELS -->
+      <div style="margin-top:14px;border-top:1px solid #21262d;padding-top:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
+          <label style="font-size:11px;font-weight:700;color:var(--text-muted);">▶ YouTube Channels (Broadcast to multiple)</label>
+          <div style="display:flex;gap:6px;">
+            <button type="button" class="btn-icon" style="padding:2px 8px;font-size:10px;color:#58a6ff;border-color:rgba(88,166,255,0.4);" onclick="connectYouTubeOAuth('modal')">🔑 Sign-in with Google</button>
+            <button type="button" class="btn-icon" style="padding:2px 8px;font-size:10px;" onclick="addModalYtRow()">➕ Add Manual</button>
+          </div>
+        </div>
+        <div id="new-ch-yt-list" style="display:flex;flex-direction:column;gap:8px;">
+          <div class="modal-yt-row" style="display:grid;grid-template-columns:140px 1fr auto;gap:8px;align-items:center;background:rgba(255,255,255,0.02);padding:8px;border-radius:6px;border:1px solid #21262d;">
+            <input class="input-field modal-yt-name" placeholder="Channel Name (e.g. Main Shorts)" value="Primary YouTube" style="padding:6px 8px;font-size:11px;">
+            <input class="input-field modal-yt-token" type="password" placeholder="Refresh Token (1//04...)" style="padding:6px 8px;font-size:11px;font-family:var(--font-mono);">
+            <button type="button" class="btn-icon" style="color:var(--danger);padding:4px 8px;font-size:11px;" onclick="this.closest('.modal-yt-row').remove()" title="Remove">✕</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- FACEBOOK -->
+      <div style="margin-top:14px;border-top:1px solid #21262d;padding-top:10px;">
+        <label style="font-size:11px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:8px;">📘 Facebook Page (Optional)</label>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div>
+            <label style="font-size:10px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Page ID</label>
+            <input class="input-field" id="new-ch-fb-id" placeholder="e.g. 1244228672098266" style="font-family:var(--font-mono);font-size:11px;">
+          </div>
+          <div>
+            <label style="font-size:10px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Access Token</label>
+            <input class="input-field" id="new-ch-fb-token" type="password" placeholder="EAAB..." style="font-family:var(--font-mono);font-size:11px;">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- OPTIONAL SECTION -->
+    <div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:16px;margin-bottom:16px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+        <span style="background:#30363d;color:#e6edf3;font-size:10px;font-weight:800;padding:2px 6px;border-radius:4px;letter-spacing:1px;">OPTIONAL</span>
+        <span style="font-size:13px;font-weight:700;color:#fff;">Automation Watcher & Advanced Settings</span>
+      </div>
+      <div style="margin-bottom:12px;">
+        <label style="font-size:11px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Competitor Watch Channels (comma-separated)</label>
+        <textarea class="input-field" id="new-ch-watchlist" placeholder="e.g. pubity, 9gag, memezar" style="height:60px;font-family:var(--font-mono);font-size:11px;"></textarea>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px;">
+        <div>
+          <label style="font-size:10px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Search Mode</label>
+          <select class="select-field" id="new-ch-search-mode" style="width:100%;">
+            <option value="channels">Competitor Watchlist</option>
+            <option value="hashtags">Global Hashtags</option>
+            <option value="both">Both (Channels + Tags)</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:10px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Daily Limit</label>
+          <input type="number" class="input-field" id="new-ch-daily" value="5" min="1" max="20">
+        </div>
+        <div>
+          <label style="font-size:10px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Schedule Time</label>
+          <input class="input-field" id="new-ch-time" value="09:00" placeholder="09:00">
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div>
+          <label style="font-size:10px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Outro Version</label>
+          <select class="select-field" id="new-ch-outro" style="width:100%;">
+            <option value="v2">v2 (Pexels b-roll transition)</option>
+            <option value="v1">v1 (Classic outro)</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:10px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Facebook Access Token</label>
+          <input class="input-field" id="new-ch-fb-token" type="password" placeholder="EAAB..." style="font-family:var(--font-mono);font-size:11px;">
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;justify-content:flex-end;gap:10px;">
+      <button class="btn-icon" onclick="closeAddChannelModal()">Cancel</button>
+      <button class="btn-primary" onclick="submitAddChannelForm()">🚀 Save Channel to Database</button>
+    </div>
+<!-- MODAL: PICK INSTAGRAM / META ACCOUNT -->
+<div id="modal-pick-ig" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.8);z-index:9999;backdrop-filter:blur(4px);">
+  <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:#161b22;border:1px solid #30363d;border-radius:12px;width:90%;max-width:580px;max-height:85vh;overflow-y:auto;padding:24px;box-shadow:0 16px 40px rgba(0,0,0,0.6);">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;border-bottom:1px solid #21262d;padding-bottom:12px;">
+      <div>
+        <h3 style="margin:0;font-size:16px;font-weight:800;color:#fff;display:flex;align-items:center;gap:8px;">
+          <span>📷 Select Instagram Account</span>
+        </h3>
+        <span style="font-size:11px;color:var(--text-muted);">Pick an account connected to your Meta Facebook page to automatically link its ID and Token</span>
+      </div>
+      <button class="btn-icon" onclick="closePickIgModal()" style="font-size:14px;padding:4px 8px;">✕</button>
+    </div>
+
+    <!-- Meta Token Input / Inspector -->
+    <div style="background:#0d1117;padding:12px;border-radius:8px;border:1px solid #21262d;margin-bottom:16px;">
+      <label style="font-size:10px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Meta Graph API Access Token</label>
+      <div style="display:flex;gap:8px;">
+        <input class="input-field" id="pick-ig-token" type="password" placeholder="Paste Meta Access Token (or leave empty to use configured token)" style="font-size:11px;font-family:var(--font-mono);flex:1;">
+        <button class="btn-primary" style="padding:6px 12px;font-size:11px;white-space:nowrap;" onclick="inspectMetaAccounts()">🔍 Load Accounts</button>
+      </div>
+    </div>
+
+    <!-- Accounts List Container -->
+    <div id="pick-ig-list-container">
+      <div style="text-align:center;padding:24px;color:var(--text-muted);font-size:12px;">
+        Click <b>"Load Accounts"</b> to detect all Instagram Creator/Business accounts and Facebook pages.
+      </div>
+    </div>
   </div>
 </div>
 
@@ -796,9 +1032,10 @@
     });
 
     /* Sync inject selects */
-    ['inject-target-channel-select','inject-tab-channel-select'].forEach(selId => {
+    ['inject-target-channel-select','inject-tab-channel-select','ai-gen-channel-select'].forEach(selId => {
       const sel = document.getElementById(selId);
-      if (!sel || sel.children.length > 0) return;
+      if (!sel) return;
+      sel.innerHTML = '';
       list.forEach(c => {
         const opt = document.createElement('option');
         opt.value = c.key; opt.textContent = c.name + ' (' + c.handle + ')';
@@ -1072,91 +1309,809 @@
     }
   }
 
-  /* ─── CONFIG TAB ─── */
-  function renderConfigTab(channels) {
+  /* ─── CONFIG TAB & CHANNEL STORE ─── */
+  let storedChannelsCache = [];
+
+  async function fetchStoredChannels() {
+    try {
+      const res = await fetch(BASE_URL + '/api/channels');
+      const data = await res.json();
+      if (data.success && Array.isArray(data.channels)) {
+        storedChannelsCache = data.channels;
+        return data.channels;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  async function renderConfigTab(channels) {
     const container = document.getElementById('config-cards-list');
     if (!container) return;
-    const defaults = [
-      { key:'codeorcap', name:'CodeOrCap', color:'primary', initials:'CO', handle:'@codeorcap', dailyLimit:6, queueCount:0, stats:{publishedCount:0}, searchMode:'hashtags', nicheHashtags:[], defaultHashtags:[], watchedChannels:[], excludeChannels:[] },
-      { key:'storiyum',  name:'Storiyum',  color:'purple',  initials:'ST', handle:'@storiyum',  dailyLimit:6, queueCount:0, stats:{publishedCount:0}, searchMode:'hashtags', nicheHashtags:[], defaultHashtags:[], watchedChannels:[], excludeChannels:[] },
-      { key:'prompt_gag',name:'PromptGag', color:'warning', initials:'PG', handle:'@prompt_gag',dailyLimit:6, queueCount:0, stats:{publishedCount:0}, searchMode:'hashtags', nicheHashtags:[], defaultHashtags:[], watchedChannels:[], excludeChannels:[] }
-    ];
-    const list = (channels && channels.length > 0) ? channels : defaults;
+    
+    // Fetch latest persisted channel configs from DB
+    const dbChannels = await fetchStoredChannels();
+    const list = (dbChannels && dbChannels.length > 0) ? dbChannels : (channels || []);
     const filtered = focusedChannel === 'all' ? list : list.filter(c => c.key === focusedChannel);
     container.innerHTML = '';
+
     filtered.forEach(c => {
       const card = document.createElement('div');
       card.className = 'config-card';
-      const dailyLimit = c.dailyLimit || 6;
-      card.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">' +
-        '<div style="display:flex;align-items:center;gap:10px;">' +
-          '<div class="avatar-box avatar-' + c.color + '">' + c.initials + '</div>' +
-          '<div><div style="font-weight:700;color:#fff;font-size:15px;">' + c.name + '</div>' +
-          '<div style="font-size:11px;color:var(--text-muted);">' + c.handle + ' · <span style="color:var(--success);">Active</span></div></div>' +
-        '</div><button class="btn-icon save-cfg-btn" disabled>💾 Save</button></div>' +
-        '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px;">' +
-          '<div style="background:var(--bg);padding:12px;border-radius:8px;"><div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;">Daily Limit</div><div style="font-size:20px;font-weight:800;color:var(--primary);font-family:var(--font-mono);" id="limit-val-' + c.key + '">' + dailyLimit + '</div><div style="font-size:10px;color:var(--text-muted);">reels / day</div></div>' +
-          '<div style="background:var(--bg);padding:12px;border-radius:8px;"><div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;">In Queue</div><div style="font-size:20px;font-weight:800;color:var(--warning);font-family:var(--font-mono);">' + (c.queueCount||0) + '</div><div style="font-size:10px;color:var(--text-muted);">pending</div></div>' +
-          '<div style="background:var(--bg);padding:12px;border-radius:8px;"><div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;">Published</div><div style="font-size:20px;font-weight:800;color:var(--success);font-family:var(--font-mono);">' + ((c.stats && c.stats.publishedCount) || 0) + '</div><div style="font-size:10px;color:var(--text-muted);">total</div></div>' +
-        '</div>' +
-        '<div>' +
-          '<div style="display:flex;justify-content:space-between;font-size:11px;font-weight:700;color:var(--text-muted);margin-bottom:6px;"><span>Daily Reel Limit</span><span style="color:var(--primary);font-family:var(--font-mono);" id="limit-label-' + c.key + '">' + dailyLimit + ' reels/day</span></div>' +
-          '<input type="range" class="cfg-range" min="1" max="20" step="1" value="' + dailyLimit + '" style="width:100%;accent-color:var(--primary);">' +
-        '</div>' +
-        '<div style="margin-top:16px;">' +
-          '<label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Search Mode</label><select class="select-field search-mode-select" style="width:100%;" onchange="toggleConfigChannelFields(\'' + c.key + '\', this.value)"><option value="channels" ' + (c.searchMode === 'channels' ? 'selected' : '') + '>Competitor Watchlist</option><option value="hashtags" ' + (c.searchMode === 'hashtags' ? 'selected' : '') + '>Global Hashtags</option><option value="both" ' + (c.searchMode === 'both' ? 'selected' : '') + '>Both (Hashtags + Channels)</option></select>' +
-        '</div>' +
-        '<div id="cfg-hashtags-container-' + c.key + '" style="margin-top:12px;display:' + (c.searchMode !== 'channels' ? 'block' : 'none') + ';">' +
-          '<label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Hashtags (comma separated)</label><textarea class="input-field hashtags-input" style="width:100%;height:80px;padding:8px 12px;resize:vertical;font-size:12px;font-family:var(--font-mono);" placeholder="e.g. coding, programming, ai">' + ((c.nicheHashtags && c.nicheHashtags.length > 0) ? c.nicheHashtags.join(', ') : (c.defaultHashtags || []).join(', ')) + '</textarea>' +
-        '</div>' +
-        '<div id="cfg-channels-container-' + c.key + '" style="margin-top:12px;display:' + (c.searchMode !== 'hashtags' ? 'block' : 'none') + ';">' +
-          '<label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Competitor Watchlist (comma separated)</label><textarea class="input-field watchlist-input" style="width:100%;height:80px;padding:8px 12px;resize:vertical;font-size:12px;font-family:var(--font-mono);" placeholder="e.g. competitor1, competitor2">' + (c.watchedChannels || []).join(', ') + '</textarea>' +
-        '</div>' +
-        '<div style="margin-top:12px;">' +
-          '<label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Excluded Channels (comma separated)</label><textarea class="input-field excludes-input" style="width:100%;height:80px;padding:8px 12px;resize:vertical;font-size:12px;font-family:var(--font-mono);" placeholder="e.g. badcreator, spambot">' + (c.excludeChannels || []).join(', ') + '</textarea>' +
-        '</div>' +
-        (c.key === 'codeorcap' ?
-        '<div style="margin-top:12px;">' +
-          '<label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Outro / Final Clip Version</label>' +
-          '<select class="select-field outro-version-select" style="width:100%;"><option value="v1" ' + ((c.outroVersion || 'v1') === 'v1' ? 'selected' : '') + '>v1 (Classic Outro)</option><option value="v2" ' + (c.outroVersion === 'v2' ? 'selected' : '') + '>v2 (Transition + Classic Outro)</option></select>' +
-        '</div>' : '') +
-        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px;">' +
-          '<div><label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Post Interval</label><select class="select-field" style="width:100%;"><option>Every 2 hours</option><option>Every 4 hours</option><option>Every 6 hours</option><option>Custom</option></select></div>' +
-          '<div><label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">On Queue Empty</label><select class="select-field" style="width:100%;"><option>Wait for new reels</option><option>Auto-fetch watchlist</option><option>Pause bot</option></select></div>' +
-          '<div><label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Retry Failed After</label><select class="select-field" style="width:100%;"><option>30 minutes</option><option>1 hour</option><option>3 hours</option><option>Don\'t retry</option></select></div>' +
-          '<div><label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;display:block;margin-bottom:6px;">Max Queue Slots</label><select class="select-field" style="width:100%;"><option>6 slots</option><option>10 slots</option><option>20 slots</option><option>Unlimited</option></select></div>' +
-        '</div>';
-      const rangeInput = card.querySelector('.cfg-range');
-      rangeInput.oninput = function() {
-        setElText('limit-val-' + c.key, this.value);
-        setElText('limit-label-' + c.key, this.value + ' reels/day');
-      };
-      const searchModeSelect = card.querySelector('.search-mode-select');
-      const hashtagsInput = card.querySelector('.hashtags-input');
-      const watchlistInput = card.querySelector('.watchlist-input');
-      const excludesInput = card.querySelector('.excludes-input');
-      const outroVersionSelect = card.querySelector('.outro-version-select');
+      card.setAttribute('data-channel-key', c.key);
+      card.style.marginBottom = '20px';
+      const dailyLimit = c.dailyCount || c.dailyLimit || 5;
+      const isDefault = c.key === 'codeorcap' || c.isDefault;
+      const nicheColors = { tech: 'primary', stories: 'purple', humor: 'warning' };
+      const nicheBadgeColor = nicheColors[c.niche] || 'primary';
 
-      const saveBtn = card.querySelector('.save-cfg-btn');
-      card.querySelectorAll('input, select, textarea').forEach(el => {
-        if (el.className.includes('cred-')) return;
-        el.addEventListener('input', () => { saveBtn.disabled = false; });
-        el.addEventListener('change', () => { saveBtn.disabled = false; });
-      });
+      card.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;border-bottom:1px solid #21262d;padding-bottom:12px;flex-wrap:wrap;gap:10px;">
+          <div style="display:flex;align-items:center;gap:12px;">
+            <div class="avatar-box avatar-${nicheBadgeColor}" style="font-weight:800;font-size:14px;">${(c.brandName || c.name || c.key).slice(0,2).toUpperCase()}</div>
+            <div>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span style="font-weight:800;color:#fff;font-size:16px;">${c.brandName || c.name}</span>
+                <span style="font-size:10px;font-weight:800;padding:2px 7px;border-radius:4px;background:var(--card-border);text-transform:uppercase;color:var(--text-muted);">${c.niche || 'tech'}</span>
+                ${isDefault ? '<span style="font-size:9px;background:rgba(88,166,255,0.2);color:var(--primary);border:1px solid rgba(88,166,255,0.4);border-radius:4px;padding:1px 5px;font-weight:700;">DEFAULT</span>' : ''}
+              </div>
+              <div style="font-size:12px;color:var(--text-muted);font-family:var(--font-mono);margin-top:2px;">
+                ${c.handle} · <span style="color:var(--success);font-weight:600;">Active in Database</span>
+              </div>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            ${!isDefault ? `<button class="btn-icon" style="color:var(--danger);border-color:rgba(248,81,73,0.4);" onclick="deleteChannelProfile('${c.key}')">🗑️ Delete</button>` : ''}
+            <button class="btn-primary" style="padding:6px 14px;font-size:12px;" onclick="saveChannelConfigFromCard('${c.key}', this)">💾 Save Config</button>
+          </div>
+        </div>
 
-      card.querySelector('.save-cfg-btn').onclick = () => {
-        triggerUpdateConfig(
-          c.key,
-          Number(rangeInput.value),
-          searchModeSelect.value,
-          hashtagsInput.value,
-          watchlistInput.value,
-          excludesInput.value,
-          outroVersionSelect ? outroVersionSelect.value : 'v1'
-        );
-      };
+        <!-- 1. IDENTITY & NICHE -->
+        <div style="background:#0d1117;padding:14px;border-radius:8px;border:1px solid #21262d;margin-bottom:14px;">
+          <div style="font-size:11px;font-weight:800;color:var(--primary);text-transform:uppercase;margin-bottom:10px;letter-spacing:0.5px;">🏷️ Channel Identity</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;">
+            <div>
+              <label style="font-size:10px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Brand Display Name</label>
+              <input class="input-field cfg-field-name" value="${c.brandName || c.name || ''}" style="padding:6px 10px;font-size:12px;">
+            </div>
+            <div>
+              <label style="font-size:10px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Brand Handle</label>
+              <input class="input-field cfg-field-handle" value="${c.handle || ''}" style="padding:6px 10px;font-size:12px;">
+            </div>
+            <div>
+              <label style="font-size:10px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Niche Content Theme</label>
+              <input class="input-field cfg-field-niche" value="${c.niche || ''}" placeholder="e.g. tech, fitness, finance" list="niche-suggestions" style="padding:6px 10px;font-size:12px;">
+            </div>
+          </div>
+        </div>
+
+        <!-- 2. SOCIAL PUBLISHING CREDENTIALS (MULTI-ACCOUNT) -->
+        <div style="background:#0d1117;padding:14px;border-radius:8px;border:1px solid #21262d;margin-bottom:14px;">
+          <div style="font-size:11px;font-weight:800;color:var(--success);text-transform:uppercase;margin-bottom:10px;letter-spacing:0.5px;">📱 Social Media Publishing Destinations</div>
+          
+          <!-- INSTAGRAM ACCOUNTS LIST -->
+          <div style="margin-bottom:12px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:6px;">
+              <span style="font-size:11px;font-weight:700;color:var(--text-muted);">📷 Instagram Accounts</span>
+              <div style="display:flex;gap:6px;">
+                <button type="button" class="btn-icon" style="padding:2px 8px;font-size:10px;color:#58a6ff;border-color:rgba(88,166,255,0.4);" onclick="openPickIgModal('${c.key}')">🔍 Pick from Meta Account</button>
+                <button type="button" class="btn-icon" style="padding:2px 8px;font-size:10px;" onclick="addCardIgRow(this)">➕ Add Manual</button>
+              </div>
+            </div>
+            <div class="cfg-ig-list" style="display:flex;flex-direction:column;gap:6px;">
+              ${((c.instagramAccounts && c.instagramAccounts.length > 0) ? c.instagramAccounts : (c.instagramAccessToken || c.instagramUserId ? [{ name: (c.brandName || c.name || '') + ' Instagram', igUserId: c.instagramUserId || '', accessToken: c.instagramAccessToken || '' }] : [{ name: 'Primary Instagram', igUserId: '', accessToken: '' }])).map(acc => `
+                <div class="cfg-ig-row" style="display:grid;grid-template-columns:130px 1fr 1fr auto;gap:8px;align-items:center;background:rgba(255,255,255,0.02);padding:6px 8px;border-radius:6px;border:1px solid #21262d;">
+                  <input class="input-field cfg-ig-name" value="${acc.name || ''}" placeholder="Account Name" style="padding:5px 8px;font-size:11px;">
+                  <input class="input-field cfg-ig-id" value="${acc.igUserId || ''}" placeholder="Instagram User ID" style="padding:5px 8px;font-size:11px;font-family:var(--font-mono);">
+                  <input class="input-field cfg-ig-token" type="password" value="${acc.accessToken || ''}" placeholder="Access Token (EAAB...)" style="padding:5px 8px;font-size:11px;font-family:var(--font-mono);">
+                  <button type="button" class="btn-icon" style="color:var(--danger);padding:3px 6px;font-size:11px;" onclick="this.closest('.cfg-ig-row').remove()" title="Remove">✕</button>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+
+          <!-- YOUTUBE CHANNELS LIST -->
+          <div style="margin-bottom:12px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:6px;">
+              <span style="font-size:11px;font-weight:700;color:var(--text-muted);">▶ YouTube Channels</span>
+              <div style="display:flex;gap:6px;">
+                <button type="button" class="btn-icon" style="padding:2px 8px;font-size:10px;color:#58a6ff;border-color:rgba(88,166,255,0.4);" onclick="connectYouTubeOAuth('${c.key}')">🔑 Sign-in with Google</button>
+                <button type="button" class="btn-icon" style="padding:2px 8px;font-size:10px;" onclick="addCardYtRow(this)">➕ Add Manual</button>
+              </div>
+            </div>
+            <div class="cfg-yt-list" style="display:flex;flex-direction:column;gap:6px;">
+              ${((c.youtubeChannels && c.youtubeChannels.length > 0) ? c.youtubeChannels : (c.youtubeRefreshToken ? [{ name: c.brandName || c.name || 'Primary YouTube', refreshToken: c.youtubeRefreshToken || '' }] : [{ name: 'Primary YouTube', refreshToken: '' }])).map(ch => `
+                <div class="cfg-yt-row" style="display:grid;grid-template-columns:130px 1fr auto;gap:8px;align-items:center;background:rgba(255,255,255,0.02);padding:6px 8px;border-radius:6px;border:1px solid #21262d;">
+                  <input class="input-field cfg-yt-name" value="${ch.name || ''}" placeholder="Channel Name" style="padding:5px 8px;font-size:11px;">
+                  <input class="input-field cfg-yt-token" type="password" value="${ch.refreshToken || ''}" placeholder="Refresh Token (1//04...)" style="padding:5px 8px;font-size:11px;font-family:var(--font-mono);">
+                  <button type="button" class="btn-icon" style="color:var(--danger);padding:3px 6px;font-size:11px;" onclick="this.closest('.cfg-yt-row').remove()" title="Remove">✕</button>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+
+          <!-- FACEBOOK -->
+          <div style="border-top:1px solid #21262d;padding-top:10px;">
+            <span style="font-size:11px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:6px;">📘 Facebook Page (Optional)</span>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+              <div>
+                <label style="font-size:10px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Page ID</label>
+                <input class="input-field cfg-field-fb-id" value="${c.facebookPageId || ''}" placeholder="1244228672098266" style="padding:6px 10px;font-size:11px;font-family:var(--font-mono);">
+              </div>
+              <div>
+                <label style="font-size:10px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Access Token</label>
+                <input class="input-field cfg-field-fb-token" type="password" value="${c.facebookAccessToken || ''}" placeholder="EAAB..." style="padding:6px 10px;font-size:11px;font-family:var(--font-mono);">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3. AUTOMATION & WATCHER SETTINGS -->
+        <div style="background:#0d1117;padding:14px;border-radius:8px;border:1px solid #21262d;">
+          <div style="font-size:11px;font-weight:800;color:var(--warning);text-transform:uppercase;margin-bottom:10px;letter-spacing:0.5px;">⚙️ Automated Watcher & Outro Settings</div>
+          
+          <div style="display:flex;justify-content:space-between;font-size:11px;font-weight:700;color:var(--text-muted);margin-bottom:6px;">
+            <span>Daily Reel Limit</span>
+            <span style="color:var(--primary);font-family:var(--font-mono);" id="limit-label-${c.key}">${dailyLimit} reels/day</span>
+          </div>
+          <input type="range" class="cfg-range cfg-field-daily" min="1" max="20" step="1" value="${dailyLimit}" style="width:100%;accent-color:var(--primary);margin-bottom:12px;" oninput="setElText('limit-label-${c.key}', this.value + ' reels/day')">
+
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px;">
+            <div>
+              <label style="font-size:10px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Search Mode</label>
+              <select class="select-field cfg-field-searchmode" style="width:100%;padding:6px 10px;font-size:12px;">
+                <option value="channels" ${c.searchMode === 'channels' ? 'selected' : ''}>Competitor Watchlist</option>
+                <option value="hashtags" ${c.searchMode === 'hashtags' ? 'selected' : ''}>Global Hashtags</option>
+                <option value="both" ${c.searchMode === 'both' ? 'selected' : ''}>Both (Channels + Tags)</option>
+              </select>
+            </div>
+            <div>
+              <label style="font-size:10px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Schedule Time</label>
+              <input class="input-field cfg-field-time" value="${c.scheduleTime || '09:00'}" style="padding:6px 10px;font-size:12px;">
+            </div>
+            <div>
+              <label style="font-size:10px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Outro Version</label>
+              <select class="select-field cfg-field-outro" style="width:100%;padding:6px 10px;font-size:12px;">
+                <option value="v2" ${(c.outroVersion || 'v2') === 'v2' ? 'selected' : ''}>v2 (Pexels b-roll)</option>
+                <option value="v1" ${c.outroVersion === 'v1' ? 'selected' : ''}>v1 (Classic)</option>
+              </select>
+            </div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+            <div>
+              <label style="font-size:10px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Generation Engine</label>
+              <select class="select-field cfg-field-videomode" style="width:100%;padding:6px 10px;font-size:12px;">
+                <option value="curator" ${(c.videoMode || 'curator') === 'curator' ? 'selected' : ''}>Curator (Scrape & Remix - Default)</option>
+                <option value="faceless_ai" ${c.videoMode === 'faceless_ai' ? 'selected' : ''}>AI Multi-Scene Creator (Faceless)</option>
+                <option value="hybrid" ${c.videoMode === 'hybrid' ? 'selected' : ''}>Hybrid (Both)</option>
+              </select>
+            </div>
+            <div>
+              <label style="font-size:10px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Subtitle Style</label>
+              <select class="select-field cfg-field-substyle" style="width:100%;padding:6px 10px;font-size:12px;">
+                <option value="classic" ${(c.subtitleStyle || 'classic') === 'classic' ? 'selected' : ''}>Classic Gold Highlight (Default)</option>
+                <option value="animated_pop" ${c.subtitleStyle === 'animated_pop' ? 'selected' : ''}>Animated Pop-up / Karaoke</option>
+                <option value="minimal" ${c.subtitleStyle === 'minimal' ? 'selected' : ''}>Minimal Modern Bar</option>
+                <option value="none" ${c.subtitleStyle === 'none' ? 'selected' : ''}>No Subtitles</option>
+              </select>
+            </div>
+          </div>
+
+          <div style="margin-bottom:10px;">
+            <label style="font-size:10px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Competitor Watch Channels (comma-separated usernames)</label>
+            <textarea class="input-field cfg-field-watchlist" style="width:100%;height:60px;padding:6px 10px;font-size:11px;font-family:var(--font-mono);" placeholder="e.g. pubity, 9gag, memezar">${(Array.isArray(c.watchChannels) ? c.watchChannels : (c.watchedChannels || [])).join(', ')}</textarea>
+          </div>
+        </div>
+      `;
       container.appendChild(card);
     });
+  }
+
+  function addModalIgRow(name = '', id = '', token = '') {
+    const list = document.getElementById('new-ch-ig-list');
+    if (!list) return;
+    const row = document.createElement('div');
+    row.className = 'modal-ig-row';
+    row.style.cssText = 'display:grid;grid-template-columns:140px 1fr 1fr auto;gap:8px;align-items:center;background:rgba(255,255,255,0.02);padding:8px;border-radius:6px;border:1px solid #21262d;';
+    row.innerHTML = `
+      <input class="input-field modal-ig-name" placeholder="Account Name" value="${name || 'Secondary IG'}" style="padding:6px 8px;font-size:11px;">
+      <input class="input-field modal-ig-id" placeholder="Instagram User ID" value="${id || ''}" style="padding:6px 8px;font-size:11px;font-family:var(--font-mono);">
+      <input class="input-field modal-ig-token" type="password" placeholder="Access Token (EAAB...)" value="${token || ''}" style="padding:6px 8px;font-size:11px;font-family:var(--font-mono);">
+      <button type="button" class="btn-icon" style="color:var(--danger);padding:4px 8px;font-size:11px;" onclick="this.closest('.modal-ig-row').remove()" title="Remove">✕</button>
+    `;
+    list.appendChild(row);
+  }
+
+  function addModalYtRow(name = '', token = '') {
+    const list = document.getElementById('new-ch-yt-list');
+    if (!list) return;
+    const row = document.createElement('div');
+    row.className = 'modal-yt-row';
+    row.style.cssText = 'display:grid;grid-template-columns:140px 1fr auto;gap:8px;align-items:center;background:rgba(255,255,255,0.02);padding:8px;border-radius:6px;border:1px solid #21262d;';
+    row.innerHTML = `
+      <input class="input-field modal-yt-name" placeholder="Channel Name" value="${name || 'Secondary YouTube'}" style="padding:6px 8px;font-size:11px;">
+      <input class="input-field modal-yt-token" type="password" placeholder="Refresh Token (1//04...)" value="${token || ''}" style="padding:6px 8px;font-size:11px;font-family:var(--font-mono);">
+      <button type="button" class="btn-icon" style="color:var(--danger);padding:4px 8px;font-size:11px;" onclick="this.closest('.modal-yt-row').remove()" title="Remove">✕</button>
+    `;
+    list.appendChild(row);
+  }
+
+  function addCardIgRow(btnEl) {
+    const list = btnEl.closest('div').parentElement.querySelector('.cfg-ig-list');
+    if (!list) return;
+    const row = document.createElement('div');
+    row.className = 'cfg-ig-row';
+    row.style.cssText = 'display:grid;grid-template-columns:130px 1fr 1fr auto;gap:8px;align-items:center;background:rgba(255,255,255,0.02);padding:6px 8px;border-radius:6px;border:1px solid #21262d;';
+    row.innerHTML = `
+      <input class="input-field cfg-ig-name" value="Extra Instagram" placeholder="Account Name" style="padding:5px 8px;font-size:11px;">
+      <input class="input-field cfg-ig-id" value="" placeholder="Instagram User ID" style="padding:5px 8px;font-size:11px;font-family:var(--font-mono);">
+      <input class="input-field cfg-ig-token" type="password" value="" placeholder="Access Token (EAAB...)" style="padding:5px 8px;font-size:11px;font-family:var(--font-mono);">
+      <button type="button" class="btn-icon" style="color:var(--danger);padding:3px 6px;font-size:11px;" onclick="this.closest('.cfg-ig-row').remove()" title="Remove">✕</button>
+    `;
+    list.appendChild(row);
+  }
+
+  function addCardYtRow(btnEl) {
+    const list = btnEl.closest('div').parentElement.querySelector('.cfg-yt-list');
+    if (!list) return;
+    const row = document.createElement('div');
+    row.className = 'cfg-yt-row';
+    row.style.cssText = 'display:grid;grid-template-columns:130px 1fr auto;gap:8px;align-items:center;background:rgba(255,255,255,0.02);padding:6px 8px;border-radius:6px;border:1px solid #21262d;';
+    row.innerHTML = `
+      <input class="input-field cfg-yt-name" value="Extra YouTube" placeholder="Channel Name" style="padding:5px 8px;font-size:11px;">
+      <input class="input-field cfg-yt-token" type="password" value="" placeholder="Refresh Token (1//04...)" style="padding:5px 8px;font-size:11px;font-family:var(--font-mono);">
+      <button type="button" class="btn-icon" style="color:var(--danger);padding:3px 6px;font-size:11px;" onclick="this.closest('.cfg-yt-row').remove()" title="Remove">✕</button>
+    `;
+    list.appendChild(row);
+  }
+
+  /* ─── OAUTH & META PICKER HELPERS ─── */
+  let pickIgTargetKey = null;
+
+  function openPickIgModal(targetKey) {
+    pickIgTargetKey = targetKey;
+    const modal = document.getElementById('modal-pick-ig');
+    if (modal) modal.style.display = 'block';
+
+    // Pre-populate token if available from card or modal
+    let existingToken = '';
+    if (targetKey === 'modal') {
+      existingToken = document.querySelector('#new-ch-ig-list .modal-ig-token')?.value || '';
+    } else {
+      const card = document.querySelector(`.config-card[data-channel-key="${targetKey}"]`);
+      if (card) {
+        existingToken = card.querySelector('.cfg-ig-token')?.value || card.querySelector('.cfg-field-fb-token')?.value || '';
+      }
+    }
+    const tokenInput = document.getElementById('pick-ig-token');
+    if (tokenInput && existingToken) tokenInput.value = existingToken;
+
+    inspectMetaAccounts();
+  }
+
+  function closePickIgModal() {
+    const modal = document.getElementById('modal-pick-ig');
+    if (modal) modal.style.display = 'none';
+  }
+
+  async function inspectMetaAccounts() {
+    const token = (document.getElementById('pick-ig-token')?.value || '').trim();
+    const container = document.getElementById('pick-ig-list-container');
+    if (!container) return;
+
+    container.innerHTML = '<div style="text-align:center;padding:24px;color:var(--text-muted);font-size:12px;">⏳ Detecting accounts from Meta Graph API...</div>';
+
+    try {
+      const res = await fetch(BASE_URL + '/api/meta/inspect-accounts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token })
+      });
+      const data = await res.json();
+      if (!data.success) {
+        container.innerHTML = `<div style="padding:16px;background:rgba(248,81,73,0.1);border:1px solid rgba(248,81,73,0.3);border-radius:8px;color:var(--danger);font-size:12px;">
+          ❌ ${data.message || 'Failed to inspect accounts'}
+          <div style="font-size:11px;color:var(--text-muted);margin-top:6px;">Make sure your Meta Access Token has <code>pages_show_list</code> and <code>instagram_basic</code> permissions.</div>
+        </div>`;
+        return;
+      }
+
+      if (!data.accounts || data.accounts.length === 0) {
+        container.innerHTML = `<div style="text-align:center;padding:24px;color:var(--text-muted);font-size:12px;">
+          No Facebook Pages or linked Instagram Professional accounts found for this token.
+        </div>`;
+        return;
+      }
+
+      container.innerHTML = `
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          ${data.accounts.map(acc => `
+            <div style="display:flex;align-items:center;justify-content:space-between;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:12px 14px;gap:12px;">
+              <div style="display:flex;align-items:center;gap:12px;">
+                <div style="width:38px;height:38px;border-radius:50%;background:linear-gradient(45deg,#f09433,#e6683c,#dc2743,#cc2366,#bc1888);display:flex;align-items:center;justify-content:center;font-size:18px;color:#fff;">
+                  ${acc.igAvatar ? `<img src="${acc.igAvatar}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">` : '📷'}
+                </div>
+                <div>
+                  <div style="font-size:13px;font-weight:800;color:#fff;display:flex;align-items:center;gap:6px;">
+                    <span>${acc.igUsername ? '@' + acc.igUsername : (acc.igName || acc.pageName)}</span>
+                    ${acc.igUserId ? '<span style="font-size:9px;background:rgba(56,139,253,0.15);color:#58a6ff;padding:1px 5px;border-radius:4px;border:1px solid rgba(56,139,253,0.3);">INSTAGRAM LINKED</span>' : '<span style="font-size:9px;background:#21262d;color:var(--text-dim);padding:1px 5px;border-radius:4px;">FB PAGE ONLY</span>'}
+                  </div>
+                  <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">
+                    Page: <b>${acc.pageName}</b> (ID: <span style="font-family:var(--font-mono);">${acc.pageId}</span>)
+                    ${acc.igUserId ? ` · IG ID: <span style="font-family:var(--font-mono);">${acc.igUserId}</span>` : ''}
+                  </div>
+                </div>
+              </div>
+              <button class="btn-primary" style="padding:6px 14px;font-size:11px;white-space:nowrap;" onclick="selectMetaAccount('${acc.igUserId || ''}', '${(acc.igName || acc.igUsername || acc.pageName || '').replace(/'/g, "\\'")}', '${(acc.igUsername || '').replace(/'/g, "\\'")}', '${acc.pageId || ''}', '${(acc.pageName || '').replace(/'/g, "\\'")}', '${(acc.pageAccessToken || '').replace(/'/g, "\\'")}')">
+                👉 Select
+              </button>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    } catch (e) {
+      container.innerHTML = `<div style="padding:16px;background:rgba(248,81,73,0.1);color:var(--danger);font-size:12px;">Error: ${e.message}</div>`;
+    }
+  }
+
+  function selectMetaAccount(igUserId, igName, igUsername, pageId, pageName, pageAccessToken) {
+    if (pickIgTargetKey === 'modal') {
+      const list = document.getElementById('new-ch-ig-list');
+      if (list) {
+        let firstRow = list.querySelector('.modal-ig-row');
+        if (!firstRow || firstRow.querySelector('.modal-ig-id')?.value) {
+          addModalIgRow(igName || ('@' + igUsername) || 'Instagram Account', igUserId, pageAccessToken);
+        } else {
+          firstRow.querySelector('.modal-ig-name').value = igName || ('@' + igUsername) || 'Instagram Account';
+          firstRow.querySelector('.modal-ig-id').value = igUserId;
+          firstRow.querySelector('.modal-ig-token').value = pageAccessToken;
+        }
+      }
+      if (pageId && document.getElementById('new-ch-fb-id')) {
+        document.getElementById('new-ch-fb-id').value = pageId;
+      }
+      if (pageAccessToken && document.getElementById('new-ch-fb-token')) {
+        document.getElementById('new-ch-fb-token').value = pageAccessToken;
+      }
+      showToast(`✅ Linked Instagram: @${igUsername || igName}`, 'ok');
+    } else {
+      const card = document.querySelector(`.config-card[data-channel-key="${pickIgTargetKey}"]`);
+      if (card) {
+        const list = card.querySelector('.cfg-ig-list');
+        if (list) {
+          let emptyRow = Array.from(list.querySelectorAll('.cfg-ig-row')).find(r => !r.querySelector('.cfg-ig-id')?.value);
+          if (emptyRow) {
+            emptyRow.querySelector('.cfg-ig-name').value = igName || ('@' + igUsername) || 'Instagram Account';
+            emptyRow.querySelector('.cfg-ig-id').value = igUserId;
+            emptyRow.querySelector('.cfg-ig-token').value = pageAccessToken;
+          } else {
+            const newRow = document.createElement('div');
+            newRow.className = 'cfg-ig-row';
+            newRow.style.cssText = 'display:grid;grid-template-columns:130px 1fr 1fr auto;gap:8px;align-items:center;background:rgba(255,255,255,0.02);padding:6px 8px;border-radius:6px;border:1px solid #21262d;';
+            newRow.innerHTML = `
+              <input class="input-field cfg-ig-name" value="${igName || ('@' + igUsername) || 'Instagram Account'}" placeholder="Account Name" style="padding:5px 8px;font-size:11px;">
+              <input class="input-field cfg-ig-id" value="${igUserId}" placeholder="Instagram User ID" style="padding:5px 8px;font-size:11px;font-family:var(--font-mono);">
+              <input class="input-field cfg-ig-token" type="password" value="${pageAccessToken}" placeholder="Access Token (EAAB...)" style="padding:5px 8px;font-size:11px;font-family:var(--font-mono);">
+              <button type="button" class="btn-icon" style="color:var(--danger);padding:3px 6px;font-size:11px;" onclick="this.closest('.cfg-ig-row').remove()" title="Remove">✕</button>
+            `;
+            list.appendChild(newRow);
+          }
+        }
+        if (pageId && card.querySelector('.cfg-field-fb-id')) {
+          card.querySelector('.cfg-field-fb-id').value = pageId;
+        }
+        if (pageAccessToken && card.querySelector('.cfg-field-fb-token')) {
+          card.querySelector('.cfg-field-fb-token').value = pageAccessToken;
+        }
+        // Auto-save card changes
+        const saveBtn = card.querySelector('.btn-primary');
+        if (saveBtn) saveChannelConfigFromCard(pickIgTargetKey, saveBtn);
+      }
+      showToast(`✅ Linked & Saved Instagram: @${igUsername || igName}`, 'ok');
+    }
+
+    closePickIgModal();
+  }
+
+  function connectYouTubeOAuth(targetKey) {
+    const authUrl = BASE_URL + '/api/auth/youtube/start?target=' + encodeURIComponent(targetKey);
+    const win = window.open(authUrl, 'yt_oauth_window', 'width=600,height=720,menubar=no,toolbar=no');
+    if (!win) {
+      showToast('Popup was blocked by your browser. Please allow popups for this site.', 'err');
+    }
+  }
+
+  // Window message receiver for Google OAuth callback
+  window.addEventListener('message', (event) => {
+    if (event.data && event.data.type === 'YOUTUBE_AUTH_SUCCESS') {
+      const { channelName, refreshToken, target } = event.data;
+      if (target === 'modal') {
+        const list = document.getElementById('new-ch-yt-list');
+        if (list) {
+          let emptyRow = Array.from(list.querySelectorAll('.modal-yt-row')).find(r => !r.querySelector('.modal-yt-token')?.value);
+          if (emptyRow) {
+            emptyRow.querySelector('.modal-yt-name').value = channelName || 'YouTube Channel';
+            emptyRow.querySelector('.modal-yt-token').value = refreshToken;
+          } else {
+            addModalYtRow(channelName || 'YouTube Channel', refreshToken);
+          }
+        }
+        showToast(`✅ Linked YouTube Channel: [${channelName}]`, 'ok');
+      } else {
+        const card = document.querySelector(`.config-card[data-channel-key="${target}"]`);
+        if (card) {
+          const list = card.querySelector('.cfg-yt-list');
+          if (list) {
+            let emptyRow = Array.from(list.querySelectorAll('.cfg-yt-row')).find(r => !r.querySelector('.cfg-yt-token')?.value);
+            if (emptyRow) {
+              emptyRow.querySelector('.cfg-yt-name').value = channelName || 'YouTube Channel';
+              emptyRow.querySelector('.cfg-yt-token').value = refreshToken;
+            } else {
+              const newRow = document.createElement('div');
+              newRow.className = 'cfg-yt-row';
+              newRow.style.cssText = 'display:grid;grid-template-columns:130px 1fr auto;gap:8px;align-items:center;background:rgba(255,255,255,0.02);padding:6px 8px;border-radius:6px;border:1px solid #21262d;';
+              newRow.innerHTML = `
+                <input class="input-field cfg-yt-name" value="${channelName || 'YouTube Channel'}" placeholder="Channel Name" style="padding:5px 8px;font-size:11px;">
+                <input class="input-field cfg-yt-token" type="password" value="${refreshToken}" placeholder="Refresh Token (1//04...)" style="padding:5px 8px;font-size:11px;font-family:var(--font-mono);">
+                <button type="button" class="btn-icon" style="color:var(--danger);padding:3px 6px;font-size:11px;" onclick="this.closest('.cfg-yt-row').remove()" title="Remove">✕</button>
+              `;
+              list.appendChild(newRow);
+            }
+          }
+          // Auto-save card changes
+          const saveBtn = card.querySelector('.btn-primary');
+          if (saveBtn) saveChannelConfigFromCard(target, saveBtn);
+          showToast(`✅ Linked & Saved YouTube Channel: [${channelName}]`, 'ok');
+        } else {
+          showToast(`✅ YouTube Auth Success: [${channelName}]`, 'ok');
+        }
+      }
+    }
+  });
+
+  function openAddChannelModal() {
+    const modal = document.getElementById('modal-add-channel');
+    if (modal) modal.style.display = 'block';
+  }
+
+  function closeAddChannelModal() {
+    const modal = document.getElementById('modal-add-channel');
+    if (modal) modal.style.display = 'none';
+  }
+
+  async function submitAddChannelForm() {
+    const key = (document.getElementById('new-ch-key').value || '').toLowerCase().trim().replace(/[^a-z0-9_]/g, '_');
+    const brandName = (document.getElementById('new-ch-name').value || '').trim();
+    const handle = (document.getElementById('new-ch-handle').value || '').trim();
+    const niche = document.getElementById('new-ch-niche').value;
+    
+    // Gather all IG accounts
+    const igRows = Array.from(document.querySelectorAll('#new-ch-ig-list .modal-ig-row'));
+    const instagramAccounts = igRows.map(row => ({
+      name: (row.querySelector('.modal-ig-name')?.value || '').trim(),
+      igUserId: (row.querySelector('.modal-ig-id')?.value || '').trim(),
+      accessToken: (row.querySelector('.modal-ig-token')?.value || '').trim(),
+    })).filter(a => a.igUserId && a.accessToken);
+
+    // Gather all YT channels
+    const ytRows = Array.from(document.querySelectorAll('#new-ch-yt-list .modal-yt-row'));
+    const youtubeChannels = ytRows.map(row => ({
+      name: (row.querySelector('.modal-yt-name')?.value || '').trim(),
+      refreshToken: (row.querySelector('.modal-yt-token')?.value || '').trim(),
+    })).filter(c => c.refreshToken);
+
+    const fbPageId = (document.getElementById('new-ch-fb-id').value || '').trim();
+    const fbAccessToken = (document.getElementById('new-ch-fb-token').value || '').trim();
+    const watchChannels = (document.getElementById('new-ch-watchlist').value || '').split(',').map(s => s.trim().replace(/^@/, '')).filter(Boolean);
+    const searchMode = document.getElementById('new-ch-search-mode').value;
+    const dailyCount = Number(document.getElementById('new-ch-daily').value) || 5;
+    const scheduleTime = (document.getElementById('new-ch-time').value || '09:00').trim();
+    const outroVersion = document.getElementById('new-ch-outro').value;
+
+    if (!key || !brandName || !handle) {
+      showToast('Please fill in required fields (Key, Brand Name, Handle)', 'err');
+      return;
+    }
+
+    if (instagramAccounts.length === 0 && youtubeChannels.length === 0) {
+      showToast('Please provide at least one publishing destination (Instagram or YouTube)', 'err');
+      return;
+    }
+
+    try {
+      const res = await fetch(BASE_URL + '/api/channels/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          key,
+          brandName,
+          handle,
+          niche,
+          instagramAccounts,
+          youtubeChannels,
+          facebookPageId: fbPageId || undefined,
+          facebookAccessToken: fbAccessToken || undefined,
+          watchChannels,
+          searchMode,
+          dailyCount,
+          scheduleTime,
+          outroVersion,
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(data.message || `Channel [${brandName}] created and saved!`, 'ok');
+        closeAddChannelModal();
+        fetchDashboardData();
+      } else {
+        showToast(data.message || 'Failed to save channel', 'err');
+      }
+    } catch(e) {
+      showToast('Error saving new channel: ' + e.message, 'err');
+    }
+  }
+
+  async function saveChannelConfigFromCard(key, btnEl) {
+    const card = btnEl.closest('.config-card');
+    if (!card) return;
+
+    const brandName = (card.querySelector('.cfg-field-name')?.value || '').trim();
+    const handle = (card.querySelector('.cfg-field-handle')?.value || '').trim();
+    const niche = card.querySelector('.cfg-field-niche')?.value || 'tech';
+    
+    // Gather all IG accounts in this card
+    const igRows = Array.from(card.querySelectorAll('.cfg-ig-list .cfg-ig-row'));
+    const instagramAccounts = igRows.map(row => ({
+      name: (row.querySelector('.cfg-ig-name')?.value || '').trim(),
+      igUserId: (row.querySelector('.cfg-ig-id')?.value || '').trim(),
+      accessToken: (row.querySelector('.cfg-ig-token')?.value || '').trim(),
+    })).filter(a => a.igUserId && a.accessToken);
+
+    // Gather all YT channels in this card
+    const ytRows = Array.from(card.querySelectorAll('.cfg-yt-list .cfg-yt-row'));
+    const youtubeChannels = ytRows.map(row => ({
+      name: (row.querySelector('.cfg-yt-name')?.value || '').trim(),
+      refreshToken: (row.querySelector('.cfg-yt-token')?.value || '').trim(),
+    })).filter(c => c.refreshToken);
+
+    const fbPageId = (card.querySelector('.cfg-field-fb-id')?.value || '').trim();
+    const fbAccessToken = (card.querySelector('.cfg-field-fb-token')?.value || '').trim();
+    const dailyCount = Number(card.querySelector('.cfg-field-daily')?.value) || 5;
+    const searchMode = card.querySelector('.cfg-field-searchmode')?.value || 'channels';
+    const scheduleTime = (card.querySelector('.cfg-field-time')?.value || '09:00').trim();
+    const outroVersion = card.querySelector('.cfg-field-outro')?.value || 'v2';
+    const videoMode = card.querySelector('.cfg-field-videomode')?.value || 'curator';
+    const subtitleStyle = card.querySelector('.cfg-field-substyle')?.value || 'classic';
+    const watchChannels = (card.querySelector('.cfg-field-watchlist')?.value || '').split(',').map(s => s.trim().replace(/^@/, '')).filter(Boolean);
+
+    try {
+      btnEl.disabled = true;
+      btnEl.innerText = '⏳ Saving...';
+      const res = await fetch(BASE_URL + '/api/channels/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          key,
+          brandName,
+          handle,
+          niche,
+          instagramAccounts,
+          youtubeChannels,
+          facebookPageId: fbPageId || undefined,
+          facebookAccessToken: fbAccessToken || undefined,
+          dailyCount,
+          searchMode,
+          scheduleTime,
+          outroVersion,
+          videoMode,
+          subtitleStyle,
+          watchChannels,
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(data.message || `Channel [${brandName}] updated!`, 'ok');
+        btnEl.innerText = '✓ Saved';
+        setTimeout(() => { btnEl.disabled = false; btnEl.innerText = '💾 Save Config'; }, 2000);
+        fetchDashboardData();
+      } else {
+        showToast(data.message || 'Failed to save config', 'err');
+        btnEl.disabled = false;
+        btnEl.innerText = '💾 Save Config';
+      }
+    } catch(e) {
+      showToast('Error: ' + e.message, 'err');
+      btnEl.disabled = false;
+      btnEl.innerText = '💾 Save Config';
+    }
+  }
+
+  /* ─── AI FACELESS MULTI-SCENE GENERATOR ─── */
+  async function triggerAiFacelessGeneration() {
+    const channelKey = document.getElementById('ai-gen-channel-select')?.value || 'codeorcap';
+    const format = document.getElementById('ai-gen-format-select')?.value || 'short';
+    const subStyle = document.getElementById('ai-gen-sub-style')?.value || 'classic';
+    const topic = (document.getElementById('ai-gen-topic-input')?.value || '').trim();
+    const btn = document.getElementById('btn-ai-gen');
+    const resultBox = document.getElementById('ai-gen-result-container');
+
+    if (!topic) {
+      showToast('Please enter a topic or script first.', 'err');
+      return;
+    }
+
+    const isLong = format !== 'short';
+    if (btn) {
+      btn.disabled = true;
+      btn.innerText = isLong ? '⏳ Generating 5-Min Video & B-Roll...' : '⏳ Generating Multi-Scene Short...';
+    }
+
+    if (resultBox) {
+      resultBox.style.display = 'block';
+      resultBox.innerHTML = `
+        <div style="display:flex;align-items:center;gap:10px;color:var(--text-muted);font-size:12px;">
+          <div class="spinner" style="width:16px;height:16px;border-width:2px;"></div>
+          <span>Writing in-depth script, downloading matching ${isLong ? '16:9 landscape' : '9:16 vertical'} HD B-roll, synthesizing neural voiceover, and assembling video...</span>
+        </div>
+      `;
+    }
+
+    try {
+      const autoPublish = document.getElementById('ai-gen-autopublish')?.checked ?? true;
+      const res = await fetch(BASE_URL + '/api/generate/faceless', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          channelKey,
+          topic,
+          durationTarget: format,
+          aspectRatio: isLong ? '16:9' : '9:16',
+          subtitleStyle: subStyle,
+          autoPublish: autoPublish,
+        })
+      });
+      const data = await res.json();
+
+      if (!data.success) {
+        if (resultBox) {
+          resultBox.innerHTML = `
+            <div style="color:var(--danger);font-size:12px;padding:8px 0;">
+              ❌ Generation Failed: ${data.message || 'Unknown error'}
+            </div>
+          `;
+        }
+        showToast('Generation failed: ' + (data.message || ''), 'err');
+        return;
+      }
+
+      showToast(`✅ ${isLong ? 'Full 5-Min Video' : 'Short'} Generated Successfully!`, 'ok');
+      const filename = data.videoPath ? data.videoPath.split('/').pop() : '';
+      const videoSrc = filename ? `/output/${encodeURIComponent(filename)}` : '';
+      const is16x9 = data.aspectRatio === '16:9';
+      const publishedUrl = (data.publishedUrls && data.publishedUrls.length > 0) ? (data.publishedUrls[0]?.url || '') : '';
+
+      window._lastGeneratedAiVideo = {
+        videoPath: data.videoPath,
+        channelKey,
+        title: data.metadata?.title || 'Video',
+        description: data.metadata?.description || '',
+        tags: data.metadata?.tags || []
+      };
+
+      if (resultBox) {
+        resultBox.innerHTML = `
+          <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;">
+            <div style="flex:1;min-width:260px;">
+              <div style="font-size:15px;font-weight:800;color:#fff;margin-bottom:6px;">${data.metadata?.title || 'Generated Video'}</div>
+              <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px;">
+                ⏱️ Duration: <b>${data.duration ? data.duration.toFixed(1) + 's' : '—'}</b> · 🎬 Scenes: <b>${data.scenesCount || '—'}</b> · 📺 Format: <b>${data.aspectRatio || '9:16'}</b> · 🎨 Style: <b>${subStyle}</b>
+              </div>
+              <div style="background:#161b22;border:1px solid #21262d;border-radius:6px;padding:10px;font-size:11px;color:#c9d1d9;margin-bottom:12px;line-height:1.5;max-height:140px;overflow-y:auto;">
+                <b>Full Script:</b><br>${data.fullScript || ''}
+              </div>
+              <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+                ${videoSrc ? `<a href="${videoSrc}" download class="btn-primary" style="padding:7px 14px;font-size:12px;text-decoration:none;display:inline-flex;align-items:center;gap:4px;">⬇️ Download MP4</a>` : ''}
+                ${publishedUrl ? `
+                  <a href="${publishedUrl}" target="_blank" class="btn-primary" style="background:#238636;border-color:#2ea043;padding:7px 14px;font-size:12px;text-decoration:none;display:inline-flex;align-items:center;gap:6px;">
+                    <span>▶ View on YouTube (Published)</span>
+                  </a>
+                ` : `
+                  <button class="btn-primary" id="btn-publish-yt" style="background:#e53e3e;border-color:#fc8181;padding:7px 14px;font-size:12px;display:inline-flex;align-items:center;gap:6px;" onclick="publishAiVideoToYouTube()">
+                    <span>🚀 Publish to YouTube</span>
+                  </button>
+                `}
+              </div>
+            </div>
+            ${videoSrc ? `
+              <div style="width:${is16x9 ? '300px' : '160px'};height:${is16x9 ? '168px' : '284px'};background:#000;border-radius:8px;overflow:hidden;border:1px solid #30363d;flex-shrink:0;">
+                <video src="${videoSrc}" controls autoplay loop muted style="width:100%;height:100%;object-fit:cover;"></video>
+              </div>
+            ` : ''}
+          </div>
+        `;
+      }
+    } catch (err) {
+      if (resultBox) {
+        resultBox.innerHTML = `<div style="color:var(--danger);font-size:12px;">❌ Network Error: ${err.message}</div>`;
+      }
+      showToast('Error: ' + err.message, 'err');
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerText = '✨ Generate Faceless Video';
+      }
+    }
+  }
+
+  async function publishAiVideoToYouTube() {
+    const info = window._lastGeneratedAiVideo;
+    if (!info || !info.videoPath) {
+      showToast('No generated video available to publish', 'err');
+      return;
+    }
+
+    const btn = document.getElementById('btn-publish-yt');
+    if (btn) {
+      btn.disabled = true;
+      btn.innerText = '⏳ Uploading to YouTube...';
+    }
+
+    try {
+      const res = await fetch(BASE_URL + '/api/publish/youtube-video', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          channelKey: info.channelKey,
+          videoPath: info.videoPath,
+          title: info.title,
+          description: info.description,
+          tags: info.tags
+        })
+      });
+      const data = await res.json();
+      if (data.success && data.results && data.results.length > 0) {
+        const firstUrl = data.results[0]?.url || '';
+        showToast('🎉 Published to YouTube successfully!', 'ok');
+        if (btn) {
+          btn.innerText = '✓ Published!';
+          if (firstUrl) {
+            btn.outerHTML = `<a href="${firstUrl}" target="_blank" class="btn-primary" style="background:#238636;border-color:#2ea043;padding:7px 14px;font-size:12px;text-decoration:none;display:inline-flex;align-items:center;gap:4px;">▶ View on YouTube</a>`;
+          }
+        }
+      } else {
+        showToast('YouTube publish failed: ' + (data.message || 'Unknown error'), 'err');
+        if (btn) {
+          btn.disabled = false;
+          btn.innerText = '🚀 Publish to YouTube';
+        }
+      }
+    } catch (err) {
+      showToast('Upload error: ' + err.message, 'err');
+      if (btn) {
+        btn.disabled = false;
+        btn.innerText = '🚀 Publish to YouTube';
+      }
+    }
+  }
+
+  async function deleteChannelProfile(key) {
+    if (!confirm(`Are you sure you want to delete the channel profile [${key}]?`)) return;
+    try {
+      const res = await fetch(BASE_URL + '/api/channels/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(data.message || 'Channel deleted', 'ok');
+        fetchDashboardData();
+      } else {
+        showToast(data.message || 'Failed to delete channel', 'err');
+      }
+    } catch(e) {
+      showToast('Error deleting channel', 'err');
+    }
   }
 
   /* ─── VIRAL ANALYTICS ─── */

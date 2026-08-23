@@ -18,6 +18,7 @@ import { parseAiJson, extractJsonArrayField } from "./utils/json";
 import { creatorZoneStore } from "./utils/creatorZones";
 import { getFileHash } from "./utils/cache";
 import { JobDatabase } from "./utils/db";
+import { getStoredChannelConfig, StoredInstagramAccount, StoredYoutubeChannel } from "./utils/channelConfigStore";
 import { getCopyrightRisk, formatRisk } from "./audio/copyrightCheck";
 
 import { ViralAnalyzer } from "./utils/viral-analyzer";
@@ -27,6 +28,8 @@ import { TTSService } from "./audio/tts";
 import { estimateWordTimings, groupWordsIntoLines, generateASSFile } from "./audio/subtitles";
 import { buildGridPreview } from "./utils/gridPreview";
 import { TranscriptionService } from "./audio/transcription";
+import { PexelsService } from "./video/pexelsService";
+import { MultiSceneGenerator } from "./video/multiSceneGenerator";
 
 // Metadata format rules (title/description/keywords/analysis) live on the channel
 // profile's ContentTheme (src/config/themes.ts) so every generation path (unified
@@ -159,6 +162,7 @@ export class DirectUploader {
   }
   private viralAnalyzer = new ViralAnalyzer();
   private analyzer = new ImageAnalyzer();
+  private pexels = new PexelsService();
   private queue = new JobQueue(1);
   private pending = new Map<string, PendingUpload>();
   public pendingSettingsReviews = new Map<
@@ -1146,11 +1150,29 @@ Rules:
             `Attempting metadata generation via FreeLLMAPI (Attempt ${attempt + 1}/${AI_MAX_ATTEMPTS})...`,
             "DirectUploader",
           );
-          raw = await this.freellmapi.generateVision(prompt, base64, mimeType);
+          try {
+            raw = await this.freellmapi.generateVision(prompt, base64, mimeType);
+          } catch (freeErr: any) {
+            pipelineLogger.warn(
+              `FreeLLMAPI vision failed (${freeErr?.message || freeErr}) — trying Gemini Vision...`,
+              "DirectUploader",
+            );
+            if (this.gemini.enabled) {
+              raw = await this.gemini.generateVision(prompt, base64, mimeType);
+            } else {
+              throw freeErr;
+            }
+          }
+        } else if (this.gemini.enabled) {
+          pipelineLogger.info(
+            `Attempting metadata generation via Gemini Vision (Attempt ${attempt + 1}/${AI_MAX_ATTEMPTS})...`,
+            "DirectUploader",
+          );
+          raw = await this.gemini.generateVision(prompt, base64, mimeType);
         }
 
         if (!raw) {
-          throw new Error("FreeLLMAPI failed to respond.");
+          throw new Error("AI vision failed to respond.");
         }
 
         const obj = parseAiJson<VideoMetadata>(raw);
@@ -1244,11 +1266,29 @@ ${this.theme.analysisRules}`;
             `Attempting metadata generation via FreeLLMAPI (Attempt ${attempt + 1}/${AI_MAX_ATTEMPTS})...`,
             "DirectUploader",
           );
-          raw = await this.freellmapi.generateVision(prompt, base64, mimeType);
+          try {
+            raw = await this.freellmapi.generateVision(prompt, base64, mimeType);
+          } catch (freeErr: any) {
+            pipelineLogger.warn(
+              `FreeLLMAPI viral vision failed (${freeErr?.message || freeErr}) — trying Gemini Vision...`,
+              "DirectUploader",
+            );
+            if (this.gemini.enabled) {
+              raw = await this.gemini.generateVision(prompt, base64, mimeType);
+            } else {
+              throw freeErr;
+            }
+          }
+        } else if (this.gemini.enabled) {
+          pipelineLogger.info(
+            `Attempting metadata generation via Gemini Vision (Attempt ${attempt + 1}/${AI_MAX_ATTEMPTS})...`,
+            "DirectUploader",
+          );
+          raw = await this.gemini.generateVision(prompt, base64, mimeType);
         }
 
         if (!raw) {
-          throw new Error("FreeLLMAPI failed to respond.");
+          throw new Error("AI vision failed to respond.");
         }
 
         const obj = parseAiJson<VideoMetadata>(raw);
@@ -1369,6 +1409,34 @@ ${this.theme.analysisRules}`;
     // Remove the inline buttons from the review message
     await this.telegram.removeInlineButtons(chatId, reviewMessageId);
 
+    // Refresh credentials dynamically from DB in case new channels/accounts were added on dashboard
+    try {
+      const stored = await getStoredChannelConfig(this.profile.key);
+      if (stored) {
+        if (stored.youtubeChannels && stored.youtubeChannels.length > 0) {
+          const ytList = stored.youtubeChannels.filter((c: StoredYoutubeChannel) => c.refreshToken);
+          if (ytList.length > 0) {
+            this.profile.youtube.channels = ytList;
+            this.youtube = new YouTubeService({
+              clientId: stored.youtubeClientId || process.env.YOUTUBE_CLIENT_ID || "",
+              clientSecret: stored.youtubeClientSecret || process.env.YOUTUBE_CLIENT_SECRET || "",
+              redirectUri: stored.youtubeRedirectUri || process.env.YOUTUBE_REDIRECT_URI || "http://localhost:3000/oauth2callback",
+              channels: ytList,
+            });
+          }
+        }
+        if (stored.instagramAccounts && stored.instagramAccounts.length > 0) {
+          const igList = stored.instagramAccounts.filter((a: StoredInstagramAccount) => a.accessToken && a.igUserId);
+          if (igList.length > 0) {
+            this.profile.instagram.accounts = igList;
+            this.instagram = new InstagramPublisher(igList);
+          }
+        }
+      }
+    } catch (e: any) {
+      pipelineLogger.warn(`[onPublish] Could not refresh channel configs from DB: ${e.message}`, "DirectUploader");
+    }
+
     await this.telegram.sendMessage(
       chatId,
       `🚀 *Uploading to ${this.profile.youtube.channels.length} YouTube channel(s), ${this.profile.instagram.accounts.length} Instagram account(s), and Facebook Page…*`,
@@ -1480,6 +1548,11 @@ ${this.theme.analysisRules}`;
         results[0]?.url,
       );
 
+      // Automatically generate and publish companion 5-minute deep-dive YouTube video
+      this.triggerCompanionLongVideo(id, metadata, pending.context, chatId).catch((companionErr) => {
+        pipelineLogger.warn(`[CompanionLongVideo] Background error: ${companionErr.message}`, "DirectUploader");
+      });
+
       // Instead of deleting the review video, keep it for manual download.
       // Also send the final video with title and description so the user can retrieve metadata.
       try {
@@ -1557,6 +1630,73 @@ ${this.theme.analysisRules}`;
 
     this.pending.delete(id);
     this.resolveJob(id);
+  }
+
+  /**
+   * Automatically generates and publishes a companion 5-minute deep-dive YouTube video (16:9 Landscape)
+   * based on the Short's topic, transcript, and technical concepts.
+   */
+  private async triggerCompanionLongVideo(
+    _id: string,
+    metadata: VideoMetadata,
+    _context: PipelineContext,
+    chatId: number,
+  ): Promise<void> {
+    const topic = metadata.title || this.theme.niche;
+    const niche = this.theme.niche;
+    pipelineLogger.info(
+      `[AutoLongVideo] Spawning 5-minute companion video generator for Short "${topic}"`,
+      "DirectUploader",
+    );
+
+    try {
+      const generator = new MultiSceneGenerator();
+      const result = await generator.generateFacelessShort({
+        topic: `Comprehensive in-depth guide to: ${topic}. Full educational breakdown, key mechanisms, code architecture, and practical best practices.`,
+        channelKey: this.profile.key,
+        brandName: this.profile.brandName,
+        handle: this.profile.handle,
+        niche,
+        aspectRatio: "16:9",
+        durationTarget: "5min",
+      });
+
+      if (!result.success || !result.videoPath) {
+        throw new Error("5-minute companion video rendering failed");
+      }
+
+      pipelineLogger.info(
+        `[AutoLongVideo] 5-minute video rendered: ${result.videoPath} (${result.duration.toFixed(1)}s). Publishing to YouTube…`,
+        "DirectUploader",
+      );
+
+      const ytResults = await this.youtube.uploadToAllChannels(result.videoPath, {
+        title: result.metadata.title || `${metadata.title} | Full In-Depth Guide`,
+        description: `${result.metadata.description}\n\n🎬 Full deep-dive companion video for our Short on ${topic}.\n\nSubscribe to ${this.profile.brandName} (${this.profile.handle}) for daily engineering insights!`,
+        tags: [...(result.metadata.tags || []), "guide", "tutorial", "deep dive"],
+      });
+
+      const firstUrl = ytResults.find((r) => r && r.url)?.url;
+      if (firstUrl) {
+        pipelineLogger.checkpoint(
+          "Companion 5-Minute YouTube Video Published",
+          true,
+          firstUrl,
+        );
+
+        if (chatId) {
+          await this.telegram.sendMessage(
+            chatId,
+            `🎬 *Companion 5-Minute Long Video Published on YouTube!*\n\n*Topic:* ${escapeMarkdown(metadata.title)}\n*Watch Full Video:* ${escapeMarkdown(firstUrl)}`,
+          );
+        }
+      }
+    } catch (err: any) {
+      pipelineLogger.warn(
+        `[AutoLongVideo] Failed to generate/publish companion 5-min video: ${err.message}`,
+        "DirectUploader",
+      );
+    }
   }
 
   // ── Review button handlers ─────────────────────────────────────────────────
@@ -2404,112 +2544,99 @@ ${this.theme.analysisRules}`;
         );
       }
 
-      // ── Mood filtering logic per profile ─────────────────────────────────
+      // ── Mood-Based Channel Recognition & Auto-Routing ────────────────────
       const mood = normalizeMood(context.metadata?.mood);
-      const isCodeOrCap = this.profile.key.toLowerCase() === "codeorcap";
-      const isPromptGag = this.profile.key.toLowerCase() === "prompt_gag";
+      const rawText = `${context.captionMetadata?.title || ""} ${context.captionMetadata?.description || ""} ${(context.metadata?.tags || []).join(" ")}`.toLowerCase();
 
-      if (isCodeOrCap && mood === "funny") {
-        pipelineLogger.info(
-          `[CodeOrCap] Bypassing funny reel (${id}) — will not publish on CodeOrCap. Redirecting to PromptGag.`,
-          "DirectUploader",
-        );
-        const adminChatId = context.telegramMeta?.chatId || this.profile.watch.adminChatId || 0;
-        if (adminChatId) {
-          await this.telegram.sendMessage(
-            adminChatId,
-            `ℹ️ *Redirecting:* Reel \`@${context.channel || "unknown"}/${context.shortcode || "unknown"}\` has mood *funny*. Redirecting to PromptGag.`,
-          ).catch((e) => pipelineLogger.error("Failed to send redirect message", e, "DirectUploader"));
-        }
-
-        // Find PromptGag uploader
-        const targetUploader = DirectUploader.instances.find(
-          (inst) => inst.profile.key.toLowerCase() === "prompt_gag"
-        );
-        if (targetUploader) {
-          pipelineLogger.info(`Found PromptGag uploader. Triggering redirected job ${id}.`, "DirectUploader");
-          // Clone and adapt context
-          const targetContext: PipelineContext = {
-            ...context,
-            status: "received",
-            metadata: undefined,
-            moodPinned: "funny",
-          };
-          if (targetUploader.profile.watch.adminChatId) {
-            targetContext.telegramMeta = {
-              ...context.telegramMeta,
-              chatId: targetUploader.profile.watch.adminChatId,
-              messageId: 0,
-            };
-          }
-          targetUploader.run(targetContext).catch((err) => {
-            pipelineLogger.error(`Redirected job ${id} failed on PromptGag uploader`, err, "DirectUploader");
-          });
-        } else {
-          pipelineLogger.warn("PromptGag uploader not found. Could not redirect funny reel.", "DirectUploader");
-        }
-
-        this.db.updateJob(id, {
-          status: "failed",
-          currentStep: "Bypassed: redirected funny reel to PromptGag",
-          context,
-        });
-        this.resolveJob(id);
-        return;
+      let targetChannelKey = "codeorcap";
+      if (
+        mood === "funny" ||
+        rawText.includes("#meme") ||
+        rawText.includes("#funny") ||
+        rawText.includes("#comedy") ||
+        rawText.includes("#joke") ||
+        rawText.includes("#prank")
+      ) {
+        targetChannelKey = "prompt_gag";
+      } else if (
+        mood === "emotional" ||
+        mood === "sad" ||
+        mood === "romantic" ||
+        mood === "horror" ||
+        rawText.includes("#story") ||
+        rawText.includes("#kahani") ||
+        rawText.includes("#moralstories") ||
+        rawText.includes("#storytime") ||
+        rawText.includes("#hindikahani")
+      ) {
+        targetChannelKey = "storiyum";
+      } else {
+        targetChannelKey = "codeorcap";
       }
 
-      if (isPromptGag && mood !== "funny") {
-        pipelineLogger.info(
-          `[PromptGag] Bypassing non-funny reel (${id}, mood: ${mood}) — will not publish on PromptGag. Redirecting to CodeOrCap.`,
-          "DirectUploader",
-        );
-        const adminChatId = context.telegramMeta?.chatId || this.profile.watch.adminChatId || 0;
-        if (adminChatId) {
-          await this.telegram.sendMessage(
-            adminChatId,
-            `ℹ️ *Redirecting:* Reel \`@${context.channel || "unknown"}/${context.shortcode || "unknown"}\` has mood *${mood}*. Redirecting to CodeOrCap.`,
-          ).catch((e) => pipelineLogger.error("Failed to send redirect message", e, "DirectUploader"));
-        }
-
-        // Find CodeOrCap uploader
+      const currentKey = this.profile.key.toLowerCase();
+      if (currentKey !== targetChannelKey && !context.channelPinned) {
         const targetUploader = DirectUploader.instances.find(
-          (inst) => inst.profile.key.toLowerCase() === "codeorcap"
+          (inst) => inst.profile.key.toLowerCase() === targetChannelKey,
         );
+
         if (targetUploader) {
-          pipelineLogger.info(`Found CodeOrCap uploader. Triggering redirected job ${id}.`, "DirectUploader");
-          // Clone and adapt context
+          pipelineLogger.info(
+            `[Auto-Routing] Detected mood "${mood}" → Redirecting job ${id} from ${this.profile.brandName} to ${targetUploader.profile.brandName}`,
+            "DirectUploader",
+          );
+
+          const adminChatId =
+            context.telegramMeta?.chatId || this.profile.watch.adminChatId || 0;
+          if (adminChatId) {
+            await this.telegram
+              .sendMessage(
+                adminChatId,
+                `🎯 *Auto-Recognized Channel:* *${targetUploader.profile.brandName}*\n` +
+                  `• *Detected Mood:* \`${mood}\`\n` +
+                  `• *Target Profile:* \`${targetUploader.profile.handle}\`\n\n` +
+                  `Routing reel for specialized ${targetUploader.profile.brandName} video processing...`,
+              )
+              .catch((e) =>
+                pipelineLogger.error(
+                  "Failed to send routing message",
+                  e,
+                  "DirectUploader",
+                ),
+              );
+          }
+
           const targetContext: PipelineContext = {
             ...context,
             status: "received",
             metadata: undefined,
             moodPinned: mood,
+            channelPinned: true, // prevent routing loop
+            channelProfileKey: targetChannelKey,
           };
-          if (targetUploader.profile.watch.adminChatId) {
-            targetContext.telegramMeta = {
-              ...context.telegramMeta,
-              chatId: targetUploader.profile.watch.adminChatId,
-              messageId: 0,
-            };
-          }
-          targetUploader.run(targetContext).catch((err) => {
-            pipelineLogger.error(`Redirected job ${id} failed on CodeOrCap uploader`, err, "DirectUploader");
-          });
-        } else {
-          pipelineLogger.warn("CodeOrCap uploader not found. Could not redirect non-funny reel.", "DirectUploader");
-        }
 
-        this.db.updateJob(id, {
-          status: "failed",
-          currentStep: `Bypassed: redirected non-funny mood ${mood} to CodeOrCap`,
-          context,
-        });
-        this.resolveJob(id);
-        return;
+          targetUploader.run(targetContext).catch((err) => {
+            pipelineLogger.error(
+              `Redirected job ${id} failed on ${targetUploader.profile.brandName} uploader`,
+              err,
+              "DirectUploader",
+            );
+          });
+
+          this.db.updateJob(id, {
+            status: "failed",
+            currentStep: `Auto-routed to ${targetUploader.profile.brandName} based on mood "${mood}"`,
+            context,
+          });
+          this.resolveJob(id);
+          return;
+        }
       }
 
       // ── PRE-PROCESSING SETTINGS REVIEW GATE ──────────────────────────────
       // AI has analyzed the media; let the user confirm/override the processing
       // settings (or let the 60s timer proceed with the AI recommendation).
+      const isPromptGag = this.profile.key.toLowerCase() === "prompt_gag";
 
       // Apply preset overrides for PromptGag
       if (isPromptGag) {
@@ -4409,16 +4536,26 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
   }
 
   private async renderScorePng(score: number, outputPath: string): Promise<void> {
-    const W = 560;
-    const H = 180;
+    const W = 620;
+    const H = 200;
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">
-      <rect width="${W}" height="${H}" rx="24" ry="24" fill="#0B0B0B" fill-opacity="0.88"/>
-      <rect x="4" y="4" width="${W - 8}" height="${H - 8}" rx="20" ry="20"
-            fill="none" stroke="#FFB800" stroke-width="4"/>
-      <text x="${W / 2}" y="${H * 0.75}"
-            font-family="Arial Black, Arial, sans-serif"
-            font-size="110" font-weight="900"
-            fill="#FFB800" text-anchor="middle">${score}/10</text>
+      <defs>
+        <linearGradient id="scoreBg" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#141923" stop-opacity="0.95"/>
+          <stop offset="100%" stop-color="#0a0d14" stop-opacity="0.95"/>
+        </linearGradient>
+      </defs>
+      <rect width="${W}" height="${H}" rx="28" ry="28" fill="url(#scoreBg)"/>
+      <rect x="4" y="4" width="${W - 8}" height="${H - 8}" rx="24" ry="24"
+            fill="none" stroke="#FFB800" stroke-width="5"/>
+      <text x="${W / 2}" y="60"
+            font-family="Arial, -apple-system, sans-serif"
+            font-size="30" font-weight="900" letter-spacing="3"
+            fill="#8b949e" text-anchor="middle">FACT CHECK SCORE</text>
+      <text x="${W / 2}" y="158"
+            font-family="Arial Black, Arial, -apple-system, sans-serif"
+            font-size="96" font-weight="900"
+            fill="#FFB800" text-anchor="middle">${score} <tspan font-size="52" fill="#e6edf3">/ 10</tspan></text>
     </svg>`;
     await sharp(Buffer.from(svg)).png().toFile(outputPath);
   }
@@ -4469,6 +4606,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       path.join(tempDir, "transition_bg_frame.png"),
       path.join(tempDir, "transition_clip.mp4"),
       path.join(tempDir, "transition_text.txt"),
+      path.join(tempDir, "pexels_broll.mp4"),
     ];
 
     // Per-profile config: avatar asset file + Whisper transcript timings
@@ -4480,9 +4618,9 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         gapDuration:  0.60,                 // Whisper: 3.46–4.06s
         seg2Target:   3.76,                 // Whisper: 4.06–7.82s
         scoreEnabled: true as const,
-        scorePinStart: "2.40",              // avatar says "out of 10" at 2.40s
-        scorePinEnd:   "3.46",
-        scoreFadeOut:  "3.06",
+        scorePinStart: "1.80",              // score badge displays as avatar announces verdict
+        scorePinEnd:   "7.80",              // stays visible through the entire verdict & outro
+        scoreFadeOut:  "7.40",
       },
       storiyum: {
         assetFile:    "storiyum_cta.mp4",
@@ -4621,12 +4759,12 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
           const { label: verdictLabel, color: verdictColor } = this.verdictCategory(
             context.metadata?.verdict ?? "",
           );
-          extraInputs = `-i "${scorePngPath}" ` + (fs.existsSync(numberTtsPath) ? `-i "${numberTtsPath}" ` : "");
+          extraInputs = `-loop 1 -i "${scorePngPath}" ` + (fs.existsSync(numberTtsPath) ? `-i "${numberTtsPath}" ` : "");
           const hasNumberTts = fs.existsSync(numberTtsPath);
           filterComplex = [
             `[0:v]setpts=PTS-STARTPTS[bg]`,
             `[1:v]fade=in:st=${scoreShowStart}:d=0.4,fade=out:st=${scoreFadeOutStart}:d=0.4[scoreCard]`,
-            `[bg][scoreCard]overlay=x=(W-overlay_w)/2:y=H*0.08:enable='between(t,${scoreShowStart},${scoreShowEnd})'[withScore]`,
+            `[bg][scoreCard]overlay=x=(W-overlay_w)/2:y=H*0.08:shortest=1:enable='between(t,${scoreShowStart},${scoreShowEnd})'[withScore]`,
             `[withScore]drawtext=fontfile=${fontFile}:text='${verdictLabel}':fontsize=90:fontcolor=${verdictColor}` +
               `:x=(w-tw)/2:y=h*0.80:shadowcolor=black:shadowx=5:shadowy=5` +
               `:box=1:boxcolor=black@0.65:boxborderw=20` +
@@ -4718,24 +4856,88 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       const hasTransition = profileKey === "codeorcap" && (this.profile.watch?.outroVersion || "v2") === "v2";
 
       if (hasTransition) {
-        pipelineLogger.info("Generating V2 transition clip explaining how it works...", "DirectUploader");
-        
+        pipelineLogger.info(
+          "Generating V2 transition clip explaining how it works (Pexels cinematic b-roll)...",
+          "DirectUploader",
+        );
+
         const workflowData = this.deriveTranscriptionWorkflow(context);
         const rawExplanation = workflowData.explanation;
         const speechScript = `Let us check how is it working. ${rawExplanation}`;
 
         let ttsDuration = 3.5;
         try {
-          ttsDuration = await this.tts.generateVoiceover(speechScript, transitionTtsPath, "codeorcap");
+          ttsDuration = await this.tts.generateVoiceover(
+            speechScript,
+            transitionTtsPath,
+            "codeorcap",
+          );
         } catch (err) {
-          pipelineLogger.warn(`Transition TTS failed: ${err instanceof Error ? err.message : err}. Using default duration.`, "DirectUploader");
+          pipelineLogger.warn(
+            `Transition TTS failed: ${err instanceof Error ? err.message : err}. Using default duration.`,
+            "DirectUploader",
+          );
         }
 
-        // Generate the background diagram image using Puppeteer
-        let diagramRendered = false;
+        const transitionDuration = ttsDuration + 0.6;
+        const pexelsBrollPath = path.join(tempDir, "pexels_broll.mp4");
+
+        // 1. Fetch high-definition tech stock video b-roll from Pexels API (MoneyPrinterTurbo style)
+        let brollReady = false;
         try {
-          pipelineLogger.info("Attempting to render workflow diagram...", "DirectUploader");
-          const wrapText = (text: string, maxLineLength = 36): string => {
+          const brollResult = await this.pexels.fetchTechBroll(
+            {
+              title: context.metadata?.title,
+              tags: context.metadata?.tags,
+              howItWorks: rawExplanation,
+            },
+            transitionDuration,
+            pexelsBrollPath,
+          );
+          if (
+            brollResult &&
+            fs.existsSync(pexelsBrollPath) &&
+            fs.statSync(pexelsBrollPath).size > 1000
+          ) {
+            brollReady = true;
+          }
+        } catch (pexelsErr) {
+          pipelineLogger.warn(
+            `Pexels stock video fetch skipped: ${
+              pexelsErr instanceof Error ? pexelsErr.message : pexelsErr
+            }`,
+            "DirectUploader",
+          );
+        }
+
+        let compileCmd = "";
+
+        if (brollReady) {
+          // Mode 1: Clean, unblurred, pristine Pexels video clip with voiceover explanation
+          const filterStr =
+            `[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1,fps=30[v];` +
+            `[1:a]volume=3.5[a]`;
+          compileCmd =
+            `${config.binaries.ffmpeg} -y ` +
+            `-stream_loop -1 -i "${pexelsBrollPath}" ` +
+            `-i "${transitionTtsPath}" ` +
+            `-filter_complex "${filterStr}" ` +
+            `-map "[v]" -map "[a]" ` +
+            `-t ${transitionDuration.toFixed(2)} ` +
+            `-c:v libx264 -preset superfast -crf 20 -pix_fmt yuv420p -r 30 ` +
+            `-c:a aac -ar 44100 -ac 2 ` +
+            `"${transitionClipPath}"`;
+        } else {
+          // Fallback: If Pexels broll was not available, capture last frame of main video
+          const mainDuration = await this.getVideoDuration(mainVideoPath);
+          const frameTime = Math.max(0, mainDuration - 0.5).toFixed(2);
+          await new Promise<void>((resolve, reject) => {
+            const cmd = `${config.binaries.ffmpeg} -y -ss ${frameTime} -i "${mainVideoPath}" -vframes 1 "${transitionBgFramePath}"`;
+            exec(cmd, (err) => (err ? reject(err) : resolve()));
+          });
+
+          // Wrap text for the fallback drawtext filter
+          const wrapText = (text: string, maxLineLength = 32): string => {
             const words = text.split(/\s+/);
             const lines: string[] = [];
             let currentLine = "";
@@ -4748,77 +4950,48 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
               }
             }
             if (currentLine) lines.push(currentLine);
-            return lines.join("<br>");
+            return lines.join("\n");
           };
-          const formattedExplanation = wrapText(rawExplanation, 36);
-          diagramRendered = await this.renderWorkflowDiagram(
-            workflowData.mermaidCode,
-            workflowData.diagramTitle,
-            formattedExplanation,
-            transitionBgFramePath,
-          );
-        } catch (diagramErr) {
-          pipelineLogger.warn(`Workflow diagram render failed: ${diagramErr instanceof Error ? diagramErr.message : diagramErr}. Falling back to blurred frame.`, "DirectUploader");
+
+          const introText = "Let us check how is it working:";
+          const wrappedExplanation = rawExplanation
+            ? wrapText(rawExplanation, 32)
+            : "";
+          const screenText = wrappedExplanation
+            ? `${introText}\n\n${wrappedExplanation}`
+            : "Let us check\nhow is it working";
+          fs.writeFileSync(transitionTextPath, screenText, "utf8");
+
+          const escapedTextFilePath = transitionTextPath
+            .replace(/\\/g, "/")
+            .replace(/:/g, "\\:");
+          const fontSize = rawExplanation ? 36 : 54;
+
+          const filterStr = [
+            `[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,colorlevels=romax=0.45:gomax=0.45:bomax=0.45[bg]`,
+            `[bg]drawtext=fontfile=${fontFile}:textfile='${escapedTextFilePath}':fontsize=${fontSize}:fontcolor=white:x=(w-tw)/2:y=(h-th)/2:shadowcolor=black:shadowx=4:shadowy=4:box=1:boxcolor=black@0.65:boxborderw=25[v]`,
+            `[1:a]volume=3.5[a]`,
+          ].join(";");
+
+          compileCmd =
+            `${config.binaries.ffmpeg} -y ` +
+            `-loop 1 -i "${transitionBgFramePath}" ` +
+            `-i "${transitionTtsPath}" ` +
+            `-filter_complex "${filterStr}" ` +
+            `-map "[v]" -map "[a]" ` +
+            `-t ${transitionDuration.toFixed(2)} ` +
+            `-c:v libx264 -preset superfast -crf 20 -pix_fmt yuv420p -r 30 ` +
+            `-c:a aac -ar 44100 -ac 2 ` +
+            `"${transitionClipPath}"`;
         }
-
-        // Fallback: If no diagram was generated/rendered, capture the last frame of the main video and blur it
-        if (!diagramRendered) {
-          const mainDuration = await this.getVideoDuration(mainVideoPath);
-          const frameTime = Math.max(0, mainDuration - 0.5).toFixed(2);
-          await new Promise<void>((resolve, reject) => {
-            const cmd = `${config.binaries.ffmpeg} -y -ss ${frameTime} -i "${mainVideoPath}" -vframes 1 "${transitionBgFramePath}"`;
-            exec(cmd, (err) => (err ? reject(err) : resolve()));
-          });
-        }
-
-        // Wrap text for the fallback drawtext filter if needed
-        const wrapText = (text: string, maxLineLength = 32): string => {
-          const words = text.split(/\s+/);
-          const lines: string[] = [];
-          let currentLine = "";
-          for (const word of words) {
-            if ((currentLine + " " + word).trim().length <= maxLineLength) {
-              currentLine = currentLine ? currentLine + " " + word : word;
-            } else {
-              if (currentLine) lines.push(currentLine);
-              currentLine = word;
-            }
-          }
-          if (currentLine) lines.push(currentLine);
-          return lines.join("\n");
-        };
-
-        const introText = "Let us check how is it working:";
-        const wrappedExplanation = rawExplanation ? wrapText(rawExplanation, 32) : "";
-        const screenText = wrappedExplanation ? `${introText}\n\n${wrappedExplanation}` : "Let us check\nhow is it working";
-        fs.writeFileSync(transitionTextPath, screenText, "utf8");
-
-        const escapedTextFilePath = transitionTextPath.replace(/\\/g, "/").replace(/:/g, "\\:");
-        const fontSize = rawExplanation ? 36 : 54;
-        const transitionDuration = ttsDuration + 0.5;
-
-        const filterStr = diagramRendered
-          ? `[0:v]copy[v];[1:a]volume=3.5[a]`
-          : [
-              `[0:v]boxblur=20:20,colorlevels=romax=0.35:gomax=0.35:bomax=0.35[bg]`,
-              `[bg]drawtext=fontfile=${fontFile}:textfile='${escapedTextFilePath}':fontsize=${fontSize}:fontcolor=white:x=(w-tw)/2:y=(h-th)/2:shadowcolor=black:shadowx=3:shadowy=3[v]`,
-              `[1:a]volume=3.5[a]`
-            ].join(";");
-
-        const compileCmd =
-          `${config.binaries.ffmpeg} -y ` +
-          `-loop 1 -t ${transitionDuration.toFixed(2)} -i "${transitionBgFramePath}" ` +
-          `-i "${transitionTtsPath}" ` +
-          `-filter_complex "${filterStr}" ` +
-          `-map "[v]" -map "[a]" ` +
-          `-c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p -r 30 ` +
-          `-c:a aac -ar 44100 -ac 2 ` +
-          `"${transitionClipPath}"`;
 
         await new Promise<void>((resolve, reject) => {
           exec(compileCmd, (err) => (err ? reject(err) : resolve()));
         });
-        pipelineLogger.info("✓ Transition clip generated successfully.", "DirectUploader");
+        pipelineLogger.info(
+          "✓ Transition clip generated successfully.",
+          "DirectUploader",
+        );
       }
 
       // 4 — Concat main video + optional transition + verdict clip
@@ -4943,213 +5116,5 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       diagramTitle,
       mermaidCode,
     };
-  }
-
-  private async renderWorkflowDiagram(
-    mermaidCode: string,
-    diagramTitle: string,
-    explanationText: string,
-    outputPath: string,
-  ): Promise<boolean> {
-    const W = 1080;
-    const H = 1920;
-
-    const sanitizedMermaid = (mermaidCode || "")
-      .replace(/```(?:mermaid)?/gi, "")
-      .trim();
-
-    const html = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      width: ${W}px;
-      height: ${H}px;
-      background: radial-gradient(circle at 50% 30%, #151b26 0%, #080a0f 100%);
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      color: #fff;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      padding: 60px 40px;
-      overflow: hidden;
-    }
-    .header-badge {
-      font-size: 24px;
-      font-weight: 700;
-      color: #58a6ff;
-      background: rgba(88,166,255,0.12);
-      border: 1px solid rgba(88,166,255,0.3);
-      padding: 8px 24px;
-      border-radius: 30px;
-      text-transform: uppercase;
-      letter-spacing: 2px;
-      margin-bottom: 20px;
-    }
-    .title {
-      font-size: 44px;
-      font-weight: 900;
-      color: #FFB800;
-      text-transform: uppercase;
-      letter-spacing: 1.5px;
-      text-align: center;
-      text-shadow: 0 0 30px rgba(255,184,0,0.4);
-      margin-bottom: 30px;
-      max-width: 90%;
-    }
-    .diagram-container {
-      width: 100%;
-      flex: 1;
-      max-height: 960px;
-      background: rgba(18, 22, 34, 0.85);
-      border: 2px solid rgba(255, 184, 0, 0.25);
-      border-radius: 24px;
-      padding: 40px 30px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      box-shadow: 0 20px 60px rgba(0,0,0,0.7);
-    }
-    .mermaid {
-      width: 100%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    svg {
-      max-width: 100% !important;
-      max-height: 860px !important;
-      height: auto !important;
-    }
-    .node rect, .node circle, .node polygon {
-      fill: #1a2233 !important;
-      stroke: #FFB800 !important;
-      stroke-width: 3px !important;
-      rx: 12px !important;
-      ry: 12px !important;
-    }
-    .node .label {
-      color: #ffffff !important;
-      font-family: inherit !important;
-      font-weight: 800 !important;
-      font-size: 26px !important;
-    }
-    .edgePath .path {
-      stroke: #58a6ff !important;
-      stroke-width: 4px !important;
-    }
-    .marker {
-      fill: #58a6ff !important;
-      stroke: none !important;
-    }
-    .footer-card {
-      margin-top: 35px;
-      background: rgba(13, 17, 23, 0.9);
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      border-radius: 18px;
-      padding: 24px 32px;
-      max-width: 95%;
-      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-    }
-    .footer-label {
-      font-size: 20px;
-      font-weight: 800;
-      color: #3fb950;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      margin-bottom: 8px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .footer-text {
-      font-size: 28px;
-      color: #e6edf3;
-      text-align: left;
-      font-weight: 600;
-      line-height: 1.45;
-    }
-  </style>
-</head>
-<body>
-  <div class="header-badge">💡 How It Works</div>
-  <div class="title">${diagramTitle}</div>
-  <div class="diagram-container">
-    <div class="mermaid">
-${sanitizedMermaid}
-    </div>
-  </div>
-  <div class="footer-card">
-    <div class="footer-label"><span>🔍</span> Logic Breakdown</div>
-    <div class="footer-text">${explanationText}</div>
-  </div>
-  <script>
-    mermaid.initialize({
-      theme: 'dark',
-      startOnLoad: true,
-      securityLevel: 'loose',
-      themeVariables: {
-        background: '#1a2233',
-        primaryColor: '#1a2233',
-        primaryTextColor: '#fff',
-        lineColor: '#58a6ff',
-        transitionColor: '#58a6ff',
-      }
-    });
-  </script>
-</body>
-</html>`;
-
-    const runWithTimeout = async () => {
-      const puppeteer = (await new Function("return import('puppeteer-core')")()).default;
-      const browser = await puppeteer.launch({
-        executablePath: config.binaries.chrome,
-        headless: true,
-        args: [
-          "--no-sandbox",
-          "--disable-setuid-sandbox",
-          "--disable-dev-shm-usage",
-          "--force-color-profile=srgb",
-        ],
-      });
-
-      try {
-        const page = await browser.newPage();
-        await page.setViewport({ width: W, height: H, deviceScaleFactor: 1 });
-        await page.setContent(html, { waitUntil: "networkidle2", timeout: 10000 });
-        await page.waitForSelector(".mermaid svg", { timeout: 4000 }).catch(() => {});
-        await new Promise((resolve) => setTimeout(resolve, 600));
-
-        const shot = await page.screenshot({
-          type: "png",
-          clip: { x: 0, y: 0, width: W, height: H },
-        });
-
-        await sharp(shot).toFile(outputPath);
-        return true;
-      } finally {
-        await browser.close().catch(() => {});
-      }
-    };
-
-    try {
-      return await Promise.race([
-        runWithTimeout(),
-        new Promise<boolean>((_, reject) =>
-          setTimeout(() => reject(new Error("Workflow diagram rendering timed out after 15s")), 15000),
-        ),
-      ]);
-    } catch (err) {
-      pipelineLogger.error(
-        "Failed to render workflow diagram in Puppeteer",
-        err instanceof Error ? err : new Error(String(err)),
-        "DirectUploader",
-      );
-      return false;
-    }
   }
 }

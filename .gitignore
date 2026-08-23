@@ -18,3 +18,7 @@ skills-lock.json
 puppeteer_test_result.jpg
 test_pollinations.jpg
 codeorcap_magazine_reader.jpg
+.claude/
+scratch_*.ts
+test-*.ts
+
