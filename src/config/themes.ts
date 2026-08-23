@@ -2,7 +2,7 @@
 // A channel profile picks its theme via the NICHE / <PREFIX>_NICHE env var (default "tech").
 
 export interface ContentTheme {
-  niche: "tech" | "stories";
+  niche: string;
   // e.g. "a tech/programming YouTube Shorts channel" — dropped into the metadata prompts
   channelDescriptor: string;
   titleRules: string;
@@ -18,6 +18,29 @@ export interface ContentTheme {
   // ViralAnalyzer hint used when there is no upload history yet
   noHistoryHint: string;
   fallback: { title: string; description: string; tags: string[] };
+}
+
+export function createCustomTheme(nicheRaw: string, brandName?: string): ContentTheme {
+  const niche = (nicheRaw || "general").toLowerCase().trim();
+  const cleanTag = niche.replace(/[^a-z0-9]/g, "");
+
+  return {
+    niche,
+    channelDescriptor: `a viral ${niche} YouTube Shorts & Instagram Reels channel focused on high-engagement ${niche} content`,
+    titleRules: `TITLE RULES: Max 65 chars. Punchy, high-CTR ${niche} hook within first 30 chars. One emoji. No clickbait without delivery.`,
+    descriptionRules: (brand: string) =>
+      `DESCRIPTION RULES: 120-220 words. Include: 1) What happens in this ${niche} clip. 2) Key takeaway or highlight. 3) Subscribe/Follow CTA for @${brand || brandName || "channel"}. 4) Question to audience. 5) Popular #${cleanTag} and #${cleanTag}shorts hashtags on the last line. Use \\n\\n for paragraph breaks.`,
+    keywordsRule: `Provide 1 primary keyword, 5 secondary keywords, 15 tags, and 8-12 hashtags (always include #${cleanTag} #shorts #viral).`,
+    analysisRules: `CONTENT RULES: Identify the core theme, key moments, and emotional resonance in this ${niche} video. Set appropriate mood ("funny", "sad", "technical", or "other").`,
+    appendVerdict: false,
+    requiredHashtag: cleanTag || "shorts",
+    noHistoryHint: `No historical uploads data yet. Prefer curiosity-driven, high-retention ${niche} hooks with relatable pacing.`,
+    fallback: {
+      title: `Amazing ${niche.charAt(0).toUpperCase() + niche.slice(1)} Clip You Must Watch 🔥`,
+      description: `Check out this incredible ${niche} video! Follow for daily ${niche} updates and share your thoughts in the comments.\n\n#${cleanTag} #shorts #viral`,
+      tags: [cleanTag, niche, "shorts", "viral", "trending", "video"],
+    },
+  };
 }
 
 const techTheme: ContentTheme = {
@@ -79,7 +102,30 @@ const storiesTheme: ContentTheme = {
   },
 };
 
+const humorTheme: ContentTheme = {
+  niche: "humor",
+  channelDescriptor:
+    "a viral humor, comedy memes, and funny video YouTube Shorts & Instagram channel",
+  titleRules: `TITLE RULES: Max 65 chars. Punchy, funny, relatable hook. High curiosity and humor. One or two funny emojis.`,
+  descriptionRules: (brandName: string) =>
+    `DESCRIPTION RULES: 100-200 words. Relatable, funny commentary on the clip. Tag your friends CTA. Follow @${brandName} for daily comedy & funny clips! End with popular funny hashtags.`,
+  keywordsRule: `Provide 1 primary keyword, 5 secondary keywords, 15 tags, and 8-12 hashtags (always include #shorts #funny #memes #comedy).`,
+  analysisRules: `HUMOR RULES: Identify the comedy premise, meme joke, or punchline. Set mood to "funny".`,
+  appendVerdict: false,
+  requiredHashtag: "memes",
+  noHistoryHint:
+    "No historical uploads data yet. Prefer relatable high-humor hooks.",
+  fallback: {
+    title: "Wait For It 😂💀",
+    description:
+      "Tag someone who needs to see this! Follow for more daily laughs. Drop a 😂 if you laughed!\n\n#shorts #funny #memes #comedy #viral",
+    tags: ["funny", "memes", "comedy", "viral", "shorts", "humor", "lol"],
+  },
+};
+
 export const CONTENT_THEMES: Record<string, ContentTheme> = {
   tech: techTheme,
   stories: storiesTheme,
+  humor: humorTheme,
 };
+

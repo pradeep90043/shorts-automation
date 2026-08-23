@@ -51,7 +51,7 @@ console.log('   This script will capture the code automatically.\n');
 
 // Local server to catch the OAuth callback
 const server = http.createServer(async (req, res) => {
-  const url  = new URL(req.url || '/', `http://localhost:3000`);
+  const url  = new URL(req.url || '/', `http://localhost:${PORT}`);
   const code = url.searchParams.get('code');
 
   if (!code) {
@@ -61,7 +61,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   res.writeHead(200, { 'Content-Type': 'text/html' });
-  res.end('<h2 style="font-family:sans-serif;padding:40px">✅ Auth successful! You can close this tab and check the terminal.</h2>');
+  res.end('<h2 style="font-family:sans-serif;padding:40px">✅ Auth successful! You can close this tab and return to the chat/terminal.</h2>');
 
   try {
     const { tokens } = await oauth2Client.getToken(code);
@@ -72,10 +72,13 @@ const server = http.createServer(async (req, res) => {
       console.error('   https://myaccount.google.com/permissions  and run this script again.\n');
     } else {
       console.log('══════════════════════════════════════════════════════');
-      console.log(` ✅  Refresh token for Channel ${CHANNEL_NUM}:`);
+      console.log(` ✅  Refresh token for Channel [${CHANNEL_NUM}]:`);
       console.log('══════════════════════════════════════════════════════\n');
-      console.log(`YOUTUBE_CHANNEL_${CHANNEL_NUM}_REFRESH_TOKEN=${refreshToken}\n`);
-      console.log('Paste the line above into your .env file.\n');
+      const envKey = CHANNEL_NUM.toLowerCase().includes('prompt')
+        ? 'PROMPT_GAG_YOUTUBE_REFRESH_TOKEN'
+        : `YOUTUBE_CHANNEL_${CHANNEL_NUM}_REFRESH_TOKEN`;
+      console.log(`${envKey}=${refreshToken}\n`);
+      console.log('Paste the line above into your .env file or configuration tab.\n');
     }
   } catch (err) {
     console.error('❌  Token exchange failed:', err);

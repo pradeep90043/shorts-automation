@@ -2,16 +2,130 @@ import http from "http";
 import fs from "fs";
 import path from "path";
 import { execFile } from "child_process";
+import { google } from "googleapis";
 import { addLogClient, removeLogClient } from "./utils/logBroadcast";
-import { config } from "./config";
+import { config, ChannelProfile, resolveTheme } from "./config";
 import { getPool } from "./utils/pgClient";
 import { getChannelCredentials, saveChannelCredentials } from "./utils/credentialStore";
+import { getAllStoredChannelConfigs, saveChannelConfig, deleteChannelConfig, StoredChannelConfig, StoredInstagramAccount, StoredYoutubeChannel } from "./utils/channelConfigStore";
+import { getAllAudienceStats } from "./utils/audienceStats";
 import { activeWatchers } from "./instagram/channelWatcher";
 import { DirectUploader } from "./direct-uploader";
 import { ViralAnalyzer } from "./utils/viral-analyzer";
 import { buildHashtagsForNiche } from "./instagram/nicheSearcher";
 import { computeViralScore } from "./utils/viralScore";
+import { MultiSceneGenerator } from "./video/multiSceneGenerator";
+import { YouTubeService } from "./youtube";
 import { pipelineLogger } from "./utils/logger";
+
+function escapeHtml(s: string): string {
+  return (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+let ytOAuthServer: http.Server | null = null;
+
+function ensureYouTubeOAuthServer(): void {
+  if (ytOAuthServer) return;
+  try {
+    const oauthPort = 3001;
+    ytOAuthServer = http.createServer(async (req, res) => {
+      const parsedUrl = new URL(req.url || "/", `http://localhost:${oauthPort}`);
+      if (parsedUrl.pathname === "/oauth2callback") {
+        const code = parsedUrl.searchParams.get("code");
+        const stateStr = parsedUrl.searchParams.get("state") || "{}";
+        let stateObj: any = {};
+        try { stateObj = JSON.parse(stateStr); } catch {}
+
+        if (!code) {
+          res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
+          res.end("<h3>❌ No authorization code found in callback.</h3>");
+          return;
+        }
+
+        try {
+          const clientId = process.env.YOUTUBE_CLIENT_ID || "";
+          const clientSecret = process.env.YOUTUBE_CLIENT_SECRET || "";
+          const redirectUri = `http://localhost:${oauthPort}/oauth2callback`;
+          const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+          const { tokens } = await oauth2Client.getToken(code);
+          const refreshToken = tokens.refresh_token;
+
+          if (!refreshToken) {
+            res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+            res.end("<h3>⚠️ No refresh token returned. Revoke permissions at <a href='https://myaccount.google.com/permissions'>myaccount.google.com/permissions</a> and try again.</h3>");
+            return;
+          }
+
+          oauth2Client.setCredentials(tokens);
+          let channelTitle = "YouTube Channel";
+          try {
+            const yt = google.youtube({ version: "v3", auth: oauth2Client });
+            const listRes = await yt.channels.list({ part: ["snippet"], mine: true });
+            if (listRes.data.items?.[0]?.snippet?.title) {
+              channelTitle = listRes.data.items[0].snippet.title;
+            }
+          } catch (e: any) {
+            pipelineLogger.warn(`[OAuth] Could not fetch channel title: ${e.message}`);
+          }
+
+          res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+          res.end(`
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <meta charset="utf-8">
+              <title>YouTube Connected</title>
+              <style>
+                body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; text-align: center; }
+                .box { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 32px; max-width: 420px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
+                h2 { color: #3fb950; margin-top: 0; }
+                .ch-badge { background: rgba(56, 139, 253, 0.15); color: #58a6ff; border: 1px solid rgba(56, 139, 253, 0.4); padding: 4px 10px; border-radius: 6px; font-weight: 700; display: inline-block; margin: 12px 0; font-size: 15px; }
+              </style>
+            </head>
+            <body>
+              <div class="box">
+                <h2>✅ YouTube Connected!</h2>
+                <div class="ch-badge">📺 ${escapeHtml(channelTitle)}</div>
+                <p style="font-size: 13px; color: #8b949e;">Adding channel and token to your dashboard...</p>
+              </div>
+              <script>
+                const payload = {
+                  type: 'YOUTUBE_AUTH_SUCCESS',
+                  channelName: ${JSON.stringify(channelTitle)},
+                  refreshToken: ${JSON.stringify(refreshToken)},
+                  target: ${JSON.stringify(stateObj.target || '')}
+                };
+                if (window.opener) {
+                  window.opener.postMessage(payload, '*');
+                  setTimeout(() => window.close(), 1200);
+                }
+              </script>
+            </body>
+            </html>
+          `);
+        } catch (err: any) {
+          res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
+          res.end(`<h3>❌ Token exchange failed: ${escapeHtml(err.message)}</h3>`);
+        }
+      } else {
+        res.writeHead(404);
+        res.end();
+      }
+    });
+
+    ytOAuthServer.listen(oauthPort, () => {
+      console.log(`[LogServer] YouTube OAuth callback listener active on http://localhost:${oauthPort}/oauth2callback`);
+    });
+
+    ytOAuthServer.on("error", (e: any) => {
+      if (e.code !== "EADDRINUSE") {
+        console.warn(`[LogServer] YouTube OAuth server error: ${e.message}`);
+      }
+    });
+  } catch (err: any) {
+    console.warn(`[LogServer] Could not initialize YouTube OAuth server: ${err.message}`);
+  }
+}
 
 const PORT = parseInt(process.env.LOG_SERVER_PORT || "3002", 10);
 const COMBINED_LOG = path.join(config.paths.logDir, "combined.log");
@@ -275,14 +389,12 @@ async function getDashboardData() {
   }
 
   const todayStr = new Date().toISOString().slice(0, 10);
+  const audienceStatsMap = await getAllAudienceStats();
 
   const channels = config.profiles.map((profile, idx) => {
     const pKey = (profile.key || profile.brandName).toLowerCase();
+    const audStats = audienceStatsMap[pKey] || { igFollowers: null, ytSubscribers: null };
     const wState = watchStates.find((w) => w.profile_key === pKey);
-    pipelineLogger.info(
-      `[DashboardAPI] Profile [${pKey}] current memory watch config: ${JSON.stringify(profile.watch)}`,
-      "ControlCenter",
-    );
 
     const profileHistory = reelHistory.filter(
       (r) => r.profile_key === pKey || r.channel?.toLowerCase().includes(pKey),
@@ -355,8 +467,8 @@ async function getDashboardData() {
             failedReason: lastPublished.failed_reason,
           }
         : null,
-      igFollowers: (profile as any).igFollowers || null,
-      ytSubscribers: (profile as any).ytSubscribers || null,
+      igFollowers: audStats.igFollowers ?? (profile as any).igFollowers ?? null,
+      ytSubscribers: audStats.ytSubscribers ?? (profile as any).ytSubscribers ?? null,
       stats: {
         publishedCount,
         failedCount,
@@ -844,6 +956,414 @@ export function startLogServer(): void {
         "Access-Control-Max-Age": "86400",
       });
       res.end();
+      return;
+    }
+
+    // ── GET /api/auth/youtube/start ───────────────────────────────────────
+    if (
+      req.method === "GET" &&
+      (url === "/api/auth/youtube/start" || url.startsWith("/api/auth/youtube/start?"))
+    ) {
+      try {
+        ensureYouTubeOAuthServer();
+        const parsedUrl = new URL(url, "http://localhost:3002");
+        const target = parsedUrl.searchParams.get("target") || "";
+        const clientId = process.env.YOUTUBE_CLIENT_ID || "";
+        const clientSecret = process.env.YOUTUBE_CLIENT_SECRET || "";
+        const redirectUri = "http://localhost:3001/oauth2callback";
+
+        if (!clientId || !clientSecret) {
+          res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
+          res.end("<h3>❌ YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET must be configured in .env</h3>");
+          return;
+        }
+
+        const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+        const authUrl = oauth2Client.generateAuthUrl({
+          access_type: "offline",
+          prompt: "consent",
+          scope: [
+            "https://www.googleapis.com/auth/youtube.upload",
+            "https://www.googleapis.com/auth/youtube",
+          ],
+          state: JSON.stringify({ target }),
+        });
+
+        res.writeHead(302, { Location: authUrl });
+        res.end();
+      } catch (err: any) {
+        res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(`<h3>❌ Error starting YouTube OAuth: ${escapeHtml(err.message)}</h3>`);
+      }
+      return;
+    }
+
+    // ── POST /api/meta/inspect-accounts ───────────────────────────────────
+    if (
+      req.method === "POST" &&
+      (url === "/api/meta/inspect-accounts" || url.startsWith("/api/meta/inspect-accounts?"))
+    ) {
+      try {
+        const body = await parseJsonBody(req);
+        let token = (body.token || "").trim();
+
+        if (!token) {
+          const configs = await getAllStoredChannelConfigs();
+          token = configs.find((c) => c.instagramAccessToken)?.instagramAccessToken || process.env.INSTAGRAM_ACCESS_TOKEN || "";
+        }
+
+        if (!token) {
+          res.writeHead(400, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+          res.end(JSON.stringify({ success: false, message: "No Meta Access Token provided or found in environment." }));
+          return;
+        }
+
+        const metaRes = await fetch(
+          `https://graph.facebook.com/v19.0/me/accounts?fields=name,id,access_token,instagram_business_account{id,username,name,profile_picture_url}&access_token=${encodeURIComponent(token)}`
+        );
+        const metaData = (await metaRes.json()) as any;
+
+        if (metaData.error) {
+          res.writeHead(400, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+          res.end(JSON.stringify({ success: false, message: metaData.error.message || "Meta API Error" }));
+          return;
+        }
+
+        const accounts = (metaData.data || []).map((page: any) => ({
+          pageId: page.id,
+          pageName: page.name,
+          pageAccessToken: page.access_token,
+          igUserId: page.instagram_business_account?.id || null,
+          igUsername: page.instagram_business_account?.username || null,
+          igName: page.instagram_business_account?.name || null,
+          igAvatar: page.instagram_business_account?.profile_picture_url || null,
+        }));
+
+        res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+        res.end(JSON.stringify({ success: true, accounts }));
+      } catch (err: any) {
+        res.writeHead(500, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+        res.end(JSON.stringify({ success: false, message: err.message }));
+      }
+      return;
+    }
+
+    if (
+      req.method === "GET" &&
+      (url === "/api/channels" || url.startsWith("/api/channels?"))
+    ) {
+      try {
+        const channels = await getAllStoredChannelConfigs();
+        res.writeHead(200, {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store, no-cache, must-revalidate",
+          "Access-Control-Allow-Origin": "*",
+        });
+        res.end(JSON.stringify({ success: true, channels }));
+      } catch (err: any) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: false, message: err.message || "Failed to fetch channels" }));
+      }
+      return;
+    }
+
+    if (
+      req.method === "POST" &&
+      (url === "/api/channels/save" || url.startsWith("/api/channels/save?"))
+    ) {
+      try {
+        const body = await parseJsonBody(req);
+        if (!body.key || !body.brandName || !body.handle) {
+          res.writeHead(400, {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+          });
+          res.end(JSON.stringify({ success: false, message: "Missing required fields: key, brandName, handle" }));
+          return;
+        }
+
+        const key = body.key.toLowerCase().trim().replace(/[^a-z0-9_]/g, "_");
+        
+        const instagramAccounts = Array.isArray(body.instagramAccounts) && body.instagramAccounts.length > 0
+          ? body.instagramAccounts.map((a: any) => ({
+              name: (a.name || `${body.brandName} Instagram`).trim(),
+              igUserId: (a.igUserId || "").trim(),
+              accessToken: (a.accessToken || "").trim(),
+            })).filter((a: any) => a.igUserId && a.accessToken)
+          : (body.instagramUserId && body.instagramAccessToken
+              ? [{ name: `${body.brandName} Instagram`, igUserId: body.instagramUserId.trim(), accessToken: body.instagramAccessToken.trim() }]
+              : []);
+
+        const youtubeChannels = Array.isArray(body.youtubeChannels) && body.youtubeChannels.length > 0
+          ? body.youtubeChannels.map((c: any) => ({
+              name: (c.name || body.brandName).trim(),
+              refreshToken: (c.refreshToken || "").trim(),
+            })).filter((c: any) => c.refreshToken)
+          : (body.youtubeRefreshToken
+              ? [{ name: body.brandName.trim(), refreshToken: body.youtubeRefreshToken.trim() }]
+              : []);
+
+        const storedConfig: StoredChannelConfig = {
+          key,
+          brandName: body.brandName.trim(),
+          handle: body.handle.trim(),
+          niche: body.niche || "tech",
+          isDefault: key === "codeorcap",
+          isWatchOnly: key !== "codeorcap",
+          instagramAccounts,
+          youtubeChannels,
+          instagramUserId: instagramAccounts[0]?.igUserId || body.instagramUserId || undefined,
+          instagramAccessToken: instagramAccounts[0]?.accessToken || body.instagramAccessToken || undefined,
+          instagramUsername: body.instagramUsername || undefined,
+          instagramPassword: body.instagramPassword || undefined,
+          instagramSessionId: body.instagramSessionId || undefined,
+          youtubeRefreshToken: youtubeChannels[0]?.refreshToken || body.youtubeRefreshToken || undefined,
+          youtubeClientId: body.youtubeClientId || undefined,
+          youtubeClientSecret: body.youtubeClientSecret || undefined,
+          facebookPageId: body.facebookPageId || undefined,
+          facebookAccessToken: body.facebookAccessToken || undefined,
+          watchChannels: Array.isArray(body.watchChannels)
+            ? body.watchChannels
+            : (body.watchChannels || "")
+                .split(",")
+                .map((s: string) => s.trim().replace(/^@/, "").toLowerCase())
+                .filter(Boolean),
+          searchMode: body.searchMode || "channels",
+          dailyCount: Number(body.dailyCount) || 5,
+          scheduleTime: body.scheduleTime || "09:00",
+          gapHours: Number(body.gapHours) || 2.0,
+          viralThreshold: Number(body.viralThreshold) || 50,
+          outroVersion: body.outroVersion || "v2",
+          videoMode: body.videoMode || "curator",
+          subtitleStyle: body.subtitleStyle || "classic",
+          ttsVoice: body.ttsVoice || "default",
+          adminChatId: body.adminChatId ? Number(body.adminChatId) : undefined,
+        };
+
+        await saveChannelConfig(storedConfig);
+
+        // Update in-memory profile in config.profiles
+        let existingProfile = config.profiles.find((p) => p.key === key);
+        if (!existingProfile) {
+          const newProfile: ChannelProfile = {
+            key,
+            brandName: storedConfig.brandName,
+            handle: storedConfig.handle,
+            theme: resolveTheme(storedConfig.niche, storedConfig.brandName),
+            isDefault: Boolean(storedConfig.isDefault),
+            isWatchOnly: Boolean(storedConfig.isWatchOnly),
+            telegramToken: config.telegramToken,
+            youtube: {
+              clientId: storedConfig.youtubeClientId || process.env.YOUTUBE_CLIENT_ID || "",
+              clientSecret: storedConfig.youtubeClientSecret || process.env.YOUTUBE_CLIENT_SECRET || "",
+              redirectUri: process.env.YOUTUBE_REDIRECT_URI || "http://localhost:3000/oauth2callback",
+              channels: youtubeChannels.map((c: StoredYoutubeChannel) => ({ name: c.name, refreshToken: c.refreshToken })),
+            },
+            instagram: {
+              accounts: instagramAccounts.map((a: StoredInstagramAccount) => ({ name: a.name, accessToken: a.accessToken, igUserId: a.igUserId })),
+            },
+            facebook: storedConfig.facebookPageId && storedConfig.facebookAccessToken
+              ? { pageId: storedConfig.facebookPageId, accessToken: storedConfig.facebookAccessToken }
+              : undefined,
+            watch: {
+              channels: storedConfig.watchChannels || [],
+              dailyCount: storedConfig.dailyCount || 5,
+              scheduleTime: storedConfig.scheduleTime || "09:00",
+              gapHours: storedConfig.gapHours || 2.0,
+              searchMode: storedConfig.searchMode || "channels",
+              viralThreshold: storedConfig.viralThreshold || 50,
+              outroVersion: storedConfig.outroVersion || "v2",
+              adminChatId: storedConfig.adminChatId || (process.env.WATCH_ADMIN_CHAT_ID ? parseInt(process.env.WATCH_ADMIN_CHAT_ID, 10) : 0),
+            },
+          };
+          config.profiles.push(newProfile);
+        } else {
+          existingProfile.brandName = storedConfig.brandName;
+          existingProfile.handle = storedConfig.handle;
+          existingProfile.theme = resolveTheme(storedConfig.niche, storedConfig.brandName);
+          existingProfile.instagram.accounts = instagramAccounts.map((a: StoredInstagramAccount) => ({ name: a.name, accessToken: a.accessToken, igUserId: a.igUserId }));
+          existingProfile.youtube.channels = youtubeChannels.map((c: StoredYoutubeChannel) => ({ name: c.name, refreshToken: c.refreshToken }));
+          if (storedConfig.facebookPageId && storedConfig.facebookAccessToken) {
+            existingProfile.facebook = {
+              pageId: storedConfig.facebookPageId,
+              accessToken: storedConfig.facebookAccessToken,
+            };
+          }
+          if (existingProfile.watch) {
+            existingProfile.watch.channels = storedConfig.watchChannels || [];
+            existingProfile.watch.dailyCount = storedConfig.dailyCount || 5;
+            existingProfile.watch.scheduleTime = storedConfig.scheduleTime || "09:00";
+            existingProfile.watch.gapHours = storedConfig.gapHours || 2.0;
+            existingProfile.watch.searchMode = storedConfig.searchMode || "channels";
+            existingProfile.watch.viralThreshold = storedConfig.viralThreshold || 50;
+            existingProfile.watch.outroVersion = storedConfig.outroVersion || "v2";
+          }
+        }
+
+        res.writeHead(200, {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        });
+        res.end(JSON.stringify({ success: true, message: `Channel [${storedConfig.brandName}] configured and active.`, channel: storedConfig }));
+      } catch (err: any) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: false, message: err.message || "Failed to save channel" }));
+      }
+      return;
+    }
+
+    if (
+      req.method === "POST" &&
+      (url === "/api/channels/delete" || url.startsWith("/api/channels/delete?"))
+    ) {
+      try {
+        const body = await parseJsonBody(req);
+        const key = (body.key || "").toLowerCase().trim();
+        if (key === "codeorcap") {
+          res.writeHead(400, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+          res.end(JSON.stringify({ success: false, message: "Cannot delete default profile (CodeOrCap)." }));
+          return;
+        }
+
+        await deleteChannelConfig(key);
+        const idx = config.profiles.findIndex((p) => p.key === key);
+        if (idx !== -1) config.profiles.splice(idx, 1);
+
+        res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+        res.end(JSON.stringify({ success: true, message: `Channel [${key}] removed.` }));
+      } catch (err: any) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: false, message: err.message || "Failed to delete channel" }));
+      }
+      return;
+    }
+
+    // ── POST /api/generate/faceless ───────────────────────────────────────
+    if (
+      req.method === "POST" &&
+      (url === "/api/generate/faceless" || url.startsWith("/api/generate/faceless?"))
+    ) {
+      try {
+        const body = await parseJsonBody(req);
+        const channelKey = (body.channelKey || "codeorcap").toLowerCase().trim();
+        const storedConfigs = await getAllStoredChannelConfigs();
+        const storedConfig = storedConfigs.find((c) => c.key === channelKey);
+
+        const brandName = storedConfig?.brandName || "CodeOrCap";
+        const handle = storedConfig?.handle || "@codeorcap";
+        const niche = storedConfig?.niche || "tech";
+        const subtitleStyle = body.subtitleStyle || storedConfig?.subtitleStyle || "classic";
+        const voice = body.voice || storedConfig?.ttsVoice;
+
+        pipelineLogger.info(`Starting faceless multi-scene video generation for [${brandName}] (Topic: "${body.topic || body.script || niche}")`, "LogServer");
+
+        const generator = new MultiSceneGenerator();
+        const result = await generator.generateFacelessShort({
+          topic: body.topic,
+          script: body.script,
+          channelKey,
+          brandName,
+          handle,
+          niche,
+          subtitleStyle,
+          voice,
+          aspectRatio: body.aspectRatio,
+          durationTarget: body.durationTarget || "short",
+        });
+
+        let publishedUrls: any[] = [];
+        if (body.autoPublish && result.success && result.videoPath) {
+          const ytChannels = storedConfig?.youtubeChannels || [];
+          if (ytChannels.length > 0 || storedConfig?.youtubeRefreshToken) {
+            try {
+              pipelineLogger.info(`[AutoPublish] Automatically uploading generated video to YouTube for [${brandName}]…`, "LogServer");
+              const ytService = new YouTubeService({
+                clientId: storedConfig?.youtubeClientId || process.env.YOUTUBE_CLIENT_ID || "",
+                clientSecret: storedConfig?.youtubeClientSecret || process.env.YOUTUBE_CLIENT_SECRET || "",
+                redirectUri: storedConfig?.youtubeRedirectUri || "http://localhost:3001/oauth2callback",
+                channels: ytChannels.length > 0 ? ytChannels : [{ name: storedConfig?.brandName || channelKey, refreshToken: storedConfig?.youtubeRefreshToken || "" }],
+              });
+              const ytRes = await ytService.uploadToAllChannels(result.videoPath, {
+                title: result.metadata.title,
+                description: result.metadata.description,
+                tags: result.metadata.tags,
+              });
+              publishedUrls.push(...ytRes);
+            } catch (pubErr: any) {
+              pipelineLogger.warn(`Auto-publish to YouTube failed: ${pubErr.message}`, "LogServer");
+            }
+          }
+        }
+
+        res.writeHead(200, {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        });
+        res.end(JSON.stringify({ ...result, publishedUrls }));
+      } catch (err: any) {
+        pipelineLogger.error("Faceless video generation failed", err, "LogServer");
+        res.writeHead(500, {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        });
+        res.end(JSON.stringify({ success: false, message: err.message || "Failed to generate faceless video" }));
+      }
+      return;
+    }
+
+    // ── POST /api/publish/youtube-video ───────────────────────────────────
+    if (
+      req.method === "POST" &&
+      (url === "/api/publish/youtube-video" || url.startsWith("/api/publish/youtube-video?"))
+    ) {
+      try {
+        const body = await parseJsonBody(req);
+        const channelKey = (body.channelKey || "codeorcap").toLowerCase().trim();
+        const storedConfigs = await getAllStoredChannelConfigs();
+        const storedConfig = storedConfigs.find((c) => c.key === channelKey);
+
+        const videoPath = body.videoPath;
+        if (!videoPath || !fs.existsSync(videoPath)) {
+          res.writeHead(400, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+          res.end(JSON.stringify({ success: false, message: `Video file not found: ${videoPath}` }));
+          return;
+        }
+
+        const ytChannels = storedConfig?.youtubeChannels || [];
+        if (ytChannels.length === 0 && !storedConfig?.youtubeRefreshToken) {
+          res.writeHead(400, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+          res.end(JSON.stringify({ success: false, message: `No YouTube channels connected for ${channelKey}` }));
+          return;
+        }
+
+        const ytService = new YouTubeService({
+          clientId: storedConfig?.youtubeClientId || process.env.YOUTUBE_CLIENT_ID || "",
+          clientSecret: storedConfig?.youtubeClientSecret || process.env.YOUTUBE_CLIENT_SECRET || "",
+          redirectUri: storedConfig?.youtubeRedirectUri || "http://localhost:3001/oauth2callback",
+          channels: ytChannels.length > 0 ? ytChannels : [{ name: storedConfig?.brandName || channelKey, refreshToken: storedConfig?.youtubeRefreshToken || "" }],
+        });
+
+        pipelineLogger.info(`Publishing video ${videoPath} to YouTube for [${storedConfig?.brandName || channelKey}]`, "LogServer");
+
+        const uploadResults = await ytService.uploadToAllChannels(videoPath, {
+          title: body.title || `${storedConfig?.brandName || 'CodeOrCap'} Video`,
+          description: body.description || "",
+          tags: Array.isArray(body.tags) ? body.tags : ["tech", "coding", "tutorial"],
+        });
+
+        res.writeHead(200, {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        });
+        res.end(JSON.stringify({ success: true, results: uploadResults }));
+      } catch (err: any) {
+        pipelineLogger.error("YouTube video publish failed", err, "LogServer");
+        res.writeHead(500, {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        });
+        res.end(JSON.stringify({ success: false, message: err.message || "Failed to publish video to YouTube" }));
+      }
       return;
     }
 

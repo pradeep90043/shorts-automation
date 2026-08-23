@@ -134,16 +134,30 @@ function formatASSTime(seconds: number): string {
   return `${hrs}:${pad(mins)}:${pad(secs)}.${padMs(ms)}`;
 }
 
+export type SubtitleStyle = "classic" | "animated_pop" | "minimal" | "none";
+
 /**
- * Generates an Advanced SubStation Alpha (.ass) file with word-by-word flashing style.
- * Uses a premium yellow accent color (&H00B8FF&) for active highlights.
+ * Generates an Advanced SubStation Alpha (.ass) file with selectable styling:
+ * - 'classic': Crisp white with subtle gold accent (Default)
+ * - 'animated_pop': Hormozi / MoneyPrinterTurbo word-by-word karaoke highlight
+ * - 'minimal': Modern clean subtle subtitle
  */
 export function generateASSFile(
   lines: SubtitleLine[],
   outputPath: string,
+  style: SubtitleStyle = "classic",
 ): void {
+  if (style === "none" || lines.length === 0) {
+    fs.writeFileSync(outputPath, "", "utf8");
+    return;
+  }
+
+  const fontSize = style === "minimal" ? 64 : 85;
+  const outline = style === "minimal" ? 4 : 8;
+  const marginV = style === "minimal" ? 180 : 250;
+
   const header = `[Script Info]
-Title: Flashing Subtitles
+Title: Subtitles
 ScriptType: v4.00+
 WrapStyle: 0
 PlayResX: 1080
@@ -152,22 +166,58 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColor, SecondaryColor, OutlineColor, BackColor, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial Black,85,&H00FFFFFF,&H00FFFFFF,&H000B0B0B,&H000B0B0B,-1,0,0,0,100,100,0,0,3,8,0,8,80,80,250,1
+Style: Default,Arial Black,${fontSize},&H00FFFFFF,&H00FFFFFF,&H000B0B0B,&H000B0B0B,-1,0,0,0,100,100,0,0,3,${outline},0,8,80,80,${marginV},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
 
   let events = "";
-  
-  for (const line of lines) {
-    // Generate exactly one Dialogue event for the entire sentence's duration.
-    // Wrap the text in primary color override tag {\c&H00B8FF&} (yellow-orange) so the whole sentence flashes.
-    const startStr = formatASSTime(line.start);
-    const endStr = formatASSTime(line.end);
-    events += `Dialogue: 0,${startStr},${endStr},Default,,0,0,0,,{\\c&H00B8FF&}${line.text}{\\c}\n`;
+
+  if (style === "animated_pop") {
+    // Word-by-word active pop-up highlight (MoneyPrinterTurbo / Hormozi style)
+    for (const line of lines) {
+      const words = line.words || [];
+      if (words.length === 0) {
+        const startStr = formatASSTime(line.start);
+        const endStr = formatASSTime(line.end);
+        events += `Dialogue: 0,${startStr},${endStr},Default,,0,0,0,,${line.text}\n`;
+        continue;
+      }
+
+      for (let i = 0; i < words.length; i++) {
+        const activeWord = words[i];
+        const wStart = formatASSTime(activeWord.start);
+        const wEnd = formatASSTime(activeWord.end);
+
+        // Build line text with active word highlighted in yellow + slightly scaled
+        const lineText = words
+          .map((w, idx) => {
+            if (idx === i) {
+              return `{\\c&H0022FF&\\fscx112\\fscy112}${w.word}{\\r\\c&H00FFFFFF&}`;
+            }
+            return `{\\c&H00E0E0E0&}${w.word}{\\c}`;
+          })
+          .join(" ");
+
+        events += `Dialogue: 0,${wStart},${wEnd},Default,,0,0,0,,${lineText}\n`;
+      }
+    }
+  } else if (style === "minimal") {
+    for (const line of lines) {
+      const startStr = formatASSTime(line.start);
+      const endStr = formatASSTime(line.end);
+      events += `Dialogue: 0,${startStr},${endStr},Default,,0,0,0,,${line.text}\n`;
+    }
+  } else {
+    // 'classic' default: Gold accent highlight on sentence level
+    for (const line of lines) {
+      const startStr = formatASSTime(line.start);
+      const endStr = formatASSTime(line.end);
+      events += `Dialogue: 0,${startStr},${endStr},Default,,0,0,0,,{\\c&H00B8FF&}${line.text}{\\c}\n`;
+    }
   }
 
   fs.writeFileSync(outputPath, header + events, "utf8");
-  pipelineLogger.info(`Generated ASS subtitles: ${outputPath}`, "Subtitles");
+  pipelineLogger.info(`Generated ASS subtitles (${style} style): ${outputPath}`, "Subtitles");
 }

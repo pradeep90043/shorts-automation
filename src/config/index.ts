@@ -2,12 +2,12 @@ import dotenv from "dotenv";
 import os from "os";
 import path from "path";
 import fs from "fs";
-import { ContentTheme, CONTENT_THEMES } from "./themes";
+import { ContentTheme, CONTENT_THEMES, createCustomTheme } from "./themes";
 
 // Load environmental variables
 dotenv.config();
 
-export { ContentTheme, CONTENT_THEMES } from "./themes";
+export { ContentTheme, CONTENT_THEMES, createCustomTheme } from "./themes";
 
 export interface YoutubeChannel {
   name: string;
@@ -90,6 +90,7 @@ export interface AppConfig {
     freellmapiVisionModel: string;
 
     geminiApiKey: string; // fallback AI provider used only when FreeLLMAPI fails
+    pexelsApiKey: string; // Pexels / MoneyPrinterTurbo stock video b-roll API key
   };
   paths: {
     assetsDir: string;
@@ -170,17 +171,12 @@ function titleCase(prefix: string): string {
   return prefix.charAt(0) + prefix.slice(1).toLowerCase();
 }
 
-// Resolve a content theme from a NICHE env value; unknown/missing values fall back to "tech"
-function resolveTheme(nicheEnv: string | undefined, label: string): ContentTheme {
-  const niche = (nicheEnv || "tech").toLowerCase();
+// Resolve a content theme from a NICHE env value; supports pre-defined or arbitrary custom niches
+export function resolveTheme(nicheEnv: string | undefined, label: string): ContentTheme {
+  const niche = (nicheEnv || "tech").toLowerCase().trim();
   const theme = CONTENT_THEMES[niche];
-  if (!theme) {
-    console.warn(
-      `Warning: [${label}] Unknown NICHE "${nicheEnv}". Valid values: ${Object.keys(CONTENT_THEMES).join(", ")}. Falling back to "tech".`,
-    );
-    return CONTENT_THEMES.tech;
-  }
-  return theme;
+  if (theme) return theme;
+  return createCustomTheme(niche, label);
 }
 
 function loadPrefixedYoutube(prefix: string, brandName: string): YoutubeConfig {
@@ -307,7 +303,26 @@ function loadWatchConfig(prefix?: string): WatchConfig {
   };
 }
 
-// Detect extra channel prefixes from env vars like STORIYUM_TELEGRAM_BOT_TOKEN[_LOCAL|_PROD]
+function getMasterTelegramToken(): string {
+  if (BOT_ENV === "prod") {
+    return (
+      process.env.TELEGRAM_BOT_TOKEN_PROD ||
+      process.env.CODEORCAP_TELEGRAM_BOT_TOKEN_PROD ||
+      process.env.TELEGRAM_BOT_TOKEN ||
+      process.env.TELEGRAM_BOT_TOKEN_LOCAL ||
+      ""
+    ).trim();
+  }
+  return (
+    process.env.TELEGRAM_BOT_TOKEN_LOCAL ||
+    process.env.CODEORCAP_TELEGRAM_BOT_TOKEN_LOCAL ||
+    process.env.TELEGRAM_BOT_TOKEN ||
+    process.env.TELEGRAM_BOT_TOKEN_PROD ||
+    ""
+  ).trim();
+}
+
+// Detect extra channel prefixes from env vars like STORIYUM_INSTAGRAM_CHANNELS, etc.
 function loadExtraProfiles(): ChannelProfile[] {
   const prefixes = new Set<string>();
   for (const key of Object.keys(process.env)) {
@@ -321,27 +336,14 @@ function loadExtraProfiles(): ChannelProfile[] {
   prefixes.add("STORIYUM");
   prefixes.add("PROMPT_GAG");
 
+  const masterToken = getMasterTelegramToken();
   const profiles: ChannelProfile[] = [];
   for (const prefix of prefixes) {
     const env = (key: string) => process.env[`${prefix}_${key}`];
-    let telegramToken =
-      env(`TELEGRAM_BOT_TOKEN_${BOT_ENV}`) ||
-      env("TELEGRAM_BOT_TOKEN") ||
-      env("TELEGRAM_BOT_TOKEN_LOCAL") ||
-      env("TELEGRAM_BOT_TOKEN_PROD") ||
-      "";
     
-    let isWatchOnly = false;
-    if (!telegramToken) {
-      // Fallback to CodeOrCap telegram token and mark as watchOnly
-      telegramToken =
-        process.env[`TELEGRAM_BOT_TOKEN_${BOT_ENV}`] ||
-        process.env.TELEGRAM_BOT_TOKEN ||
-        process.env.TELEGRAM_BOT_TOKEN_PROD ||
-        process.env.TELEGRAM_BOT_TOKEN_LOCAL ||
-        "";
-      isWatchOnly = true;
-    }
+    // Single shared Telegram bot token for all channels (CodeOrCap prod/local bot)
+    const telegramToken = masterToken;
+    const isWatchOnly = true;
     if (!telegramToken) continue;
 
     let brandName = env("BRAND_NAME");
@@ -385,13 +387,7 @@ function loadPrimaryProfile(): ChannelProfile {
     handle: process.env.BRAND_HANDLE || "@codeorcap",
     theme: resolveTheme(process.env.NICHE, "primary profile"),
     isDefault: true,
-    // BOT_ENV (local|prod) picks the token variant; plain TELEGRAM_BOT_TOKEN still works
-    telegramToken:
-      process.env[`TELEGRAM_BOT_TOKEN_${BOT_ENV}`] ||
-      process.env.TELEGRAM_BOT_TOKEN ||
-      process.env.TELEGRAM_BOT_TOKEN_LOCAL ||
-      process.env.TELEGRAM_BOT_TOKEN_PROD ||
-      "",
+    telegramToken: getMasterTelegramToken(),
     youtube: {
       clientId: process.env.YOUTUBE_CLIENT_ID || "",
       clientSecret: process.env.YOUTUBE_CLIENT_SECRET || "",
@@ -411,7 +407,7 @@ function loadPrimaryProfile(): ChannelProfile {
 const primaryProfile = loadPrimaryProfile();
 
 export const config: AppConfig = {
-  telegramToken: process.env.TELEGRAM_BOT_TOKEN || "",
+  telegramToken: primaryProfile.telegramToken,
   youtube: primaryProfile.youtube,
   instagram: primaryProfile.instagram,
   profiles: [primaryProfile, ...loadExtraProfiles()].filter(
@@ -432,6 +428,11 @@ export const config: AppConfig = {
     freellmapiVisionModel: process.env.FREELLMAPI_VISION_MODEL || "auto",
 
     geminiApiKey: process.env.GEMINI_API_KEY || "",
+    pexelsApiKey:
+      process.env.PEXELS_API_KEY ||
+      process.env.PIXELS_API_KEY ||
+      process.env.PEXEL_API_KEY ||
+      "",
   },
   paths: {
     assetsDir: process.env.ASSETS_DIR

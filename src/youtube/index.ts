@@ -87,7 +87,8 @@ export class YouTubeService {
       const videoId = response.data.id;
       if (!videoId) throw new Error("YouTube did not return a video ID");
 
-      const url = `https://youtube.com/shorts/${videoId}`;
+      const isLandscapeOrLong = (metadata.description || "").includes("Produced for") || (metadata.tags || []).includes("guide") || (metadata.tags || []).includes("tutorial");
+      const url = isLandscapeOrLong ? `https://www.youtube.com/watch?v=${videoId}` : `https://youtube.com/shorts/${videoId}`;
       pipelineLogger.checkpoint(`[${channel.name}] Uploaded`, true, url);
       return { channelName: channel.name, url, videoId };
     } catch (err) {

@@ -177,6 +177,8 @@ export interface PipelineContext {
   instagramSourceType?: "image" | "image_with_music" | "video";
   channel?: string; // the watched/source Instagram channel username
   shortcode?: string; // the shortcode of the Instagram reel
+  channelPinned?: boolean; // true if target channel profile was explicitly chosen or redirected
+  channelProfileKey?: string; // key of the channel profile (e.g. codeorcap, storiyum, prompt_gag)
   captionMetadata?: { title: string; description: string }; // user-provided title+description from Telegram caption
   sourceCreatorUsername?: string; // the original poster's @handle (from the source URL/page), used to cache/reuse their watermark zone positions — see src/utils/creatorZones.ts
   userPrompt?: string; // custom re-generation prompt instruction from the user
