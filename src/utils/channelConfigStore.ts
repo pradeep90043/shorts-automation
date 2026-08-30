@@ -177,17 +177,17 @@ export async function getAllStoredChannelConfigs(): Promise<StoredChannelConfig[
     // (EAUTHTIMEOUT); a couple of quick retries beats returning [] (which the
     // callers treat as "no channels configured").
     let res: any = null;
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         res = await pool.query(`SELECT * FROM channel_configs ORDER BY is_default DESC, key ASC`);
         break;
       } catch (qErr) {
-        if (attempt === 3) throw qErr;
+        if (attempt === 2) throw qErr;
         pipelineLogger.warn(
-          `channel_configs query failed (attempt ${attempt}/3): ${qErr instanceof Error ? qErr.message : qErr}. Retrying...`,
+          `channel_configs query failed (attempt ${attempt}/2): ${qErr instanceof Error ? qErr.message : qErr}. Retrying...`,
           "ChannelStore",
         );
-        await new Promise((r) => setTimeout(r, 1500 * attempt));
+        await new Promise((r) => setTimeout(r, 800));
       }
     }
     return res.rows.map((row: any) => {

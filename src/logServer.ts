@@ -24,10 +24,16 @@ function escapeHtml(s: string): string {
 
 let ytOAuthServer: http.Server | null = null;
 
+/** Port the local YouTube OAuth callback listener binds to. Must match the
+ *  redirect URI registered in Google Cloud Console. */
+const OAUTH_PORT = parseInt(process.env.YOUTUBE_OAUTH_PORT || "3001", 10);
+const OAUTH_REDIRECT_URI =
+  process.env.YOUTUBE_REDIRECT_URI || `http://localhost:${OAUTH_PORT}/oauth2callback`;
+
 function ensureYouTubeOAuthServer(): void {
   if (ytOAuthServer) return;
   try {
-    const oauthPort = 3001;
+    const oauthPort = OAUTH_PORT;
     ytOAuthServer = http.createServer(async (req, res) => {
       const parsedUrl = new URL(req.url || "/", `http://localhost:${oauthPort}`);
       if (parsedUrl.pathname === "/oauth2callback") {
@@ -45,7 +51,7 @@ function ensureYouTubeOAuthServer(): void {
         try {
           const clientId = process.env.YOUTUBE_CLIENT_ID || "";
           const clientSecret = process.env.YOUTUBE_CLIENT_SECRET || "";
-          const redirectUri = `http://localhost:${oauthPort}/oauth2callback`;
+          const redirectUri = OAUTH_REDIRECT_URI;
           const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
           const { tokens } = await oauth2Client.getToken(code);
           const refreshToken = tokens.refresh_token;
@@ -971,7 +977,7 @@ export function startLogServer(): void {
         const target = parsedUrl.searchParams.get("target") || "";
         const clientId = process.env.YOUTUBE_CLIENT_ID || "";
         const clientSecret = process.env.YOUTUBE_CLIENT_SECRET || "";
-        const redirectUri = "http://localhost:3001/oauth2callback";
+        const redirectUri = OAUTH_REDIRECT_URI;
 
         if (!clientId || !clientSecret) {
           res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
@@ -1004,29 +1010,59 @@ export function startLogServer(): void {
       req.method === "POST" &&
       (url === "/api/meta/inspect-accounts" || url.startsWith("/api/meta/inspect-accounts?"))
     ) {
+      const sendJson = (code: number, payload: any) => {
+        if (res.headersSent) return;
+        res.writeHead(code, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+        res.end(JSON.stringify(payload));
+      };
       try {
         const body = await parseJsonBody(req);
         let token = (body.token || "").trim();
 
         if (!token) {
-          const configs = await getAllStoredChannelConfigs();
-          token = configs.find((c) => c.instagramAccessToken)?.instagramAccessToken || process.env.INSTAGRAM_ACCESS_TOKEN || "";
+          token = process.env.INSTAGRAM_ACCESS_TOKEN || process.env.FACEBOOK_ACCESS_TOKEN || "";
+        }
+        if (!token) {
+          // Best-effort DB lookup, time-boxed so a slow DB can't hang the request.
+          const configs = await Promise.race([
+            getAllStoredChannelConfigs(),
+            new Promise<[]>((r) => setTimeout(() => r([]), 4000)),
+          ]);
+          token = configs.find((c) => c.instagramAccessToken || c.facebookAccessToken)?.instagramAccessToken
+            || configs.find((c) => c.facebookAccessToken)?.facebookAccessToken || "";
         }
 
         if (!token) {
-          res.writeHead(400, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
-          res.end(JSON.stringify({ success: false, message: "No Meta Access Token provided or found in environment." }));
+          sendJson(400, { success: false, message: "No Meta Access Token provided or found in environment." });
           return;
         }
 
-        const metaRes = await fetch(
-          `https://graph.facebook.com/v19.0/me/accounts?fields=name,id,access_token,instagram_business_account{id,username,name,profile_picture_url}&access_token=${encodeURIComponent(token)}`
-        );
-        const metaData = (await metaRes.json()) as any;
+        // Graph API can hang on a bad/expired token — abort after 15s so the
+        // browser gets a JSON error instead of an empty (cut-off) response.
+        const ac = new AbortController();
+        const abortTimer = setTimeout(() => ac.abort(), 15000);
+        let metaData: any;
+        try {
+          const metaRes = await fetch(
+            `https://graph.facebook.com/v19.0/me/accounts?fields=name,id,access_token,instagram_business_account{id,username,name,profile_picture_url}&access_token=${encodeURIComponent(token)}`,
+            { signal: ac.signal },
+          );
+          const raw = await metaRes.text();
+          try {
+            metaData = JSON.parse(raw);
+          } catch {
+            sendJson(502, { success: false, message: `Meta API returned a non-JSON response (HTTP ${metaRes.status}). Check the token.` });
+            return;
+          }
+        } catch (fetchErr: any) {
+          sendJson(504, { success: false, message: fetchErr?.name === "AbortError" ? "Meta Graph API timed out after 15s." : `Meta API request failed: ${fetchErr?.message || fetchErr}` });
+          return;
+        } finally {
+          clearTimeout(abortTimer);
+        }
 
         if (metaData.error) {
-          res.writeHead(400, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
-          res.end(JSON.stringify({ success: false, message: metaData.error.message || "Meta API Error" }));
+          sendJson(400, { success: false, message: metaData.error.message || "Meta API Error" });
           return;
         }
 
@@ -1040,11 +1076,9 @@ export function startLogServer(): void {
           igAvatar: page.instagram_business_account?.profile_picture_url || null,
         }));
 
-        res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
-        res.end(JSON.stringify({ success: true, accounts }));
+        sendJson(200, { success: true, accounts });
       } catch (err: any) {
-        res.writeHead(500, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
-        res.end(JSON.stringify({ success: false, message: err.message }));
+        sendJson(500, { success: false, message: err?.message || String(err) });
       }
       return;
     }
@@ -1157,7 +1191,7 @@ export function startLogServer(): void {
             youtube: {
               clientId: storedConfig.youtubeClientId || process.env.YOUTUBE_CLIENT_ID || "",
               clientSecret: storedConfig.youtubeClientSecret || process.env.YOUTUBE_CLIENT_SECRET || "",
-              redirectUri: process.env.YOUTUBE_REDIRECT_URI || "http://localhost:3000/oauth2callback",
+              redirectUri: OAUTH_REDIRECT_URI,
               channels: youtubeChannels.map((c: StoredYoutubeChannel) => ({ name: c.name, refreshToken: c.refreshToken })),
             },
             instagram: {
@@ -1281,7 +1315,7 @@ export function startLogServer(): void {
               const ytService = new YouTubeService({
                 clientId: storedConfig?.youtubeClientId || process.env.YOUTUBE_CLIENT_ID || "",
                 clientSecret: storedConfig?.youtubeClientSecret || process.env.YOUTUBE_CLIENT_SECRET || "",
-                redirectUri: storedConfig?.youtubeRedirectUri || "http://localhost:3001/oauth2callback",
+                redirectUri: storedConfig?.youtubeRedirectUri || OAUTH_REDIRECT_URI,
                 channels: ytChannels.length > 0 ? ytChannels : [{ name: storedConfig?.brandName || channelKey, refreshToken: storedConfig?.youtubeRefreshToken || "" }],
               });
               const ytRes = await ytService.uploadToAllChannels(result.videoPath, {
@@ -1340,7 +1374,7 @@ export function startLogServer(): void {
         const ytService = new YouTubeService({
           clientId: storedConfig?.youtubeClientId || process.env.YOUTUBE_CLIENT_ID || "",
           clientSecret: storedConfig?.youtubeClientSecret || process.env.YOUTUBE_CLIENT_SECRET || "",
-          redirectUri: storedConfig?.youtubeRedirectUri || "http://localhost:3001/oauth2callback",
+          redirectUri: storedConfig?.youtubeRedirectUri || OAUTH_REDIRECT_URI,
           channels: ytChannels.length > 0 ? ytChannels : [{ name: storedConfig?.brandName || channelKey, refreshToken: storedConfig?.youtubeRefreshToken || "" }],
         });
 
