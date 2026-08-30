@@ -2249,7 +2249,14 @@ ${this.theme.analysisRules}`;
   private async executePipeline(context: PipelineContext): Promise<void> {
     const { id, tempDir, originalImagePath, telegramMeta } = context;
     const { chatId, messageId } = telegramMeta;
-    const isVideo = context.isVideo === true;
+    const isVideo = Boolean(
+      context.isVideo === true &&
+      context.originalVideoPath &&
+      fs.existsSync(context.originalVideoPath) &&
+      (() => {
+        try { return fs.statSync(context.originalVideoPath).size > 0; } catch { return false; }
+      })(),
+    );
     const mediaLabel = isVideo ? "video" : "image";
 
     const pristineImagePath = path.join(tempDir, "pristine_original.jpg");
@@ -2278,8 +2285,8 @@ ${this.theme.analysisRules}`;
     }
 
     // 2. Before we start processing, restore original pristine files (prevent "editing on edited")
-    if (isVideo && fs.existsSync(pristineVideoPath)) {
-      await copyWithRetry(pristineVideoPath, context.originalVideoPath!);
+    if (isVideo && fs.existsSync(pristineVideoPath) && context.originalVideoPath) {
+      await copyWithRetry(pristineVideoPath, context.originalVideoPath);
     }
     if (fs.existsSync(pristineImagePath)) {
       await copyWithRetry(pristineImagePath, originalImagePath);
@@ -2341,7 +2348,7 @@ ${this.theme.analysisRules}`;
       const f95 = path.join(tempDir, "frame_95.jpg");
 
       // If video, extract 6 keyframes at 0% (t=0.5s floor), 20%, 40%, 60%, 80%, and 95% of video duration in parallel.
-      if (isVideo && context.originalVideoPath) {
+      if (isVideo && context.originalVideoPath && fs.existsSync(context.originalVideoPath)) {
         context.status = "analyzing";
         if (
           fs.existsSync(f0) &&
@@ -2428,21 +2435,20 @@ ${this.theme.analysisRules}`;
               `Keyframe extraction failed: ${err instanceof Error ? err.message : err}. Falling back to original.jpg at 1.0s.`,
               "DirectUploader"
             );
-            // Fall back to original.jpg at 1.0s
-            const extractCmd = `"${config.binaries.ffmpeg || "ffmpeg"}" -y -ss 00:00:01 -i "${context.originalVideoPath}" -vframes 1 -q:v 2 "${originalImagePath}"`;
-            await new Promise<void>((resolve, reject) => {
-              exec(extractCmd, (err) => {
-                if (err) {
-                  const fallbackCmd = `"${config.binaries.ffmpeg || "ffmpeg"}" -y -ss 00:00:00 -i "${context.originalVideoPath}" -vframes 1 -q:v 2 "${originalImagePath}"`;
-                  exec(fallbackCmd, (err2) => {
-                    if (err2) reject(err2);
-                    else resolve();
-                  });
-                } else {
-                  resolve();
-                }
+            // Fall back to original.jpg at 1.0s if video exists
+            if (context.originalVideoPath && fs.existsSync(context.originalVideoPath)) {
+              const extractCmd = `"${config.binaries.ffmpeg || "ffmpeg"}" -y -ss 00:00:01 -i "${context.originalVideoPath}" -vframes 1 -q:v 2 "${originalImagePath}"`;
+              await new Promise<void>((resolve) => {
+                exec(extractCmd, (err) => {
+                  if (err) {
+                    const fallbackCmd = `"${config.binaries.ffmpeg || "ffmpeg"}" -y -ss 00:00:00 -i "${context.originalVideoPath}" -vframes 1 -q:v 2 "${originalImagePath}"`;
+                    exec(fallbackCmd, () => resolve());
+                  } else {
+                    resolve();
+                  }
+                });
               });
-            });
+            }
           }
         }
       }
@@ -3540,7 +3546,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       let mixInputPath = rawVideoPath;
       if (settings.sticker) {
         const stickeredPath = await this.overlayReactionSticker(context, mixInputPath);
-        if (stickeredPath) mixInputPath = stickeredPath;
+        if (stickeredPath && fs.existsSync(stickeredPath)) mixInputPath = stickeredPath;
       }
 
       // 1 — Burn captions in a dedicated video-filter pass (the audio mixes all
@@ -3549,7 +3555,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       const captionsInHookBranch = useVoice && !musicTrack;
       if (settings.captions && !captionsInHookBranch) {
         const captionedPath = await this.burnCaptions(context, mixInputPath, useVoice);
-        if (captionedPath) mixInputPath = captionedPath;
+        if (captionedPath && fs.existsSync(captionedPath)) mixInputPath = captionedPath;
       }
 
       // 2 — Strip the original audio first when the user turned it OFF
@@ -3560,7 +3566,9 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
           const muteCmd = `${config.binaries.ffmpeg} -y -i "${mixInputPath}" -an -c:v copy "${mutedPath}"`;
           exec(muteCmd, (error) => (error ? reject(error) : resolve()));
         });
-        baseVideoPath = mutedPath;
+        if (fs.existsSync(mutedPath)) {
+          baseVideoPath = mutedPath;
+        }
       }
 
       // 3 — Audio mix matrix (voiceover / original audio / music)
@@ -4995,8 +5003,36 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       }
 
       // 4 — Concat main video + optional transition + verdict clip
-      // Normalize scale and fps on all inputs so concat never fails on resolution
-      // or frame-rate mismatch.
+      // Normalize scale, fps, and audio on all inputs so concat never fails on resolution
+      // or frame-rate/missing-audio mismatch.
+      const hasAudio = await new Promise<boolean>((res) => {
+        exec(
+          `"${config.binaries.ffprobe}" -v error -select_streams a -show_entries stream=codec_type -of default=noprint_wrappers=1:nokey=1 "${mainVideoPath}"`,
+          (err, stdout) => {
+            res(!err && stdout.trim() === "audio");
+          },
+        );
+      });
+
+      let effectiveMainVideoPath = mainVideoPath;
+      const mainWithAudioPath = path.join(context.tempDir, "video_main_with_audio.mp4");
+      if (!hasAudio) {
+        try {
+          await new Promise<void>((resolve, reject) => {
+            const muteAudioCmd = `${config.binaries.ffmpeg} -y -i "${mainVideoPath}" -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -c:v copy -c:a aac -shortest "${mainWithAudioPath}"`;
+            exec(muteAudioCmd, (err) => (err ? reject(err) : resolve()));
+          });
+          if (fs.existsSync(mainWithAudioPath)) {
+            effectiveMainVideoPath = mainWithAudioPath;
+          }
+        } catch (audioErr) {
+          pipelineLogger.warn(
+            `Failed to inject silent audio track into main video: ${audioErr instanceof Error ? audioErr.message : audioErr}`,
+            "DirectUploader",
+          );
+        }
+      }
+
       let concatFilter = "";
       let concatCmd = "";
 
@@ -5012,7 +5048,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
           `[v0][a0][v1][a1][v2][a2]concat=n=3:v=1:a=1[v][a]`;
         concatCmd =
           `${config.binaries.ffmpeg} -y ` +
-          `-i "${mainVideoPath}" ` +
+          `-i "${effectiveMainVideoPath}" ` +
           `-i "${transitionClipPath}" ` +
           `-i "${verdictClipPath}" ` +
           `-filter_complex "${concatFilter}" ` +
@@ -5030,7 +5066,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
           `[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]`;
         concatCmd =
           `${config.binaries.ffmpeg} -y ` +
-          `-i "${mainVideoPath}" ` +
+          `-i "${effectiveMainVideoPath}" ` +
           `-i "${verdictClipPath}" ` +
           `-filter_complex "${concatFilter}" ` +
           `-map "[v]" -map "[a]" ` +
@@ -5063,6 +5099,8 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       );
       return false;
     } finally {
+      const mainWithAudioPath = path.join(context.tempDir, "video_main_with_audio.mp4");
+      if (fs.existsSync(mainWithAudioPath)) fs.unlinkSync(mainWithAudioPath);
       if (fs.existsSync(stickerTailPath)) fs.unlinkSync(stickerTailPath);
       for (const f of ttsIntermediates) {
         if (fs.existsSync(f)) fs.unlinkSync(f);

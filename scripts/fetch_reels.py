@@ -115,10 +115,9 @@ def fetch_reels_via_rapidapi(identifier: str, mode: str = "channel", limit: int 
             print(f"WARN: RapidAPI returned 0 reels for {identifier}. Body keys: {list(body.keys()) if isinstance(body, dict) else type(body)}", file=sys.stderr)
         return results
     except Exception as exc:
-        import traceback
         print(f"WARN: RapidAPI fetch failed for {identifier}: {exc}", file=sys.stderr)
-        traceback.print_exc(file=sys.stderr)
         return []
+
 
 
 def get_client(force_login=False):

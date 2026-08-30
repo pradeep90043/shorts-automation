@@ -42,12 +42,6 @@ export class YouTubeService {
       const yt = google.youtube({ version: "v3", auth: oauth2 });
 
       const fileSize = fs.statSync(videoPath).size;
-      const mediaStream = fs.createReadStream(videoPath);
-
-      pipelineLogger.info(
-        `[${channel.name}] Starting upload…`,
-        "YouTubeService",
-      );
 
       // YouTube rejects angle brackets in titles/descriptions (invalidTitle 400)
       const sanitize = (text: string): string =>
@@ -55,45 +49,87 @@ export class YouTubeService {
       const safeTitle =
         sanitize(metadata.title).substring(0, 100) || "YouTube Shorts Video";
 
-      const response = await yt.videos.insert(
-        {
-          part: ["snippet", "status"],
-          requestBody: {
-            snippet: {
-              title: safeTitle,
-              description: (metadata.description || "").replace(/[<>]/g, ""),
-              tags: metadata.tags,
-              categoryId: "28",
-              defaultLanguage: "en",
+      let lastErr: any = null;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          pipelineLogger.info(
+            `[${channel.name}] Starting upload (attempt ${attempt}/3)…`,
+            "YouTubeService",
+          );
+
+          const mediaStream = fs.createReadStream(videoPath);
+
+          const response = await yt.videos.insert(
+            {
+              part: ["snippet", "status"],
+              requestBody: {
+                snippet: {
+                  title: safeTitle,
+                  description: (metadata.description || "").replace(/[<>]/g, ""),
+                  tags: metadata.tags,
+                  categoryId: "28",
+                  defaultLanguage: "en",
+                },
+                status: {
+                  privacyStatus: "public",
+                  selfDeclaredMadeForKids: false,
+                },
+              },
+              media: { body: mediaStream },
             },
-            status: {
-              privacyStatus: "public",
-              selfDeclaredMadeForKids: false,
+            {
+              retry: false, // Handle retries in our loop so a fresh stream is provided
+              onUploadProgress: (evt: { bytesRead: number }) => {
+                const pct = ((evt.bytesRead / fileSize) * 100).toFixed(0);
+                pipelineLogger.info(
+                  `[${channel.name}] Upload ${pct}%`,
+                  "YouTubeService",
+                );
+              },
             },
-          },
-          media: { body: mediaStream },
-        },
-        {
-          onUploadProgress: (evt: { bytesRead: number }) => {
-            const pct = ((evt.bytesRead / fileSize) * 100).toFixed(0);
-            pipelineLogger.info(
-              `[${channel.name}] Upload ${pct}%`,
+          );
+
+          const videoId = response.data.id;
+          if (!videoId) throw new Error("YouTube did not return a video ID");
+
+          const isLandscapeOrLong =
+            (metadata.description || "").includes("Produced for") ||
+            (metadata.tags || []).includes("guide") ||
+            (metadata.tags || []).includes("tutorial");
+          const url = isLandscapeOrLong
+            ? `https://www.youtube.com/watch?v=${videoId}`
+            : `https://youtube.com/shorts/${videoId}`;
+          pipelineLogger.checkpoint(`[${channel.name}] Uploaded`, true, url);
+          return { channelName: channel.name, url, videoId };
+        } catch (err: any) {
+          lastErr = err;
+          const status = err.status || err.response?.status;
+          const isRetryable =
+            status === 408 ||
+            status === 429 ||
+            (status >= 500 && status < 600) ||
+            err.code === "ECONNRESET" ||
+            err.code === "ETIMEDOUT" ||
+            String(err.message || "").includes("timeout");
+
+          if (attempt < 3 && isRetryable) {
+            const delayMs = attempt * 5000;
+            pipelineLogger.warn(
+              `[${channel.name}] Upload attempt ${attempt} failed (${err.message || status}) — retrying in ${delayMs / 1000}s with fresh stream...`,
               "YouTubeService",
             );
-          },
-        },
-      );
+            await new Promise((r) => setTimeout(r, delayMs));
+            continue;
+          }
+          break;
+        }
+      }
 
-      const videoId = response.data.id;
-      if (!videoId) throw new Error("YouTube did not return a video ID");
-
-      const isLandscapeOrLong = (metadata.description || "").includes("Produced for") || (metadata.tags || []).includes("guide") || (metadata.tags || []).includes("tutorial");
-      const url = isLandscapeOrLong ? `https://www.youtube.com/watch?v=${videoId}` : `https://youtube.com/shorts/${videoId}`;
-      pipelineLogger.checkpoint(`[${channel.name}] Uploaded`, true, url);
-      return { channelName: channel.name, url, videoId };
-    } catch (err) {
+      throw lastErr;
+    } catch (err: any) {
+      const errMsg = err?.message || String(err);
       pipelineLogger.error(
-        `[${channel.name}] Upload failed`,
+        `[${channel.name}] Upload failed: ${errMsg.slice(0, 300)}`,
         err,
         "YouTubeService",
       );

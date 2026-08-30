@@ -61,11 +61,12 @@ export async function listChannelReels(
       (err, stdout, stderr) => {
         const stderrText = stderr.trim();
         if (stderrText) {
-          for (const line of stderrText.split("\n")) {
+          const lines = stderrText.split("\n").map((l) => l.trim()).filter(Boolean);
+          for (const line of lines) {
             if (line.startsWith("SESSION_REFRESHED:")) {
               const newSid = line.slice("SESSION_REFRESHED:".length).trim();
               if (newSid && onSessionRefresh) onSessionRefresh(newSid);
-            } else {
+            } else if (line.startsWith("WARN:") || line.startsWith("ERROR:")) {
               pipelineLogger.warn(`[ChannelFeed] @${username}: ${line}`, "ChannelFeed");
             }
           }
