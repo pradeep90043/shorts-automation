@@ -1550,7 +1550,9 @@
     } catch (_) { if (statusEl) statusEl.textContent = ''; }
   }
 
-  async function saveScraperCred(key, btn) {
+  // Collect the scraper-login fields for a profile card. Returns a POST body, or
+  // null if the user hasn't entered anything new.
+  function collectScraperCred(key) {
     const body = { profile: key };
     const sid = (document.getElementById('scraper-sessionid-' + key) || {}).value || '';
     const un = (document.getElementById('scraper-username-' + key) || {}).value || '';
@@ -1562,13 +1564,26 @@
     if (pw) body.instagramPassword = pw;
     if (totp) body.instagramTotpSecret = totp.trim();
     if (proxy) body.instagramProxy = proxy.trim();
-    if (Object.keys(body).length === 1) { alert('Nothing to save'); return; }
+    return Object.keys(body).length === 1 ? null : body;
+  }
+
+  async function postScraperCred(key, body) {
+    const res = await fetch(BASE_URL + '/api/channel-credentials', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const d = await res.json();
+    if (d.success) {
+      ['sessionid', 'password', 'totp'].forEach(f => { const e = document.getElementById('scraper-' + f + '-' + key); if (e) e.value = ''; });
+    }
+    return d;
+  }
+
+  async function saveScraperCred(key, btn) {
+    const body = collectScraperCred(key);
+    if (!body) { alert('Nothing to save — enter a sessionid (or username/password) first'); return; }
     const old = btn.textContent; btn.textContent = 'Saving…'; btn.disabled = true;
     try {
-      const res = await fetch(BASE_URL + '/api/channel-credentials', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      const d = await res.json();
+      const d = await postScraperCred(key, body);
       btn.textContent = d.success ? '✓ Saved' : '✗ ' + (d.message || 'Failed');
-      if (d.success) { ['sessionid','password','totp'].forEach(f => { const e = document.getElementById('scraper-' + f + '-' + key); if (e) e.value = ''; }); loadScraperCred(key); }
+      if (d.success) loadScraperCred(key);
     } catch (e) { btn.textContent = '✗ Error'; }
     setTimeout(() => { btn.textContent = old; btn.disabled = false; }, 2500);
   }
@@ -1987,6 +2002,15 @@
       });
       const data = await res.json();
       if (data.success) {
+        // Also persist the Instagram scraper-login fields if the user filled any
+        // in — they live in a separate table, so "Save Config" must save them too.
+        const scraperBody = collectScraperCred(key);
+        if (scraperBody) {
+          try {
+            const sc = await postScraperCred(key, scraperBody);
+            if (!sc.success) showToast('Config saved, but scraper login failed: ' + (sc.message || ''), 'err');
+          } catch (_) { showToast('Config saved, but scraper login save errored', 'err'); }
+        }
         showToast(data.message || `Channel [${brandName}] updated!`, 'ok');
         btnEl.innerText = '✓ Saved';
         setTimeout(() => { btnEl.disabled = false; btnEl.innerText = '💾 Save Config'; }, 2000);
