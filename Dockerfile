@@ -1,6 +1,22 @@
+# syntax=docker/dockerfile:1
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stage 1 — compile TypeScript (needs devDependencies)
+# ─────────────────────────────────────────────────────────────────────────────
+FROM node:20-slim AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY tsconfig.json ./
+COPY src/ ./src/
+RUN npx tsc -p tsconfig.json
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stage 2 — runtime image
+# ─────────────────────────────────────────────────────────────────────────────
 FROM node:20-slim
 
-# Install system dependencies: FFmpeg + Chromium + fonts + Python3
+# System deps: FFmpeg + Chromium (+ its runtime libs) + fonts + Python3
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     chromium \
@@ -30,35 +46,33 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies (pyotp: unattended 2FA for Instagram auto-login)
+# Python deps (pyotp: unattended 2FA for Instagram auto-login)
 RUN pip3 install --break-system-packages instagrapi shazamio pyotp
 
-# Install yt-dlp
+# yt-dlp
 RUN wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp && \
     chmod a+rx /usr/local/bin/yt-dlp
 
-# Tell Puppeteer to use the system Chromium
+# Puppeteer -> system Chromium
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
 WORKDIR /app
 
-# Copy production dependencies only
+# Production node_modules only
 COPY package*.json ./
 RUN npm ci --omit=dev
 
-# Copy pre-compiled JavaScript dist and assets
-COPY dist/ ./dist/
+# App code (compiled) + static assets
+COPY --from=builder /app/dist ./dist
 COPY public/dashboard.html ./public/dashboard.html
 COPY scripts/ ./scripts/
 COPY assets/ ./assets/
 
-# Create writable dirs
 RUN mkdir -p temp output logs
 
-# Copy env (will be overridden by docker-compose env_file or -e flags)
-COPY .env .env
-COPY cookies.txt* ./
+# NOTE: secrets are NOT baked into the image. .env is provided at runtime via
+# docker-compose `env_file:`, and cookies.txt via a bind mount.
 
 EXPOSE 3000 3002
 

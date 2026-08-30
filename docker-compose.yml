@@ -1,6 +1,9 @@
 services:
   bot:
-    build: .
+    # Image is built & pushed by GitHub Actions (.github/workflows/deploy.yml).
+    # Override the tag with BOT_IMAGE if needed; defaults to :latest.
+    image: ${BOT_IMAGE:-ghcr.io/pradeep90043/shorts-automation:latest}
+    pull_policy: always
     container_name: codeorcap-bot
     restart: unless-stopped
     env_file: .env
