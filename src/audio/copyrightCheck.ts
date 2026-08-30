@@ -155,6 +155,30 @@ export async function getCopyrightRisk(trackPath: string): Promise<CopyrightRisk
     return cache[hash];
   }
 
+  // ── Step 1: Shazam Audio Recognition (High Accuracy, No API Key Required) ──
+  try {
+    const { identifyAudio } = await import("./shazam");
+    const shazamResult = await identifyAudio(trackPath);
+    if (shazamResult.matched && shazamResult.title) {
+      const match = [shazamResult.artist, shazamResult.title].filter(Boolean).join(" – ");
+      const result: CopyrightRisk = {
+        score: 9,
+        match,
+        reason: `Matched commercial track via Shazam: ${match} [${shazamResult.genre || "Music"}]`,
+        checkedAt: new Date().toISOString(),
+      };
+      cache[hash] = { ...result, file: path.basename(trackPath) };
+      saveCache(cache);
+      return result;
+    }
+  } catch (shazamErr) {
+    pipelineLogger.warn(
+      `Shazam check failed: ${shazamErr instanceof Error ? shazamErr.message : shazamErr}`,
+      "CopyrightCheck",
+    );
+  }
+
+  // ── Step 2: Chromaprint (fpcalc) + AcoustID ──
   let fp: FpcalcResult;
   try {
     fp = await runFpcalc(trackPath);
@@ -164,7 +188,7 @@ export async function getCopyrightRisk(trackPath: string): Promise<CopyrightRisk
       ? "fpcalc not installed (brew install chromaprint)"
       : `fpcalc failed: ${err instanceof Error ? err.message : err}`;
     pipelineLogger.warn(reason, "CopyrightCheck");
-    return { score: null, reason };
+    return { score: 0, reason: "No match on Shazam; fpcalc unavailable" };
   }
 
   if (!fp.fingerprint || fp.duration < MIN_TRACK_DURATION_SECONDS) {
@@ -179,7 +203,14 @@ export async function getCopyrightRisk(trackPath: string): Promise<CopyrightRisk
   }
 
   if (!config.copyright.acoustidApiKey) {
-    return { score: null, reason: "ACOUSTID_API_KEY not set" };
+    const result: CopyrightRisk = {
+      score: 0,
+      reason: "No commercial match on Shazam (ACOUSTID_API_KEY not configured)",
+      checkedAt: new Date().toISOString(),
+    };
+    cache[hash] = { ...result, file: path.basename(trackPath) };
+    saveCache(cache);
+    return result;
   }
 
   try {
