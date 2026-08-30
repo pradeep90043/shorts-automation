@@ -3,7 +3,7 @@ import { TelegramService } from "../telegram";
 import { WatchStore, QueuedReel } from "../utils/watchStore";
 import { ReelHistoryStore } from "../utils/reelHistoryStore";
 import { JobDatabase } from "../utils/db";
-import { listChannelReels } from "./channelFeed";
+import { listChannelReels, listChannelReelsViaPuppeteer, searchHashtagReelsViaPuppeteer } from "./channelFeed";
 import { buildHashtagsForNiche, searchViralReels, ScoredReel } from "./nicheSearcher";
 import { pipelineLogger } from "../utils/logger";
 import { refreshSessionForProfile, saveChannelCredentials, getChannelCredentials } from "../utils/credentialStore";
@@ -162,6 +162,32 @@ export class ChannelWatcher {
       }
     }
 
+    // Browser-based fallback via Puppeteer (bypasses datacenter 429 rate limits)
+    try {
+      pipelineLogger.info(
+        `[${this.profile.brandName}] Private API rate-limited / failed — trying Puppeteer browser fallback for hashtags...`,
+        "ChannelWatcher",
+      );
+      const puppeteerReels = await searchHashtagReelsViaPuppeteer(hashtags, limitPerTag);
+      if (puppeteerReels.length > 0) {
+        return puppeteerReels.map((r) => ({
+          shortcode: r.shortcode,
+          url: r.url,
+          channel: r.creatorUsername || r.sourceHashtag || "hashtag",
+          creatorUsername: r.creatorUsername,
+          playCount: r.playCount,
+          likeCount: r.likeCount,
+          commentCount: r.commentCount,
+          viralScore: 100,
+        }));
+      }
+    } catch (pupErr) {
+      pipelineLogger.warn(
+        `[${this.profile.brandName}] Puppeteer hashtag fallback failed: ${pupErr instanceof Error ? pupErr.message : pupErr}`,
+        "ChannelWatcher",
+      );
+    }
+
     throw lastError || new Error("All Instagram login candidates failed");
   }
 
@@ -197,6 +223,23 @@ export class ChannelWatcher {
         this.handleSessionRefresh(newSession);
         return this.listChannelReelsWithFallback(channel, false);
       }
+    }
+
+    // Browser-based fallback via Puppeteer (bypasses datacenter 429 rate limits)
+    try {
+      pipelineLogger.info(
+        `[${this.profile.brandName}] Private API rate-limited / failed — trying Puppeteer browser fallback for @${channel}...`,
+        "ChannelWatcher",
+      );
+      const puppeteerReels = await listChannelReelsViaPuppeteer(channel);
+      if (puppeteerReels.length > 0) {
+        return puppeteerReels;
+      }
+    } catch (pupErr) {
+      pipelineLogger.warn(
+        `[${this.profile.brandName}] Puppeteer channel fallback failed for @${channel}: ${pupErr instanceof Error ? pupErr.message : pupErr}`,
+        "ChannelWatcher",
+      );
     }
 
     throw lastError || new Error("All Instagram login candidates failed");
