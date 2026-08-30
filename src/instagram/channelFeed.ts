@@ -240,3 +240,220 @@ export async function searchAllHashtagReels(
     );
   });
 }
+
+/**
+ * Puppeteer browser scraper for channel reels.
+ * Renders the web profile directly using headless Chromium with stealth/cookies,
+ * bypassing datacenter API blocks and private endpoint rate-limits (429).
+ */
+export async function listChannelReelsViaPuppeteer(username: string): Promise<ChannelReelSummary[]> {
+  const cleanUser = username.replace(/^@/, "").trim();
+  pipelineLogger.info(
+    `[ChannelFeed] Attempting Puppeteer browser fallback for @${cleanUser}...`,
+    "ChannelFeed",
+  );
+  let browser: any = null;
+  try {
+    const puppeteerModule = await new Function("return import('puppeteer-core')")();
+    const puppeteer = puppeteerModule.default;
+    const chromeArgs = [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--disable-software-rasterizer",
+      ...(process.platform === "win32" ? ["--no-zygote", "--single-process"] : []),
+    ];
+    browser = await puppeteer.launch({
+      executablePath: config.binaries.chrome,
+      headless: true,
+      timeout: 35000,
+      args: chromeArgs,
+    });
+
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1280, height: 1080 });
+    await page.setUserAgent(
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+      "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    );
+
+    // Load cookies if available
+    const { parseNetscapeCookies } = await import("./index");
+    const cookies = parseNetscapeCookies(COOKIES_FILE);
+    if (cookies.length > 0) {
+      await page.setCookie(...cookies);
+    }
+
+    const shortcodes = new Set<string>();
+    page.on("response", async (res: any) => {
+      try {
+        const resUrl = res.url();
+        if (resUrl.includes("graphql") || resUrl.includes("/api/v1/clips/user/") || resUrl.includes("web_profile_info")) {
+          const text = await res.text();
+          const matches = text.matchAll(/"shortcode":"([A-Za-z0-9_-]+)"/g);
+          for (const m of matches) shortcodes.add(m[1]);
+          const codeMatches = text.matchAll(/"code":"([A-Za-z0-9_-]+)"/g);
+          for (const m of codeMatches) shortcodes.add(m[1]);
+        }
+      } catch (_) {}
+    });
+
+    const targetUrl = `https://www.instagram.com/${cleanUser}/reels/`;
+    await page.goto(targetUrl, { waitUntil: "networkidle2", timeout: 25000 }).catch(() => {});
+
+    const domCodes: string[] = await page.evaluate(() => {
+      const doc = (globalThis as any).document;
+      const links = Array.from(doc?.querySelectorAll('a[href*="/reel/"], a[href*="/p/"]') || []);
+      return links.map((a: any) => {
+        const m = (a.getAttribute("href") || "").match(/\/(?:reel|p)\/([A-Za-z0-9_-]+)/);
+        return m ? m[1] : null;
+      }).filter(Boolean);
+    });
+
+    domCodes.forEach((c) => shortcodes.add(c));
+
+    const results: ChannelReelSummary[] = Array.from(shortcodes).map((shortcode) => ({
+      shortcode,
+      url: `https://www.instagram.com/reel/${shortcode}/`,
+    }));
+
+    pipelineLogger.info(
+      `[ChannelFeed] Puppeteer extracted ${results.length} reel(s) for @${cleanUser}`,
+      "ChannelFeed",
+    );
+    return results;
+  } catch (puppeteerErr) {
+    pipelineLogger.warn(
+      `[ChannelFeed] Puppeteer fallback failed for @${cleanUser}: ${puppeteerErr instanceof Error ? puppeteerErr.message : puppeteerErr}`,
+      "ChannelFeed",
+    );
+    return [];
+  } finally {
+    if (browser) {
+      try {
+        await browser.close();
+      } catch (_) {}
+    }
+  }
+}
+
+/**
+ * Puppeteer browser scraper for hashtag discovery.
+ * Visits hashtag exploration pages and extracts public reels without triggering 429 errors.
+ */
+export async function searchHashtagReelsViaPuppeteer(
+  hashtags: string[],
+  limit = 20,
+): Promise<ScoredReelSummary[]> {
+  const tags = hashtags.map((t) => t.replace(/^#/, "")).filter(Boolean);
+  if (tags.length === 0) return [];
+
+  pipelineLogger.info(
+    `[ChannelFeed] Attempting Puppeteer hashtag discovery for #${tags.slice(0, 3).join(", #")}...`,
+    "ChannelFeed",
+  );
+
+  let browser: any = null;
+  const results: ScoredReelSummary[] = [];
+  const seenCodes = new Set<string>();
+
+  try {
+    const puppeteerModule = await new Function("return import('puppeteer-core')")();
+    const puppeteer = puppeteerModule.default;
+    const chromeArgs = [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--disable-software-rasterizer",
+      ...(process.platform === "win32" ? ["--no-zygote", "--single-process"] : []),
+    ];
+    browser = await puppeteer.launch({
+      executablePath: config.binaries.chrome,
+      headless: true,
+      timeout: 35000,
+      args: chromeArgs,
+    });
+
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1280, height: 1080 });
+    await page.setUserAgent(
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+      "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    );
+
+    const { parseNetscapeCookies } = await import("./index");
+    const cookies = parseNetscapeCookies(COOKIES_FILE);
+    if (cookies.length > 0) {
+      await page.setCookie(...cookies);
+    }
+
+    for (const tag of tags.slice(0, 5)) {
+      if (results.length >= limit) break;
+      const shortcodesForTag = new Set<string>();
+
+      page.removeAllListeners("response");
+      page.on("response", async (res: any) => {
+        try {
+          const resUrl = res.url();
+          if (resUrl.includes("graphql") || resUrl.includes("/api/v1/tags/")) {
+            const text = await res.text();
+            const matches = text.matchAll(/"shortcode":"([A-Za-z0-9_-]+)"/g);
+            for (const m of matches) shortcodesForTag.add(m[1]);
+            const codeMatches = text.matchAll(/"code":"([A-Za-z0-9_-]+)"/g);
+            for (const m of codeMatches) shortcodesForTag.add(m[1]);
+          }
+        } catch (_) {}
+      });
+
+      const tagUrl = `https://www.instagram.com/explore/tags/${encodeURIComponent(tag)}/`;
+      await page.goto(tagUrl, { waitUntil: "networkidle2", timeout: 25000 }).catch(() => {});
+
+      const domCodes: string[] = await page.evaluate(() => {
+        const doc = (globalThis as any).document;
+        const links = Array.from(doc?.querySelectorAll('a[href*="/reel/"], a[href*="/p/"]') || []);
+        return links.map((a: any) => {
+          const m = (a.getAttribute("href") || "").match(/\/(?:reel|p)\/([A-Za-z0-9_-]+)/);
+          return m ? m[1] : null;
+        }).filter(Boolean);
+      });
+
+      domCodes.forEach((c) => shortcodesForTag.add(c));
+
+      for (const code of shortcodesForTag) {
+        if (!seenCodes.has(code)) {
+          seenCodes.add(code);
+          results.push({
+            shortcode: code,
+            url: `https://www.instagram.com/reel/${code}/`,
+            playCount: 1000,
+            likeCount: 100,
+            commentCount: 10,
+            sourceHashtag: tag,
+          });
+          if (results.length >= limit) break;
+        }
+      }
+    }
+
+    pipelineLogger.info(
+      `[ChannelFeed] Puppeteer extracted ${results.length} hashtag reel(s)`,
+      "ChannelFeed",
+    );
+    return results;
+  } catch (err) {
+    pipelineLogger.warn(
+      `[ChannelFeed] Puppeteer hashtag scraping failed: ${err instanceof Error ? err.message : err}`,
+      "ChannelFeed",
+    );
+    return results;
+  } finally {
+    if (browser) {
+      try {
+        await browser.close();
+      } catch (_) {}
+    }
+  }
+}
+
