@@ -64,10 +64,35 @@ export const pipelineLogger = {
   },
 
   error(message: string, error?: any, context?: string) {
-    const errMsg = error instanceof Error ? error.message : String(error);
-    logger.error(`${message}: ${errMsg}`, {
+    let sanitizedError: any = undefined;
+    if (error !== undefined && error !== null) {
+      if (error instanceof Error) {
+        sanitizedError = {
+          name: error.name,
+          message: error.message,
+          stack: error.stack,
+          code: (error as any).code,
+          status: (error as any).status || (error as any).response?.status,
+        };
+      } else if (typeof error === "object") {
+        try {
+          sanitizedError = {
+            message: error.message || String(error),
+            code: error.code,
+            status: error.status || error.response?.status,
+          };
+        } catch {
+          sanitizedError = String(error);
+        }
+      } else {
+        sanitizedError = String(error);
+      }
+    }
+    const errMsg = error instanceof Error ? error.message : (error ? String(error) : "");
+    logger.error(`${message}${errMsg ? `: ${errMsg}` : ""}`, {
       label: context || "Pipeline",
-      error,
+      error: sanitizedError,
     });
   },
 };
+

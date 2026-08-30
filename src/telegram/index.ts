@@ -6,6 +6,7 @@ import { promisify } from "util";
 import { config, ChannelProfile } from "../config";
 import { ITelegramService, PipelineContext, TelegramMetadata, AssetKind, ReviewSettings } from "../types";
 import { pipelineLogger } from "../utils/logger";
+import { JobDatabase } from "../utils/db";
 import {
   isInstagramReelUrl,
   extractInstagramUrl,
@@ -30,6 +31,7 @@ export class TelegramService implements ITelegramService {
   public static readonly instances: TelegramService[] = [];
   private bot: Telegraf;
   public readonly profile: ChannelProfile;
+  private db: JobDatabase;
   private pipelineTrigger?: (context: PipelineContext) => Promise<void>;
   private approvalTrigger?: (genId: string) => Promise<void>;
   private reviewCallback?: (
@@ -62,6 +64,7 @@ export class TelegramService implements ITelegramService {
       );
     }
     this.profile = profile;
+    this.db = new JobDatabase(profile.key);
     this.bot = new Telegraf(profile.telegramToken);
     this.setupHandlers();
     TelegramService.instances.push(this);
@@ -1140,6 +1143,13 @@ export class TelegramService implements ITelegramService {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       pipelineLogger.error("Instagram download failed", err, "Instagram");
+      try {
+        this.db.createJob(id, {
+          status: "failed",
+          currentStep: "Download failed",
+          error: `Download failed: ${msg}`,
+        });
+      } catch {}
       await this.sendMessage(
         chatId,
         `❌ *Failed to download video*\n\`${msg.slice(0, 300)}\`\n\nMake sure the reel/video is public. (For Instagram, you must be logged into Chrome).`,
@@ -1215,6 +1225,14 @@ export class TelegramService implements ITelegramService {
 
     if (this.pipelineTrigger) {
       this.pipelineTrigger(context).catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        try {
+          this.db.updateJob(id, {
+            status: "failed",
+            currentStep: "Pipeline failed",
+            error: msg,
+          });
+        } catch {}
         pipelineLogger.error(
           `Pipeline failed for Instagram reel ${id}`,
           err,

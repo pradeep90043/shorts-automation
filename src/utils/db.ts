@@ -103,12 +103,16 @@ export class JobDatabase {
 
   public createJob(
     id: string,
-    initialData: Omit<JobEntry, "id" | "createdAt" | "updatedAt">,
+    initialData: Partial<JobEntry> & { status: JobEntry["status"] },
   ): JobEntry {
     this.loadFromFile();
     const now = new Date().toISOString();
     const entry: JobEntry = {
       id,
+      currentStep: initialData.currentStep || "Job initialized",
+      source: initialData.source || "system",
+      mediaType: initialData.mediaType || "video",
+      context: (initialData.context || { id, status: initialData.status }) as any,
       ...initialData,
       createdAt: now,
       updatedAt: now,
