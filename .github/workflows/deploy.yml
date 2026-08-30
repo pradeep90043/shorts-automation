@@ -73,8 +73,8 @@ jobs:
 
       - name: Materialise prod secrets
         run: |
-          printf '%s' "${PRODUCTION_ENV}" > .env
-          printf '%s' "${PRODUCTION_COOKIES}" > cookies.txt
+          printf '%s\n' "${PRODUCTION_ENV}" > .env
+          printf '%s\n' "${PRODUCTION_COOKIES}" > cookies.txt
         env:
           PRODUCTION_ENV: ${{ secrets.PRODUCTION_ENV }}
           PRODUCTION_COOKIES: ${{ secrets.PRODUCTION_COOKIES }}
@@ -82,7 +82,8 @@ jobs:
       - name: Rsync runtime files to VM
         run: |
           mkdir -p ~/.ssh
-          printf '%s' "${VM_KEY}" > ~/.ssh/id_rsa
+          # A private key MUST end with a newline or ssh reports "error in libcrypto".
+          printf '%s\n' "${VM_KEY}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           SSH="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 22"
           $SSH "${VM_USER}@${VM_HOST}" "mkdir -p ~/shorts-automation"
