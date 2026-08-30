@@ -6,7 +6,7 @@ import { google } from "googleapis";
 import { addLogClient, removeLogClient } from "./utils/logBroadcast";
 import { config, ChannelProfile, resolveTheme } from "./config";
 import { getPool } from "./utils/pgClient";
-import { getChannelCredentials, saveChannelCredentials } from "./utils/credentialStore";
+import { getChannelCredentials, patchChannelCredentials } from "./utils/credentialStore";
 import { getAllStoredChannelConfigs, saveChannelConfig, deleteChannelConfig, StoredChannelConfig, StoredInstagramAccount, StoredYoutubeChannel } from "./utils/channelConfigStore";
 import { getAllAudienceStats } from "./utils/audienceStats";
 import { activeWatchers } from "./instagram/channelWatcher";
@@ -1807,6 +1807,9 @@ export function startLogServer(): void {
           instagramUsername: creds?.instagramUsername || "",
           instagramPassword: creds?.instagramPassword ? maskSecret(creds.instagramPassword) : "",
           instagramEmail: creds?.instagramEmail || "",
+          instagramTotpSecret: creds?.instagramTotpSecret ? maskSecret(creds.instagramTotpSecret) : "",
+          instagramProxy: creds?.instagramProxy ? maskSecret(creds.instagramProxy) : "",
+          hasSettingsBlob: !!creds?.instagramSettingsJson,
           updatedAt: creds?.updatedAt || null,
         }));
       } catch (err: any) {
@@ -1823,13 +1826,18 @@ export function startLogServer(): void {
       try {
         const body = await parseJsonBody(req);
         const pKey = (body.profile || "codeorcap").toLowerCase();
-        await saveChannelCredentials({
-          profileKey: pKey,
-          instagramSessionId: body.instagramSessionId || undefined,
-          instagramUsername: body.instagramUsername || undefined,
-          instagramPassword: body.instagramPassword || undefined,
-          instagramEmail: body.instagramEmail || undefined,
-        });
+        // Patch only the fields actually supplied — never wipe the persisted
+        // settings blob / password just because this form didn't include them.
+        const patch: Parameters<typeof patchChannelCredentials>[1] = {};
+        if (body.instagramSessionId) patch.instagramSessionId = body.instagramSessionId;
+        if (body.instagramUsername) patch.instagramUsername = body.instagramUsername;
+        if (body.instagramPassword) patch.instagramPassword = body.instagramPassword;
+        if (body.instagramEmail) patch.instagramEmail = body.instagramEmail;
+        if (body.instagramTotpSecret) patch.instagramTotpSecret = body.instagramTotpSecret;
+        if (body.instagramProxy) patch.instagramProxy = body.instagramProxy;
+        // A freshly pasted session cookie invalidates any stale persisted device blob.
+        if (body.instagramSessionId) patch.instagramSettingsJson = "";
+        await patchChannelCredentials(pKey, patch);
         pipelineLogger.info(`Credentials saved for profile [${pKey.toUpperCase()}]`, "ControlCenter");
         res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
         res.end(JSON.stringify({ success: true, message: `Credentials saved for [${pKey.toUpperCase()}]` }));
@@ -1859,7 +1867,8 @@ export function startLogServer(): void {
           ...process.env,
           INSTAGRAM_USERNAME: creds.instagramUsername,
           INSTAGRAM_PASSWORD: creds.instagramPassword,
-          ...(creds.instagramSessionId ? {} : {}),
+          INSTAGRAM_TOTP_SECRET: creds.instagramTotpSecret || process.env.INSTAGRAM_TOTP_SECRET || "",
+          INSTAGRAM_PROXY: creds.instagramProxy || process.env.INSTAGRAM_PROXY || "",
         };
         pipelineLogger.info(`[${pKey.toUpperCase()}] Auto-login started to retrieve session ID`, "ControlCenter");
         execFile(python3, [script], { timeout: 60000, env }, async (err, stdout, stderr) => {
@@ -1871,7 +1880,7 @@ export function startLogServer(): void {
             res.end(JSON.stringify({ success: false, message: msg }));
             return;
           }
-          await saveChannelCredentials({ ...creds, instagramSessionId: sessionId });
+          await patchChannelCredentials(pKey, { instagramSessionId: sessionId, instagramSettingsJson: "" });
           pipelineLogger.info(`[${pKey.toUpperCase()}] Session ID auto-retrieved and saved`, "ControlCenter");
           res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
           res.end(JSON.stringify({ success: true, message: `Session ID retrieved and saved for [${pKey.toUpperCase()}]`, sessionIdPreview: sessionId.slice(0, 6) + "••••••••" }));

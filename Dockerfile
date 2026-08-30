@@ -16,14 +16,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libasound2 \
     libpangocairo-1.0-0 \
     libgtk-3-0 \
+    libxkbcommon0 \
+    libxshmfence1 \
+    libxfixes3 \
+    libxext6 \
+    libxcb1 \
+    libdrm2 \
+    libcups2 \
+    libatspi2.0-0 \
     ca-certificates \
     wget \
     python3 \
     python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
-RUN pip3 install --break-system-packages instagrapi shazamio
+# Install Python dependencies (pyotp: unattended 2FA for Instagram auto-login)
+RUN pip3 install --break-system-packages instagrapi shazamio pyotp
 
 # Install yt-dlp
 RUN wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp && \

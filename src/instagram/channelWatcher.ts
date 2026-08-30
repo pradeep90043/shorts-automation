@@ -1,12 +1,18 @@
-import { ChannelProfile } from "../config";
+import { ChannelProfile, config } from "../config";
 import { TelegramService } from "../telegram";
 import { WatchStore, QueuedReel } from "../utils/watchStore";
 import { ReelHistoryStore } from "../utils/reelHistoryStore";
 import { JobDatabase } from "../utils/db";
-import { listChannelReels, listChannelReelsViaPuppeteer, searchHashtagReelsViaPuppeteer } from "./channelFeed";
+import {
+  listChannelReels,
+  listChannelReelsViaPuppeteer,
+  searchHashtagReelsViaPuppeteer,
+  InstagramSessionDeadError,
+  ScraperCallbacks,
+} from "./channelFeed";
 import { buildHashtagsForNiche, searchViralReels, ScoredReel } from "./nicheSearcher";
 import { pipelineLogger } from "../utils/logger";
-import { refreshSessionForProfile, saveChannelCredentials, getChannelCredentials } from "../utils/credentialStore";
+import { refreshSessionForProfile, patchChannelCredentials } from "../utils/credentialStore";
 
 /**
  * Recurring Instagram-channel-watch automation for one channel profile.
@@ -37,7 +43,9 @@ export class ChannelWatcher {
   private db: JobDatabase;
   private rateLimitedUntil: number | null = null;
   private isForcedRun = false;
-  private static readonly RATE_LIMIT_COOLDOWN_MS = 30 * 60 * 1000; // 30 min
+  private static get RATE_LIMIT_COOLDOWN_MS(): number {
+    return config.instagramScraper.rateLimitCooldownMs; // default 45 min
+  }
 
   constructor(
     private profile: ChannelProfile,
@@ -76,6 +84,8 @@ export class ChannelWatcher {
       INSTAGRAM_PASSWORD: process.env.INSTAGRAM_PASSWORD || "",
       INSTAGRAM_TOTP_SECRET: process.env.INSTAGRAM_TOTP_SECRET || "",
       INSTAGRAM_SESSION_ID: process.env.INSTAGRAM_SESSION_ID || "",
+      INSTAGRAM_SETTINGS_JSON: process.env.INSTAGRAM_SETTINGS_JSON || "",
+      INSTAGRAM_PROXY: process.env.INSTAGRAM_PROXY || "",
     };
     if (globalEnv.INSTAGRAM_USERNAME || globalEnv.INSTAGRAM_SESSION_ID) {
       candidates.push(globalEnv);
@@ -100,14 +110,18 @@ export class ChannelWatcher {
     const password = process.env[`${prefix}_INSTAGRAM_PASSWORD`] || "";
     const totp = process.env[`${prefix}_INSTAGRAM_TOTP_SECRET`] || "";
     const session = process.env[`${prefix}_INSTAGRAM_SESSION_ID`] || "";
+    const settings = process.env[`${prefix}_INSTAGRAM_SETTINGS_JSON`] || process.env.INSTAGRAM_SETTINGS_JSON || "";
+    const proxy = process.env[`${prefix}_INSTAGRAM_PROXY`] || process.env.INSTAGRAM_PROXY || "";
 
-    if (!username && !session) return null;
+    if (!username && !session && !settings) return null;
 
     return {
       INSTAGRAM_USERNAME: username,
       INSTAGRAM_PASSWORD: password,
       INSTAGRAM_TOTP_SECRET: totp,
       INSTAGRAM_SESSION_ID: session,
+      INSTAGRAM_SETTINGS_JSON: settings,
+      INSTAGRAM_PROXY: proxy,
     };
   }
 
@@ -116,13 +130,49 @@ export class ChannelWatcher {
     const prefix = this.profile.key.toUpperCase().replace(/-/g, "_");
     process.env[`${prefix}_INSTAGRAM_SESSION_ID`] = newSessionId;
     process.env.INSTAGRAM_SESSION_ID = newSessionId;
-    getChannelCredentials(this.profile.key).then((creds) => {
-      if (creds) saveChannelCredentials({ ...creds, instagramSessionId: newSessionId }).catch(() => {});
-    }).catch(() => {});
+    patchChannelCredentials(this.profile.key, { instagramSessionId: newSessionId }).catch(() => {});
     pipelineLogger.info(
       `[${this.profile.brandName}] Session ID auto-refreshed and saved to DB`,
       "ChannelWatcher",
     );
+  }
+
+  /** Persists the rotated instagrapi settings blob (device UUIDs + cookies) to the DB. */
+  private handleSettingsRefresh(settingsB64: string): void {
+    const prefix = this.profile.key.toUpperCase().replace(/-/g, "_");
+    process.env[`${prefix}_INSTAGRAM_SETTINGS_JSON`] = settingsB64;
+    process.env.INSTAGRAM_SETTINGS_JSON = settingsB64;
+    patchChannelCredentials(this.profile.key, { instagramSettingsJson: settingsB64 }).catch(() => {});
+  }
+
+  private scraperCallbacks(): ScraperCallbacks {
+    return {
+      onSessionRefresh: (sid) => this.handleSessionRefresh(sid),
+      onSettingsRefresh: (blob) => this.handleSettingsRefresh(blob),
+    };
+  }
+
+  /** Alert an admin (at most once per 6h) that the stored IG session is dead and needs a manual refresh. */
+  private sessionDeadAlertedAt = 0;
+  private async alertSessionDead(context: string, err: Error): Promise<void> {
+    const now = Date.now();
+    if (now - this.sessionDeadAlertedAt < 6 * 60 * 60 * 1000) return;
+    this.sessionDeadAlertedAt = now;
+    pipelineLogger.error(
+      `[${this.profile.brandName}] Instagram session is DEAD (${context}) — auto-refresh is disabled in session_only mode. A fresh sessionid must be pasted via the dashboard.`,
+      err,
+      "ChannelWatcher",
+    );
+    const chatId = this.profile.watch.adminChatId;
+    if (chatId) {
+      await this.telegram.sendMessage(
+        chatId,
+        `⚠️ *${this.profile.brandName}* — Instagram session expired\n\n` +
+          `Reel ingestion is paused. Open the dashboard → *Channel Credentials* → paste a fresh \`sessionid\` ` +
+          `cookie for this profile (copy it from a browser where the account is logged in).\n\n` +
+          `_Context: ${context}_`,
+      ).catch(() => {});
+    }
   }
 
   private async searchViralReelsWithFallback(
@@ -140,7 +190,7 @@ export class ChannelWatcher {
           `[${this.profile.brandName}] Attempting searchViralReels with account "${env.INSTAGRAM_USERNAME || 'session-only'}"...`,
           "ChannelWatcher",
         );
-        return await searchViralReels(hashtags, viralThreshold, limitPerTag, this.history, env);
+        return await searchViralReels(hashtags, viralThreshold, limitPerTag, this.history, env, this.scraperCallbacks());
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
         pipelineLogger.warn(
@@ -150,7 +200,9 @@ export class ChannelWatcher {
       }
     }
 
-    if (allowSessionRefresh && lastError && isSessionError(lastError)) {
+    if (lastError instanceof InstagramSessionDeadError) {
+      await this.alertSessionDead("hashtag search", lastError);
+    } else if (allowSessionRefresh && lastError && isSessionError(lastError)) {
       pipelineLogger.info(
         `[${this.profile.brandName}] All candidates failed with session error. Auto-refreshing session ID...`,
         "ChannelWatcher",
@@ -195,15 +247,13 @@ export class ChannelWatcher {
     const candidates = this.getScraperEnvCandidates();
     let lastError: Error | null = null;
 
-    const onRefresh = (newSid: string) => this.handleSessionRefresh(newSid);
-
     for (const env of candidates) {
       try {
         pipelineLogger.info(
           `[${this.profile.brandName}] Attempting listChannelReels with account "${env.INSTAGRAM_USERNAME || 'session-only'}"...`,
           "ChannelWatcher",
         );
-        return await listChannelReels(channel, env, onRefresh);
+        return await listChannelReels(channel, env, this.scraperCallbacks());
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
         pipelineLogger.warn(
@@ -213,7 +263,9 @@ export class ChannelWatcher {
       }
     }
 
-    if (allowSessionRefresh && lastError && isSessionError(lastError)) {
+    if (lastError instanceof InstagramSessionDeadError) {
+      await this.alertSessionDead(`channel @${channel}`, lastError);
+    } else if (allowSessionRefresh && lastError && isSessionError(lastError)) {
       pipelineLogger.info(
         `[${this.profile.brandName}] All candidates failed with session error. Auto-refreshing session ID...`,
         "ChannelWatcher",
@@ -457,13 +509,20 @@ export class ChannelWatcher {
             }
           }
         } catch (err) {
+          if (err instanceof InstagramSessionDeadError) {
+            await this.alertSessionDead(`batch selection @${channel}`, err);
+            break; // every channel shares the same dead session — stop hammering
+          }
           pipelineLogger.error(
             `[${this.profile.brandName}] Failed to list reels for @${channel}`,
             err,
             "ChannelWatcher",
           );
         }
-        await new Promise((r) => setTimeout(r, 15000));
+        // Space out consecutive channel polls to stay well under Instagram's
+        // per-minute limits (configurable; default 25s + up to 10s jitter).
+        const base = config.instagramScraper.interChannelDelayMs;
+        await new Promise((r) => setTimeout(r, base + Math.random() * 10000));
       }
 
       // Fisher-Yates shuffle

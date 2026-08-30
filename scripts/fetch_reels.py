@@ -45,6 +45,37 @@ SESSION_FILE = next(
 
 _rate_limited = False
 
+# The old hard-coded shared free-tier RapidAPI key — exhausted, returns 404/429 on
+# every call. Treated as "no key" so we skip the wasted round-trip and log noise.
+_DEAD_SHARED_RAPIDAPI_KEY = "8a0fd54a8amsh10bd5cc60f5ac47p1f0069jsn7077defe962b"
+
+# session_only (default): NEVER perform a username/password login. Only the
+# sessionid cookie / persisted device settings are used. A password login from a
+# datacenter IP reliably trips an Instagram challenge that can lock the account,
+# so when the cookie is dead we emit SESSION_DEAD and exit(3) — Node alerts an
+# admin to paste a fresh cookie. Set INSTAGRAM_LOGIN_MODE=full to allow password
+# fallback (only safe behind a residential IP / proxy).
+SESSION_ONLY = os.environ.get("INSTAGRAM_LOGIN_MODE", "session_only").strip().lower() != "full"
+
+
+def _emit_session_dead(reason: str) -> None:
+    """Signal Node that the stored session is unusable and no auto-recovery is possible."""
+    who = os.environ.get("INSTAGRAM_USERNAME", "").strip() or "session"
+    print(f"SESSION_DEAD:{who}: {reason}", file=sys.stderr)
+    sys.exit(3)
+
+
+def _emit_settings(client) -> None:
+    """Print the current instagrapi settings (device UUIDs + cookies) as base64 so
+    Node can persist them to the DB — keeps the device fingerprint stable across
+    re-logins and container redeploys."""
+    try:
+        import base64
+        blob = base64.b64encode(json.dumps(client.get_settings()).encode("utf-8")).decode("ascii")
+        print(f"SETTINGS_JSON:{blob}", file=sys.stderr)
+    except Exception:
+        pass
+
 
 def _is_rate_limit(exc: Exception) -> bool:
     """Detect Instagram 429 / throttle errors regardless of instagrapi version."""
@@ -57,8 +88,9 @@ def _is_rate_limit(exc: Exception) -> bool:
 
 def fetch_reels_via_rapidapi(identifier: str, mode: str = "channel", limit: int = 10) -> list[dict]:
     """Fetch reels cleanly via RapidAPI without requiring any Instagram login or cookies."""
-    rapidapi_key = os.environ.get("RAPIDAPI_KEY") or os.environ.get("RAPIDAPI_INSTAGRAM_KEY") or "8a0fd54a8amsh10bd5cc60f5ac47p1f0069jsn7077defe962b"
-    if not rapidapi_key:
+    rapidapi_key = os.environ.get("RAPIDAPI_KEY") or os.environ.get("RAPIDAPI_INSTAGRAM_KEY") or ""
+    if not rapidapi_key or rapidapi_key == _DEAD_SHARED_RAPIDAPI_KEY:
+        # No real key configured — skip RapidAPI entirely (instagrapi is primary).
         return []
     
     try:
@@ -144,6 +176,7 @@ def get_client(force_login=False):
     ig_pass = os.environ.get("INSTAGRAM_PASSWORD", "").strip()
     totp_secret = os.environ.get("INSTAGRAM_TOTP_SECRET", "").strip()
     session_id = os.environ.get("INSTAGRAM_SESSION_ID", "").strip()
+    settings_b64 = os.environ.get("INSTAGRAM_SETTINGS_JSON", "").strip()
 
     if not ig_user and not session_id:
         print(
@@ -166,9 +199,40 @@ def get_client(force_login=False):
     except Exception:
         pass
 
-    # Attempt to reuse a previously saved session.
+    # Optional proxy — routes every Instagram call through a residential/mobile IP
+    # so datacenter-IP challenges stop. Set INSTAGRAM_PROXY=http://user:pass@host:port.
+    proxy_url = os.environ.get("INSTAGRAM_PROXY", "").strip()
+    if proxy_url:
+        try:
+            cl.set_proxy(proxy_url)
+            print(f"INFO: Using proxy {proxy_url.split('@')[-1]}", file=sys.stderr)
+        except Exception as exc:
+            print(f"WARN: Could not set proxy: {exc}", file=sys.stderr)
+
+    # Restore the persisted device fingerprint + cookies from the DB (passed via
+    # env by Node). Reusing the same device UUIDs across logins is what stops
+    # Instagram flagging each session as a new suspicious device. DB is the source
+    # of truth; the on-disk session_file is only an ephemeral local cache.
+    if settings_b64:
+        try:
+            import base64
+            cl.set_settings(json.loads(base64.b64decode(settings_b64)))
+            if not session_id:
+                session_id = cl.cookie_dict.get("sessionid", "") or ""
+            print("INFO: Restored persisted instagrapi settings from DB.", file=sys.stderr)
+        except Exception as exc:
+            print(f"WARN: Could not restore persisted settings blob ({exc}).", file=sys.stderr)
+
+    # Attempt to reuse a previously saved session (DB settings blob, else disk cache).
     session_loaded = False
-    if not force_login and os.path.exists(session_file):
+    if not force_login and settings_b64:
+        try:
+            cl.get_timeline_feed()
+            session_loaded = True
+            print("INFO: Reusing valid instagrapi session from DB settings.", file=sys.stderr)
+        except Exception as exc:
+            print(f"WARN: DB session settings invalid/expired ({exc}).", file=sys.stderr)
+    if not force_login and not session_loaded and os.path.exists(session_file):
         try:
             cl.load_settings(session_file)
             cl.get_timeline_feed()
@@ -193,9 +257,18 @@ def get_client(force_login=False):
                 print(f"INFO: Logged in using INSTAGRAM_SESSION_ID ({sid[:15]}...).", file=sys.stderr)
                 return
             except Exception as e:
-                print(f"WARN: Login by session ID failed: {e}. Falling back to username/password.", file=sys.stderr)
+                print(f"WARN: Login by session ID failed: {e}.", file=sys.stderr)
+                if SESSION_ONLY:
+                    _emit_session_dead(f"session cookie rejected ({e})")
                 if not ig_user or not ig_pass:
                     raise e
+                print("WARN: Falling back to username/password.", file=sys.stderr)
+
+        if SESSION_ONLY:
+            _emit_session_dead(
+                "no usable session cookie and password login is disabled on the server "
+                "(INSTAGRAM_LOGIN_MODE=session_only)"
+            )
 
         if totp_secret:
             try:
@@ -266,6 +339,11 @@ def get_client(force_login=False):
         new_sid = cl.cookie_dict.get("sessionid", "")
         if new_sid:
             print(f"SESSION_REFRESHED:{new_sid}", file=sys.stderr)
+
+    # Always emit the current settings blob (device UUIDs + possibly-rotated
+    # cookies) so Node persists it to the DB — this is what makes the session
+    # survive redeploys and keeps the device fingerprint stable.
+    _emit_settings(cl)
 
     return cl
 
