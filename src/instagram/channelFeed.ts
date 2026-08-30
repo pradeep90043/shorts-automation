@@ -267,6 +267,7 @@ export async function listChannelReelsViaPuppeteer(username: string): Promise<Ch
     browser = await puppeteer.launch({
       executablePath: config.binaries.chrome,
       headless: true,
+      protocolTimeout: 60000,
       timeout: 35000,
       args: chromeArgs,
     });
@@ -300,7 +301,8 @@ export async function listChannelReelsViaPuppeteer(username: string): Promise<Ch
     });
 
     const targetUrl = `https://www.instagram.com/${cleanUser}/reels/`;
-    await page.goto(targetUrl, { waitUntil: "networkidle2", timeout: 25000 }).catch(() => {});
+    await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => {});
+    await new Promise((r) => setTimeout(r, 2500));
 
     const domCodes: string[] = await page.evaluate(() => {
       const doc = (globalThis as any).document;
@@ -372,6 +374,7 @@ export async function searchHashtagReelsViaPuppeteer(
     browser = await puppeteer.launch({
       executablePath: config.binaries.chrome,
       headless: true,
+      protocolTimeout: 60000,
       timeout: 35000,
       args: chromeArgs,
     });
@@ -408,7 +411,8 @@ export async function searchHashtagReelsViaPuppeteer(
       });
 
       const tagUrl = `https://www.instagram.com/explore/tags/${encodeURIComponent(tag)}/`;
-      await page.goto(tagUrl, { waitUntil: "networkidle2", timeout: 25000 }).catch(() => {});
+      await page.goto(tagUrl, { waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => {});
+      await new Promise((r) => setTimeout(r, 2500));
 
       const domCodes: string[] = await page.evaluate(() => {
         const doc = (globalThis as any).document;
