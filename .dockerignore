@@ -1,8 +1,47 @@
+# ── Build context trimming ──────────────────────────────────────────────────
+# Everything here is kept OUT of the tarball sent to the Docker daemon. On the
+# tiny Oracle VM the context transfer itself is a big chunk of build time.
+
 node_modules
+**/node_modules
+
+# Sub-project that is NOT part of the image (~650 MB, has its own node_modules)
+website-audit-reel
+
+# Runtime / generated dirs
 temp
 logs
 output
 *.log
+
+# VCS & tooling
 .git
+.github
+.claude
+.vscode
+.idea
+
+# Local dev / test artefacts
+tests
+test-assets
+*.test.ts
+test-*.ts
+scratch_*.ts
+scratch_*.js
+*.tsbuildinfo
+coverage
+
+# Loose media & docs at the REPO ROOT only (anchored — does NOT touch assets/**)
+/*.jpg
+/*.jpeg
+/*.png
+/*.md
+/models_out.txt
+/eng.traineddata
+
+# Large asset subdirs are mounted as volumes at runtime, not baked in
 assets/music
 assets/stickers
+
+# Keep: dist/, scripts/, public/dashboard.html, assets/ (watermarks/logo/verdict-clips),
+#       package*.json, Dockerfile, .env, cookies.txt* — required by Dockerfile COPY.
