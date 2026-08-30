@@ -43,5 +43,11 @@ coverage
 assets/music
 assets/stickers
 
-# Keep: dist/, scripts/, public/dashboard.html, assets/ (watermarks/logo/verdict-clips),
-#       package*.json, Dockerfile, .env, cookies.txt* — required by Dockerfile COPY.
+# Secrets never go in the image (provided at runtime via compose env_file / bind mount)
+.env
+.env.*
+cookies.txt
+*.cookies.txt
+
+# Keep: src/, tsconfig.json, package*.json (builder stage); scripts/,
+#       public/dashboard.html, assets/ (watermarks/logo/verdict-clips) (runtime stage).
