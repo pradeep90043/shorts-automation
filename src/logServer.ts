@@ -1810,6 +1810,8 @@ export function startLogServer(): void {
           instagramTotpSecret: creds?.instagramTotpSecret ? maskSecret(creds.instagramTotpSecret) : "",
           instagramProxy: creds?.instagramProxy ? maskSecret(creds.instagramProxy) : "",
           hasSettingsBlob: !!creds?.instagramSettingsJson,
+          sessionExpired: !!creds?.sessionDeadAt,
+          sessionDeadAt: creds?.sessionDeadAt || null,
           updatedAt: creds?.updatedAt || null,
         }));
       } catch (err: any) {
@@ -1835,8 +1837,12 @@ export function startLogServer(): void {
         if (body.instagramEmail) patch.instagramEmail = body.instagramEmail;
         if (body.instagramTotpSecret) patch.instagramTotpSecret = body.instagramTotpSecret;
         if (body.instagramProxy) patch.instagramProxy = body.instagramProxy;
-        // A freshly pasted session cookie invalidates any stale persisted device blob.
-        if (body.instagramSessionId) patch.instagramSettingsJson = "";
+        // A freshly pasted session cookie invalidates any stale persisted device
+        // blob and clears the "expired" flag until Instagram rejects it again.
+        if (body.instagramSessionId) {
+          patch.instagramSettingsJson = "";
+          patch.sessionDeadAt = null;
+        }
         await patchChannelCredentials(pKey, patch);
         pipelineLogger.info(`Credentials saved for profile [${pKey.toUpperCase()}]`, "ControlCenter");
         res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
@@ -1880,7 +1886,7 @@ export function startLogServer(): void {
             res.end(JSON.stringify({ success: false, message: msg }));
             return;
           }
-          await patchChannelCredentials(pKey, { instagramSessionId: sessionId, instagramSettingsJson: "" });
+          await patchChannelCredentials(pKey, { instagramSessionId: sessionId, instagramSettingsJson: "", sessionDeadAt: null });
           pipelineLogger.info(`[${pKey.toUpperCase()}] Session ID auto-retrieved and saved`, "ControlCenter");
           res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
           res.end(JSON.stringify({ success: true, message: `Session ID retrieved and saved for [${pKey.toUpperCase()}]`, sessionIdPreview: sessionId.slice(0, 6) + "••••••••" }));

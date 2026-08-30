@@ -137,12 +137,21 @@ export class ChannelWatcher {
     );
   }
 
-  /** Persists the rotated instagrapi settings blob (device UUIDs + cookies) to the DB. */
+  /** Tracks whether we've already recorded this profile's session as healthy this process, to avoid redundant writes. */
+  private lastKnownSessionOk = false;
+
+  /** Persists the rotated instagrapi settings blob (device UUIDs + cookies) to the DB.
+   *  A settings emit only happens after a valid login, so this is also our signal
+   *  that the session is healthy again — clear any "expired" flag. */
   private handleSettingsRefresh(settingsB64: string): void {
     const prefix = this.profile.key.toUpperCase().replace(/-/g, "_");
     process.env[`${prefix}_INSTAGRAM_SETTINGS_JSON`] = settingsB64;
     process.env.INSTAGRAM_SETTINGS_JSON = settingsB64;
-    patchChannelCredentials(this.profile.key, { instagramSettingsJson: settingsB64 }).catch(() => {});
+    const patch: Parameters<typeof patchChannelCredentials>[1] = { instagramSettingsJson: settingsB64 };
+    if (!this.lastKnownSessionOk) patch.sessionDeadAt = null; // clear "expired" once
+    this.lastKnownSessionOk = true;
+    this.sessionDeadAlertedAt = 0;
+    patchChannelCredentials(this.profile.key, patch).catch(() => {});
   }
 
   private scraperCallbacks(): ScraperCallbacks {
@@ -158,6 +167,8 @@ export class ChannelWatcher {
     const now = Date.now();
     if (now - this.sessionDeadAlertedAt < 6 * 60 * 60 * 1000) return;
     this.sessionDeadAlertedAt = now;
+    this.lastKnownSessionOk = false;
+    patchChannelCredentials(this.profile.key, { sessionDeadAt: new Date() }).catch(() => {});
     pipelineLogger.error(
       `[${this.profile.brandName}] Instagram session is DEAD (${context}) — auto-refresh is disabled in session_only mode. A fresh sessionid must be pasted via the dashboard.`,
       err,

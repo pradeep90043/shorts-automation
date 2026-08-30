@@ -1538,13 +1538,18 @@
       const res = await fetch(BASE_URL + '/api/channel-credentials?profile=' + encodeURIComponent(key));
       const d = await res.json();
       if (!statusEl) return;
-      if (!d.hasCredentials) { statusEl.textContent = '⚠ no session stored'; statusEl.style.color = 'var(--warning)'; return; }
-      const bits = [];
-      if (d.instagramSessionId) bits.push('session ' + d.instagramSessionId);
-      if (d.hasSettingsBlob) bits.push('device saved');
-      if (d.updatedAt) bits.push('updated ' + new Date(d.updatedAt).toLocaleDateString());
-      statusEl.textContent = '✓ ' + bits.join(' · ');
-      statusEl.style.color = 'var(--success)';
+      if (!d.hasCredentials || !d.instagramSessionId) { statusEl.textContent = '⚠ no session stored'; statusEl.style.color = 'var(--warning)'; return; }
+      if (d.sessionExpired) {
+        const since = d.sessionDeadAt ? ' (since ' + new Date(d.sessionDeadAt).toLocaleString() + ')' : '';
+        statusEl.textContent = '⛔ EXPIRED — paste a fresh sessionid' + since;
+        statusEl.style.color = 'var(--danger)';
+      } else {
+        const bits = ['session ' + d.instagramSessionId];
+        if (d.hasSettingsBlob) bits.push('device saved');
+        if (d.updatedAt) bits.push('updated ' + new Date(d.updatedAt).toLocaleDateString());
+        statusEl.textContent = '✓ ' + bits.join(' · ');
+        statusEl.style.color = 'var(--success)';
+      }
       const u = document.getElementById('scraper-username-' + key);
       if (u && d.instagramUsername) u.value = d.instagramUsername;
     } catch (_) { if (statusEl) statusEl.textContent = ''; }
