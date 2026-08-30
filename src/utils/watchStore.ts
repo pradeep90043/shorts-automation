@@ -1,3 +1,6 @@
+import fs from "fs";
+import path from "path";
+import { config } from "../config";
 import { getPool } from "./pgClient";
 import { pipelineLogger } from "./logger";
 
@@ -27,11 +30,11 @@ interface WatchStateRow {
 
 /**
  * Persists the current day's staggered publish queue and the last-batch-date
- * guard to Supabase (PostgreSQL) so a server restart mid-day resumes exactly
- * where it left off.
+ * guard to Supabase (PostgreSQL) with local JSON backup fallback so a server restart
+ * mid-day resumes exactly where it left off.
  *
  * Reads are served from in-memory state (fast, sync) populated once at startup
- * via load(). All writes persist immediately to Supabase.
+ * via load(). All writes persist immediately to Supabase + local backup.
  */
 export class WatchStore {
   private profileKey: string;
@@ -39,28 +42,72 @@ export class WatchStore {
   private lastBatchDate = "";
   private channelSequence: string[] = [];
   private currentSlot = 0;
+  private localBackupFile: string;
 
   constructor(dbKey?: string) {
     this.profileKey = dbKey ?? "default";
+    const logDir = config.paths.logDir || path.resolve(__dirname, "../../logs");
+    if (!fs.existsSync(logDir)) {
+      try { fs.mkdirSync(logDir, { recursive: true }); } catch {}
+    }
+    this.localBackupFile = path.join(logDir, `watch_state_${this.profileKey}.json`);
   }
 
   public async load(): Promise<void> {
-    const pool = await getPool();
-    const { rows } = await pool.query<WatchStateRow>(
-      `SELECT queue, last_batch_date, channel_sequence, current_slot FROM watch_state WHERE profile_key = $1`,
-      [this.profileKey],
-    );
-    if (rows.length > 0) {
-      this.queue = rows[0].queue ?? [];
-      this.lastBatchDate = rows[0].last_batch_date ?? "";
-      this.channelSequence = rows[0].channel_sequence ?? [];
-      this.currentSlot = rows[0].current_slot ?? 0;
-    } else {
-      await this.save();
+    try {
+      const pool = await getPool();
+      const { rows } = await pool.query<WatchStateRow>(
+        `SELECT queue, last_batch_date, channel_sequence, current_slot FROM watch_state WHERE profile_key = $1`,
+        [this.profileKey],
+      );
+      if (rows.length > 0) {
+        this.queue = rows[0].queue ?? [];
+        this.lastBatchDate = rows[0].last_batch_date ?? "";
+        this.channelSequence = rows[0].channel_sequence ?? [];
+        this.currentSlot = rows[0].current_slot ?? 0;
+        this.saveLocalBackup();
+        return;
+      }
+    } catch (err) {
+      pipelineLogger.warn(
+        `Failed to load watch state from Supabase for [${this.profileKey}]: ${err instanceof Error ? err.message : err}. Checking local backup...`,
+        "WatchStore",
+      );
     }
+
+    // Fall back to local backup file
+    if (fs.existsSync(this.localBackupFile)) {
+      try {
+        const raw = fs.readFileSync(this.localBackupFile, "utf8");
+        const data = JSON.parse(raw);
+        this.queue = data.queue ?? [];
+        this.lastBatchDate = data.lastBatchDate ?? "";
+        this.channelSequence = data.channelSequence ?? [];
+        this.currentSlot = data.currentSlot ?? 0;
+        pipelineLogger.info(`Restored watch state for [${this.profileKey}] from local backup`, "WatchStore");
+        return;
+      } catch (_) {}
+    }
+
+    await this.save();
+  }
+
+  private saveLocalBackup(): void {
+    try {
+      const data = {
+        profileKey: this.profileKey,
+        queue: this.queue,
+        lastBatchDate: this.lastBatchDate,
+        channelSequence: this.channelSequence,
+        currentSlot: this.currentSlot,
+        updatedAt: new Date().toISOString(),
+      };
+      fs.writeFileSync(this.localBackupFile, JSON.stringify(data, null, 2), "utf8");
+    } catch (_) {}
   }
 
   private async save(): Promise<void> {
+    this.saveLocalBackup();
     try {
       const pool = await getPool();
       await pool.query(
@@ -74,7 +121,10 @@ export class WatchStore {
         [this.profileKey, JSON.stringify(this.queue), this.lastBatchDate, JSON.stringify(this.channelSequence), this.currentSlot],
       );
     } catch (err) {
-      pipelineLogger.error("Failed to write watch state to Supabase", err, "WatchStore");
+      pipelineLogger.warn(
+        `Failed to write watch state to Supabase for [${this.profileKey}] (saved to local backup): ${err instanceof Error ? err.message : err}`,
+        "WatchStore",
+      );
     }
   }
 
