@@ -129,6 +129,7 @@ function ensureYouTubeOAuthServer(): void {
 
 const PORT = parseInt(process.env.LOG_SERVER_PORT || "3002", 10);
 const COMBINED_LOG = path.join(config.paths.logDir, "combined.log");
+const ERROR_LOG = path.join(config.paths.logDir, "error.log");
 const TAIL_LINES = 350;
 
 function parseJsonBody(req: http.IncomingMessage): Promise<any> {
@@ -2059,38 +2060,12 @@ export function startLogServer(): void {
     }
 
     const urlObj = new URL(url, `http://${req.headers.host || "localhost"}`);
-    const acceptsText = req.headers["accept"] && req.headers["accept"].includes("text/plain");
-    const wantsRaw = urlObj.searchParams.get("raw") === "true" ||
-                     urlObj.searchParams.get("text") === "true" ||
-                     urlObj.pathname === "/logs/raw" ||
-                     urlObj.pathname === "/logs/text" ||
-                     (urlObj.pathname === "/logs" && acceptsText && !urlObj.searchParams.get("stream"));
-
-    if (wantsRaw) {
-      res.writeHead(200, {
-        "Content-Type": "text/plain; charset=utf-8",
-        "Cache-Control": "no-store, no-cache, must-revalidate",
-        "Access-Control-Allow-Origin": "*",
-      });
-      if (fs.existsSync(COMBINED_LOG)) {
-        const lines = readLastLines(COMBINED_LOG, 2000);
-        res.end(lines.join("\n"));
-      } else {
-        res.end("Log file not found on the server.");
-      }
-      return;
-    }
-
     const isStream = urlObj.pathname === "/logs/stream" ||
                      urlObj.searchParams.get("stream") === "true" ||
                      (req.headers["accept"] && req.headers["accept"].includes("text/event-stream"));
 
-    if (
-      isStream &&
-      (urlObj.pathname === "/logs" ||
-       urlObj.pathname === "/logs/stream" ||
-       urlObj.pathname.startsWith("/logs/"))
-    ) {
+    // ── /logs/stream or /logs?stream=true: Real-time SSE streaming for UI ───
+    if (isStream && (urlObj.pathname === "/logs" || urlObj.pathname === "/logs/stream" || urlObj.pathname.startsWith("/logs/"))) {
       res.writeHead(200, {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
@@ -2105,6 +2080,42 @@ export function startLogServer(): void {
 
       addLogClient(res);
       req.on("close", () => removeLogClient(res));
+      return;
+    }
+
+    // ── /logs, /logs/raw, /logs/text: Raw plaintext logs for CLI, curl, and agents ───
+    const isLogsPath = urlObj.pathname === "/logs" ||
+                       urlObj.pathname === "/logs/raw" ||
+                       urlObj.pathname === "/logs/text" ||
+                       urlObj.pathname === "/logs/plain";
+
+    if (isLogsPath) {
+      res.writeHead(200, {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "no-store, no-cache, must-revalidate",
+        "Access-Control-Allow-Origin": "*",
+      });
+
+      const targetLog = urlObj.searchParams.get("type") === "error" ? ERROR_LOG : COMBINED_LOG;
+      const tailParam = urlObj.searchParams.get("tail") || urlObj.searchParams.get("lines");
+      const lineCount = tailParam ? Math.max(1, parseInt(tailParam, 10) || 3000) : 3000;
+      const isAll = urlObj.searchParams.get("all") === "true";
+
+      if (fs.existsSync(targetLog)) {
+        if (isAll) {
+          try {
+            res.end(fs.readFileSync(targetLog, "utf8"));
+          } catch (_) {
+            const lines = readLastLines(targetLog, lineCount);
+            res.end(lines.join("\n"));
+          }
+        } else {
+          const lines = readLastLines(targetLog, lineCount);
+          res.end(lines.join("\n"));
+        }
+      } else {
+        res.end(`Log file not found on the server (${path.basename(targetLog)}).`);
+      }
       return;
     }
 
