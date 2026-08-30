@@ -173,8 +173,24 @@ export async function getAllStoredChannelConfigs(): Promise<StoredChannelConfig[
   await initChannelConfigsTable();
   try {
     const pool = await getPool();
-    const res = await pool.query(`SELECT * FROM channel_configs ORDER BY is_default DESC, key ASC`);
-    return res.rows.map((row) => {
+    // The prod box intermittently times out the DB handshake under load
+    // (EAUTHTIMEOUT); a couple of quick retries beats returning [] (which the
+    // callers treat as "no channels configured").
+    let res: any = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        res = await pool.query(`SELECT * FROM channel_configs ORDER BY is_default DESC, key ASC`);
+        break;
+      } catch (qErr) {
+        if (attempt === 3) throw qErr;
+        pipelineLogger.warn(
+          `channel_configs query failed (attempt ${attempt}/3): ${qErr instanceof Error ? qErr.message : qErr}. Retrying...`,
+          "ChannelStore",
+        );
+        await new Promise((r) => setTimeout(r, 1500 * attempt));
+      }
+    }
+    return res.rows.map((row: any) => {
       const prefix = row.key.toUpperCase().replace(/-/g, "_");
       const envYt = process.env[`${prefix}_YOUTUBE_REFRESH_TOKEN`] || (row.key === "codeorcap" ? process.env.YOUTUBE_CHANNEL_1_REFRESH_TOKEN || process.env.YOUTUBE_REFRESH_TOKEN : undefined);
       const envIgUser = process.env[`${prefix}_INSTAGRAM_USER_ID`] || (row.key === "codeorcap" ? process.env.INSTAGRAM_USER_ID : undefined);

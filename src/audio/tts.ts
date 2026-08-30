@@ -21,24 +21,42 @@ export class TTSService {
       // OpenAI.fm needs a real headless Chromium (a 30s+ launch on constrained
       // hosts, and it has never once succeeded in production), so it's kept
       // only as a last-resort fallback rather than tried first on every job.
-      try {
-        pipelineLogger.info(`Generating Edge TTS voiceover with voice: ${edgeVoice}...`, 'TTSService');
-        const tts = new EdgeTTS({
-          voice: edgeVoice,
-          lang: edgeLang,
-          outputFormat: 'audio-24khz-48kbitrate-mono-mp3'
-        });
-        await tts.ttsPromise(script, outputPath);
-        generated = true;
-        pipelineLogger.info(`✓ Edge TTS generation successful. Output: ${outputPath}`, 'TTSService');
-      } catch (edgeErr) {
-        pipelineLogger.warn(
-          `Edge TTS generation failed. Falling back to OpenAI.fm. Error: ${edgeErr instanceof Error ? edgeErr.message : edgeErr}`,
-          'TTSService'
-        );
+      // Edge TTS is a WebSocket call to Microsoft — fast, but occasionally
+      // throttles the datacenter IP with a "Timed out". One quick retry clears
+      // most transient failures.
+      for (let attempt = 1; attempt <= 2 && !generated; attempt++) {
+        try {
+          pipelineLogger.info(`Generating Edge TTS voiceover with voice: ${edgeVoice} (attempt ${attempt}/2)...`, 'TTSService');
+          const tts = new EdgeTTS({
+            voice: edgeVoice,
+            lang: edgeLang,
+            outputFormat: 'audio-24khz-48kbitrate-mono-mp3'
+          });
+          await tts.ttsPromise(script, outputPath);
+          generated = true;
+          pipelineLogger.info(`✓ Edge TTS generation successful. Output: ${outputPath}`, 'TTSService');
+        } catch (edgeErr) {
+          pipelineLogger.warn(
+            `Edge TTS attempt ${attempt} failed: ${edgeErr instanceof Error ? edgeErr.message : edgeErr}`,
+            'TTSService'
+          );
+          if (attempt < 2) await new Promise(r => setTimeout(r, 3000));
+        }
       }
 
-      // Fallback to OpenAI.fm only if Edge TTS itself failed
+      // Fallback 1: OpenAI's official TTS HTTP API (reliable, no browser).
+      if (!generated && process.env.OPENAI_API_KEY) {
+        try {
+          pipelineLogger.info(`Falling back to OpenAI TTS API (voice: ${openaiVoice})...`, 'TTSService');
+          await this.generateOpenAIApiVoiceover(script, openaiVoice, outputPath);
+          generated = true;
+          pipelineLogger.info(`✓ OpenAI TTS API generation successful. Output: ${outputPath}`, 'TTSService');
+        } catch (apiErr) {
+          pipelineLogger.warn(`OpenAI TTS API failed: ${apiErr instanceof Error ? apiErr.message : apiErr}`, 'TTSService');
+        }
+      }
+
+      // Fallback 2: OpenAI.fm scraped via headless Chromium (last resort).
       if (!generated) {
         try {
           pipelineLogger.info(`Attempting OpenAI.fm TTS voiceover generation with voice: ${openaiVoice}...`, 'TTSService');
@@ -46,7 +64,7 @@ export class TTSService {
           generated = true;
           pipelineLogger.info(`✓ OpenAI.fm TTS generation successful. Output: ${outputPath}`, 'TTSService');
         } catch (openAiErr) {
-          pipelineLogger.error(`Both Edge TTS and OpenAI.fm TTS failed`, openAiErr, 'TTSService');
+          pipelineLogger.error(`All TTS providers failed (Edge, OpenAI API, OpenAI.fm)`, openAiErr, 'TTSService');
           throw openAiErr;
         }
       }
@@ -72,6 +90,34 @@ export class TTSService {
     }
   }
 
+  /** OpenAI's official text-to-speech HTTP API — a plain request, no browser. */
+  private async generateOpenAIApiVoiceover(script: string, voice: string, outputPath: string): Promise<void> {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) throw new Error('OPENAI_API_KEY not set');
+    const validVoices = ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer', 'ash', 'coral', 'sage'];
+    const chosen = validVoices.includes(voice) ? voice : 'onyx';
+    const res = await fetch('https://api.openai.com/v1/audio/speech', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: process.env.OPENAI_TTS_MODEL || 'gpt-4o-mini-tts',
+        voice: chosen,
+        input: script,
+        response_format: 'mp3',
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`OpenAI TTS API HTTP ${res.status}: ${body.slice(0, 200)}`);
+    }
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length < 1024) throw new Error(`OpenAI TTS API returned only ${buf.length} bytes`);
+    fs.writeFileSync(outputPath, buf);
+  }
+
   private async generateOpenAIVoiceover(script: string, voice: string, outputPath: string): Promise<void> {
     const puppeteer = require('puppeteer-extra');
     const StealthPlugin = require('puppeteer-extra-plugin-stealth');
@@ -79,13 +125,17 @@ export class TTSService {
     
     const browser = await puppeteer.launch({
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
+      protocolTimeout: 90000,
+      args: [
+        '--no-sandbox', '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage', '--disable-gpu', '--mute-audio',
+      ],
     });
-    
+
     try {
       const page = await browser.newPage();
       pipelineLogger.info("Navigating to site to clear Vercel Security Checkpoint...", "TTSService");
-      await page.goto('https://www.openai.fm/', { waitUntil: 'networkidle2' });
+      await page.goto('https://www.openai.fm/', { waitUntil: 'domcontentloaded', timeout: 45000 });
       
       await new Promise(r => setTimeout(r, 4000)); // wait for WAF challenge to complete
       
