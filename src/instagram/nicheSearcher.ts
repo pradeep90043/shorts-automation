@@ -1,9 +1,9 @@
 import { ContentTheme } from "../config";
 import { pipelineLogger } from "../utils/logger";
 import { scoreAndSort, filterViral } from "../utils/viralScore";
-import { searchAllHashtagReels, InstagramRateLimitError } from "./channelFeed";
+import { searchAllHashtagReels, InstagramRateLimitError, InstagramSessionDeadError, ScraperCallbacks } from "./channelFeed";
 
-export { InstagramRateLimitError };
+export { InstagramRateLimitError, InstagramSessionDeadError };
 
 export interface ScoredReel {
   shortcode: string;
@@ -94,14 +94,15 @@ export async function searchViralReels(
   limitPerTag: number,
   reelHistory: { has: (shortcode: string) => boolean },
   scraperEnv?: Record<string, string>,
+  callbacks?: ScraperCallbacks,
 ): Promise<ScoredReel[]> {
   // All hashtags fetched in ONE Python process — single login, rate-limit-safe delays.
   let rawReels: import("./channelFeed").ScoredReelSummary[] = [];
   try {
-    rawReels = await searchAllHashtagReels(hashtags, limitPerTag, scraperEnv);
+    rawReels = await searchAllHashtagReels(hashtags, limitPerTag, scraperEnv, callbacks);
   } catch (err) {
-    if (err instanceof InstagramRateLimitError) {
-      throw err; // propagate so ChannelWatcher can set cooldown
+    if (err instanceof InstagramRateLimitError || err instanceof InstagramSessionDeadError) {
+      throw err; // propagate so ChannelWatcher can set cooldown / alert an admin
     }
     pipelineLogger.warn(
       `[NicheSearcher] Hashtag search failed: ${err instanceof Error ? err.message : String(err)}`,

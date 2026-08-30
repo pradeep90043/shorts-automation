@@ -120,6 +120,21 @@ export interface AppConfig {
     enabled: boolean;
     acoustidApiKey: string;
   };
+  instagramScraper: {
+    /**
+     * "session_only" (default): the server never performs a username/password
+     * login — only the sessionid cookie / persisted device settings are used.
+     * A password login from a datacenter IP reliably trips an Instagram
+     * challenge that can lock the account, so when the cookie dies we alert an
+     * admin instead of thrashing. Set INSTAGRAM_LOGIN_MODE=full to re-enable
+     * password fallback (only safe behind a residential IP / proxy).
+     */
+    sessionOnly: boolean;
+    /** Delay between polling consecutive channels during batch selection (ms). */
+    interChannelDelayMs: number;
+    /** How long a profile pauses ingestion after a 429 (ms). */
+    rateLimitCooldownMs: number;
+  };
 }
 
 const rootDir = path.resolve(__dirname, "../../");
@@ -486,6 +501,19 @@ export const config: AppConfig = {
   copyright: {
     enabled: process.env.COPYRIGHT_CHECK_ENABLED !== "false",
     acoustidApiKey: process.env.ACOUSTID_API_KEY || "",
+  },
+  instagramScraper: {
+    sessionOnly:
+      (process.env.INSTAGRAM_LOGIN_MODE || "session_only").trim().toLowerCase() !==
+      "full",
+    interChannelDelayMs: parseInt(
+      process.env.INSTAGRAM_INTER_CHANNEL_DELAY_MS || "25000",
+      10,
+    ),
+    rateLimitCooldownMs: parseInt(
+      process.env.INSTAGRAM_RATE_LIMIT_COOLDOWN_MS || "2700000", // 45 min
+      10,
+    ),
   },
 };
 

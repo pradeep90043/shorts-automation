@@ -24,8 +24,120 @@ export class InstagramRateLimitError extends Error {
   }
 }
 
+/**
+ * The stored Instagram session cookie is dead and the server is in session_only
+ * mode, so no automatic recovery is possible — a human must paste a fresh
+ * sessionid. Callers should alert an admin and stop, NOT retry or trigger a
+ * password login.
+ */
+export class InstagramSessionDeadError extends Error {
+  constructor(context: string, detail?: string) {
+    super(`Instagram session dead (${context})${detail ? `: ${detail}` : ""}`);
+    this.name = "InstagramSessionDeadError";
+  }
+}
+
+/** Optional callbacks the Python scraper fires back through stderr sentinel lines. */
+export interface ScraperCallbacks {
+  onSessionRefresh?: (newSessionId: string) => void;
+  /** Fired with a base64 instagrapi settings blob to persist (device + cookies). */
+  onSettingsRefresh?: (settingsB64: string) => void;
+}
+
 const PYTHON3  = config.binaries.python3;
 const FETCH_SCRIPT = path.resolve(__dirname, "../../scripts/fetch_reels.py");
+
+/**
+ * Parse the scraper's stderr sentinel lines. Returns markers the caller acts on.
+ */
+function handleScraperStderr(
+  stderrText: string,
+  label: string,
+  cb?: ScraperCallbacks,
+): { rateLimited: boolean; sessionDead: string | null } {
+  let sessionDead: string | null = null;
+  let rateLimited = false;
+  for (const raw of stderrText.split("\n")) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (line.startsWith("SESSION_REFRESHED:")) {
+      const sid = line.slice("SESSION_REFRESHED:".length).trim();
+      if (sid) cb?.onSessionRefresh?.(sid);
+    } else if (line.startsWith("SETTINGS_JSON:")) {
+      const blob = line.slice("SETTINGS_JSON:".length).trim();
+      if (blob) cb?.onSettingsRefresh?.(blob);
+    } else if (line.startsWith("SESSION_DEAD:")) {
+      sessionDead = line.slice("SESSION_DEAD:".length).trim() || "session cookie rejected";
+    } else if (line.startsWith("RATE_LIMITED")) {
+      rateLimited = true;
+    } else if (line.startsWith("WARN") || line.startsWith("ERROR")) {
+      pipelineLogger.warn(`[${label}] ${line}`, "ChannelFeed");
+    }
+  }
+  return { rateLimited, sessionDead };
+}
+
+/**
+ * Launch a headless Chromium tuned for small / memory-constrained containers
+ * (e.g. the 1 GB Oracle free-tier box this runs on).
+ *
+ * The previous inline `puppeteer.launch` calls regularly failed in production
+ * with "Timed out after 35000 ms while waiting for the WS endpoint URL to
+ * appear in stdout!" — Chromium was being OOM-killed before it could print its
+ * DevTools endpoint. The flags below drop Chromium's memory footprint (single
+ * process, no zygote, minimal renderer features) and the timeout is raised so a
+ * slow cold start on a starved CPU still succeeds. Set DEBUG_PUPPETEER=1 to pipe
+ * Chromium's own stdout/stderr into the logs when diagnosing launch failures.
+ */
+async function launchScraperBrowser(): Promise<any> {
+  const puppeteerModule = await new Function("return import('puppeteer-core')")();
+  const puppeteer = puppeteerModule.default;
+
+  const isLinux = process.platform === "linux";
+  const singleProcess =
+    (isLinux || process.platform === "win32") &&
+    process.env.PUPPETEER_NO_SINGLE_PROCESS !== "1";
+
+  const chromeArgs = [
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-dev-shm-usage",
+    "--disable-gpu",
+    "--disable-software-rasterizer",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--disable-extensions",
+    "--disable-background-networking",
+    "--disable-background-timer-throttling",
+    "--disable-backgrounding-occluded-windows",
+    "--disable-renderer-backgrounding",
+    "--disable-features=TranslateUI,BackForwardCache",
+    "--mute-audio",
+    "--hide-scrollbars",
+    "--js-flags=--max-old-space-size=256",
+    ...(singleProcess ? ["--no-zygote", "--single-process"] : []),
+  ];
+
+  const launchOpts = {
+    executablePath: config.binaries.chrome,
+    headless: true,
+    protocolTimeout: 120000,
+    timeout: 90000,
+    dumpio: process.env.DEBUG_PUPPETEER === "1",
+    args: chromeArgs,
+  };
+
+  try {
+    return await puppeteer.launch(launchOpts);
+  } catch (firstErr) {
+    pipelineLogger.warn(
+      `[ChannelFeed] Chromium launch failed (${firstErr instanceof Error ? firstErr.message.split("\n")[0] : firstErr}) — retrying once...`,
+      "ChannelFeed",
+    );
+    await new Promise((r) => setTimeout(r, 2000));
+    return puppeteer.launch(launchOpts);
+  }
+}
 
 /**
  * List a channel's recent reels via Instagram's private mobile API.
@@ -40,7 +152,7 @@ const FETCH_SCRIPT = path.resolve(__dirname, "../../scripts/fetch_reels.py");
 export async function listChannelReels(
   username: string,
   scraperEnv?: Record<string, string>,
-  onSessionRefresh?: (newSessionId: string) => void,
+  callbacks?: ScraperCallbacks,
 ): Promise<ChannelReelSummary[]> {
   pipelineLogger.info(
     `[ChannelFeed] Fetching reels for @${username} via Instagram mobile API...`,
@@ -60,21 +172,20 @@ export async function listChannelReels(
       },
       (err, stdout, stderr) => {
         const stderrText = stderr.trim();
-        if (stderrText) {
-          const lines = stderrText.split("\n").map((l) => l.trim()).filter(Boolean);
-          for (const line of lines) {
-            if (line.startsWith("SESSION_REFRESHED:")) {
-              const newSid = line.slice("SESSION_REFRESHED:".length).trim();
-              if (newSid && onSessionRefresh) onSessionRefresh(newSid);
-            } else if (line.startsWith("WARN:") || line.startsWith("ERROR:")) {
-              pipelineLogger.warn(`[ChannelFeed] @${username}: ${line}`, "ChannelFeed");
-            }
-          }
+        const { rateLimited, sessionDead } = handleScraperStderr(
+          stderrText,
+          `ChannelFeed @${username}`,
+          callbacks,
+        );
+
+        // Dead session in session_only mode — no auto-recovery; caller must alert.
+        if (sessionDead || (err as NodeJS.ErrnoException & { code?: number })?.code === 3) {
+          return reject(new InstagramSessionDeadError(username, sessionDead || undefined));
         }
 
         // Propagate 429 as a distinct error so the caller can back off
         // without burning the current slot.
-        if (stderrText.includes("RATE_LIMITED")) {
+        if (rateLimited) {
           return reject(new InstagramRateLimitError(username));
         }
 
@@ -133,7 +244,7 @@ export async function searchAllHashtagReels(
   hashtags: string[],
   limitPerTag = 20,
   scraperEnv?: Record<string, string>,
-  onSessionRefresh?: (newSessionId: string) => void,
+  callbacks?: ScraperCallbacks,
 ): Promise<ScoredReelSummary[]> {
   const tags = hashtags.map((t) => t.replace(/^#/, "")).filter(Boolean);
   if (tags.length === 0) return [];
@@ -164,22 +275,17 @@ export async function searchAllHashtagReels(
       },
       (err, stdout, stderr) => {
         const stderrTrimmed = stderr.trim();
-        if (stderrTrimmed) {
-          const lines = stderrTrimmed.split("\n");
-          for (const line of lines) {
-            if (line.startsWith("RATE_LIMITED")) {
-              return reject(new InstagramRateLimitError(tags.join(",")));
-            }
-            if (line.startsWith("SESSION_REFRESHED:")) {
-              const newSid = line.slice("SESSION_REFRESHED:".length).trim();
-              if (newSid && onSessionRefresh) onSessionRefresh(newSid);
-            } else if (line.startsWith("WARN") || line.startsWith("ERROR")) {
-              pipelineLogger.warn(`[ChannelFeed] ${line}`, "ChannelFeed");
-            }
-          }
+        const { rateLimited, sessionDead } = handleScraperStderr(
+          stderrTrimmed,
+          "ChannelFeed hashtags",
+          callbacks,
+        );
+
+        if (sessionDead || (err as NodeJS.ErrnoException & { code?: number })?.code === 3) {
+          return reject(new InstagramSessionDeadError(tags.join(","), sessionDead || undefined));
         }
 
-        if (err && (err as NodeJS.ErrnoException & { code?: number }).code === 2) {
+        if (rateLimited || (err as NodeJS.ErrnoException & { code?: number })?.code === 2) {
           return reject(new InstagramRateLimitError(tags.join(",")));
         }
 
@@ -254,23 +360,7 @@ export async function listChannelReelsViaPuppeteer(username: string): Promise<Ch
   );
   let browser: any = null;
   try {
-    const puppeteerModule = await new Function("return import('puppeteer-core')")();
-    const puppeteer = puppeteerModule.default;
-    const chromeArgs = [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-      "--disable-software-rasterizer",
-      ...(process.platform === "win32" ? ["--no-zygote", "--single-process"] : []),
-    ];
-    browser = await puppeteer.launch({
-      executablePath: config.binaries.chrome,
-      headless: true,
-      protocolTimeout: 60000,
-      timeout: 35000,
-      args: chromeArgs,
-    });
+    browser = await launchScraperBrowser();
 
     const page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 1080 });
@@ -361,23 +451,7 @@ export async function searchHashtagReelsViaPuppeteer(
   const seenCodes = new Set<string>();
 
   try {
-    const puppeteerModule = await new Function("return import('puppeteer-core')")();
-    const puppeteer = puppeteerModule.default;
-    const chromeArgs = [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-      "--disable-software-rasterizer",
-      ...(process.platform === "win32" ? ["--no-zygote", "--single-process"] : []),
-    ];
-    browser = await puppeteer.launch({
-      executablePath: config.binaries.chrome,
-      headless: true,
-      protocolTimeout: 60000,
-      timeout: 35000,
-      args: chromeArgs,
-    });
+    browser = await launchScraperBrowser();
 
     const page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 1080 });

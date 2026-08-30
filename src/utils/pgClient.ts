@@ -85,13 +85,21 @@ export async function initSchema(): Promise<void> {
       `);
       await pool.query(`
         CREATE TABLE IF NOT EXISTS channel_credentials (
-          profile_key          TEXT PRIMARY KEY,
-          instagram_session_id TEXT,
-          instagram_username   TEXT,
-          instagram_password   TEXT,
-          instagram_email      TEXT,
-          updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+          profile_key            TEXT PRIMARY KEY,
+          instagram_session_id   TEXT,
+          instagram_username     TEXT,
+          instagram_password     TEXT,
+          instagram_email        TEXT,
+          instagram_totp_secret  TEXT,
+          instagram_settings_json TEXT,
+          instagram_proxy        TEXT,
+          updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
+      `);
+      await pool.query(`
+        ALTER TABLE channel_credentials ADD COLUMN IF NOT EXISTS instagram_totp_secret TEXT;
+        ALTER TABLE channel_credentials ADD COLUMN IF NOT EXISTS instagram_settings_json TEXT;
+        ALTER TABLE channel_credentials ADD COLUMN IF NOT EXISTS instagram_proxy TEXT;
       `);
       pipelineLogger.info("Supabase schema ready (reel_history, watch_state, reel_insights)", "Supabase");
       return;

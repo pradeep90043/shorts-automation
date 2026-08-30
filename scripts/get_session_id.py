@@ -38,6 +38,14 @@ try:
 except Exception:
     pass
 
+# Optional proxy so even the manual refresh logs in from a residential/mobile IP.
+_proxy = os.environ.get("INSTAGRAM_PROXY", "").strip()
+if _proxy:
+    try:
+        cl.set_proxy(_proxy)
+    except Exception:
+        pass
+
 # Try reusing an existing session first
 if os.path.exists(session_file):
     try:

@@ -1409,6 +1409,30 @@
             </div>
           </div>
 
+          <!-- INSTAGRAM SCRAPER LOGIN (session cookie used to READ reels) -->
+          <div style="margin-bottom:12px;border-top:1px solid #21262d;padding-top:10px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:6px;">
+              <span style="font-size:11px;font-weight:700;color:var(--text-muted);">🔑 Instagram Scraper Login <span style="font-weight:500;opacity:0.7;">(session cookie — reads competitor / hashtag reels)</span></span>
+              <span id="scraper-cred-status-${c.key}" style="font-size:10px;color:var(--text-muted);"></span>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr;gap:6px;">
+              <input class="input-field" id="scraper-sessionid-${c.key}" type="password" placeholder="Paste fresh sessionid cookie (from a logged-in browser)" style="padding:6px 10px;font-size:11px;font-family:var(--font-mono);">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+                <input class="input-field" id="scraper-username-${c.key}" placeholder="Username (for auto-login only)" style="padding:6px 10px;font-size:11px;">
+                <input class="input-field" id="scraper-password-${c.key}" type="password" placeholder="Password (for auto-login only)" style="padding:6px 10px;font-size:11px;">
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+                <input class="input-field" id="scraper-totp-${c.key}" placeholder="TOTP secret (optional, if 2FA on)" style="padding:6px 10px;font-size:11px;font-family:var(--font-mono);">
+                <input class="input-field" id="scraper-proxy-${c.key}" placeholder="Proxy URL (optional)" style="padding:6px 10px;font-size:11px;font-family:var(--font-mono);">
+              </div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                <button type="button" class="btn-primary" style="padding:5px 12px;font-size:11px;" onclick="saveScraperCred('${c.key}', this)">💾 Save Session</button>
+                <button type="button" class="btn-icon" style="padding:5px 12px;font-size:11px;color:#58a6ff;border-color:rgba(88,166,255,0.4);" onclick="runAutoSession('${c.key}', this)">⚡ Auto-login (username + password)</button>
+              </div>
+              <div style="font-size:10px;color:var(--text-muted);line-height:1.5;">Chrome → instagram.com (logged in) → DevTools → Application → Cookies → copy <code>sessionid</code>. Proxy/TOTP are only needed to make <em>auto-login</em> work from the server.</div>
+            </div>
+          </div>
+
           <!-- YOUTUBE CHANNELS LIST -->
           <div style="margin-bottom:12px;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:6px;">
@@ -1504,7 +1528,60 @@
         </div>
       `;
       container.appendChild(card);
+      loadScraperCred(c.key);
     });
+  }
+
+  async function loadScraperCred(key) {
+    const statusEl = document.getElementById('scraper-cred-status-' + key);
+    try {
+      const res = await fetch(BASE_URL + '/api/channel-credentials?profile=' + encodeURIComponent(key));
+      const d = await res.json();
+      if (!statusEl) return;
+      if (!d.hasCredentials) { statusEl.textContent = '⚠ no session stored'; statusEl.style.color = 'var(--warning)'; return; }
+      const bits = [];
+      if (d.instagramSessionId) bits.push('session ' + d.instagramSessionId);
+      if (d.hasSettingsBlob) bits.push('device saved');
+      if (d.updatedAt) bits.push('updated ' + new Date(d.updatedAt).toLocaleDateString());
+      statusEl.textContent = '✓ ' + bits.join(' · ');
+      statusEl.style.color = 'var(--success)';
+      const u = document.getElementById('scraper-username-' + key);
+      if (u && d.instagramUsername) u.value = d.instagramUsername;
+    } catch (_) { if (statusEl) statusEl.textContent = ''; }
+  }
+
+  async function saveScraperCred(key, btn) {
+    const body = { profile: key };
+    const sid = (document.getElementById('scraper-sessionid-' + key) || {}).value || '';
+    const un = (document.getElementById('scraper-username-' + key) || {}).value || '';
+    const pw = (document.getElementById('scraper-password-' + key) || {}).value || '';
+    const totp = (document.getElementById('scraper-totp-' + key) || {}).value || '';
+    const proxy = (document.getElementById('scraper-proxy-' + key) || {}).value || '';
+    if (sid) body.instagramSessionId = sid.trim();
+    if (un) body.instagramUsername = un.trim();
+    if (pw) body.instagramPassword = pw;
+    if (totp) body.instagramTotpSecret = totp.trim();
+    if (proxy) body.instagramProxy = proxy.trim();
+    if (Object.keys(body).length === 1) { alert('Nothing to save'); return; }
+    const old = btn.textContent; btn.textContent = 'Saving…'; btn.disabled = true;
+    try {
+      const res = await fetch(BASE_URL + '/api/channel-credentials', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const d = await res.json();
+      btn.textContent = d.success ? '✓ Saved' : '✗ ' + (d.message || 'Failed');
+      if (d.success) { ['sessionid','password','totp'].forEach(f => { const e = document.getElementById('scraper-' + f + '-' + key); if (e) e.value = ''; }); loadScraperCred(key); }
+    } catch (e) { btn.textContent = '✗ Error'; }
+    setTimeout(() => { btn.textContent = old; btn.disabled = false; }, 2500);
+  }
+
+  async function runAutoSession(key, btn) {
+    const old = btn.textContent; btn.textContent = 'Logging in…'; btn.disabled = true;
+    try {
+      const res = await fetch(BASE_URL + '/api/auto-session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ profile: key }) });
+      const d = await res.json();
+      btn.textContent = d.success ? ('✓ ' + (d.sessionIdPreview || 'got session')) : '✗ ' + (d.message || 'Failed');
+      if (d.success) loadScraperCred(key);
+    } catch (e) { btn.textContent = '✗ Error'; }
+    setTimeout(() => { btn.textContent = old; btn.disabled = false; }, 4000);
   }
 
   function addModalIgRow(name = '', id = '', token = '') {
