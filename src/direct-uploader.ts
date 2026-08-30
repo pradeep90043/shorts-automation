@@ -1548,10 +1548,16 @@ ${this.theme.analysisRules}`;
         results[0]?.url,
       );
 
-      // Automatically generate and publish companion 5-minute deep-dive YouTube video
-      this.triggerCompanionLongVideo(id, metadata, pending.context, chatId).catch((companionErr) => {
-        pipelineLogger.warn(`[CompanionLongVideo] Background error: ${companionErr.message}`, "DirectUploader");
-      });
+      // Automatically generate and publish companion 5-minute deep-dive YouTube video.
+      // Opt-in: it spawns a second heavy render + headless Chromium in the
+      // background, which starves the main pipeline on small hosts (it was
+      // failing every time with navigation timeouts). Enable with
+      // AUTO_LONG_VIDEO_ENABLED=true once the box has headroom.
+      if (process.env.AUTO_LONG_VIDEO_ENABLED === "true") {
+        this.triggerCompanionLongVideo(id, metadata, pending.context, chatId).catch((companionErr) => {
+          pipelineLogger.warn(`[CompanionLongVideo] Background error: ${companionErr.message}`, "DirectUploader");
+        });
+      }
 
       // Instead of deleting the review video, keep it for manual download.
       // Also send the final video with title and description so the user can retrieve metadata.

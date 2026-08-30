@@ -9,11 +9,21 @@ function getSslConfig(): any {
   return { rejectUnauthorized: false };
 }
 
-let pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+const POOL_OPTS = {
   ssl: getSslConfig(),
   max: 5,
   idleTimeoutMillis: 30000,
+  // The prod box is CPU-starved; the default connect timeout is too tight and
+  // the auth handshake was intermittently failing with EAUTHTIMEOUT.
+  connectionTimeoutMillis: 20000,
+  keepAlive: true,
+} as const;
+
+let pool = new Pool({ connectionString: process.env.DATABASE_URL, ...POOL_OPTS });
+// A pool-level error listener stops an idle-client socket error from crashing
+// the process (default behaviour on an unhandled 'error' event).
+pool.on("error", (err) => {
+  pipelineLogger.warn(`Postgres pool client error: ${err.message}`, "Supabase");
 });
 
 export async function getPool(): Promise<Pool> {
@@ -110,12 +120,8 @@ export async function initSchema(): Promise<void> {
       if (errMsg.includes("does not support SSL")) {
         pipelineLogger.warn("Database server does not support SSL. Retrying with SSL disabled...", "Supabase");
         try { await pool.end(); } catch {}
-        pool = new Pool({
-          connectionString: process.env.DATABASE_URL,
-          ssl: false,
-          max: 5,
-          idleTimeoutMillis: 30000,
-        });
+        pool = new Pool({ connectionString: process.env.DATABASE_URL, ...POOL_OPTS, ssl: false });
+        pool.on("error", (e) => pipelineLogger.warn(`Postgres pool client error: ${e.message}`, "Supabase"));
       }
       if (attempt === maxRetries) {
         throw err;

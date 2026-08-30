@@ -93,10 +93,12 @@ async function launchScraperBrowser(): Promise<any> {
   const puppeteerModule = await new Function("return import('puppeteer-core')")();
   const puppeteer = puppeteerModule.default;
 
-  const isLinux = process.platform === "linux";
+  // --single-process slashes Chromium's memory but makes page.evaluate() hang
+  // under CPU contention (observed as "Runtime.callFunctionOn timed out" in
+  // prod), so it is OFF by default. Enable only if the box has enough RAM
+  // headroom that plain multi-process Chromium OOMs at launch.
   const singleProcess =
-    (isLinux || process.platform === "win32") &&
-    process.env.PUPPETEER_NO_SINGLE_PROCESS !== "1";
+    process.platform === "win32" || process.env.PUPPETEER_SINGLE_PROCESS === "1";
 
   const chromeArgs = [
     "--no-sandbox",
