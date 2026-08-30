@@ -93,6 +93,7 @@ export async function initSchema(): Promise<void> {
           instagram_totp_secret  TEXT,
           instagram_settings_json TEXT,
           instagram_proxy        TEXT,
+          session_dead_at        TIMESTAMPTZ,
           updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
       `);
@@ -100,6 +101,7 @@ export async function initSchema(): Promise<void> {
         ALTER TABLE channel_credentials ADD COLUMN IF NOT EXISTS instagram_totp_secret TEXT;
         ALTER TABLE channel_credentials ADD COLUMN IF NOT EXISTS instagram_settings_json TEXT;
         ALTER TABLE channel_credentials ADD COLUMN IF NOT EXISTS instagram_proxy TEXT;
+        ALTER TABLE channel_credentials ADD COLUMN IF NOT EXISTS session_dead_at TIMESTAMPTZ;
       `);
       pipelineLogger.info("Supabase schema ready (reel_history, watch_state, reel_insights)", "Supabase");
       return;

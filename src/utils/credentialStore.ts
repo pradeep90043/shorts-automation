@@ -16,6 +16,8 @@ export interface ChannelCredentials {
   instagramSettingsJson?: string;
   /** Optional proxy URL routed through for all Instagram calls for this profile. */
   instagramProxy?: string;
+  /** Set when Instagram last rejected the stored cookie; null/undefined = healthy. */
+  sessionDeadAt?: Date | null;
   updatedAt?: Date;
 }
 
@@ -23,7 +25,8 @@ export async function getChannelCredentials(profileKey: string): Promise<Channel
   const pool = await getPool();
   const result = await pool.query(
     `SELECT profile_key, instagram_session_id, instagram_username, instagram_password,
-            instagram_email, instagram_totp_secret, instagram_settings_json, instagram_proxy, updated_at
+            instagram_email, instagram_totp_secret, instagram_settings_json, instagram_proxy,
+            session_dead_at, updated_at
      FROM channel_credentials WHERE profile_key = $1`,
     [profileKey.toLowerCase()],
   );
@@ -38,6 +41,7 @@ export async function getChannelCredentials(profileKey: string): Promise<Channel
     instagramTotpSecret: row.instagram_totp_secret || undefined,
     instagramSettingsJson: row.instagram_settings_json || undefined,
     instagramProxy: row.instagram_proxy || undefined,
+    sessionDeadAt: row.session_dead_at || null,
     updatedAt: row.updated_at,
   };
 }
@@ -79,6 +83,7 @@ const PATCH_COLUMN_MAP: Record<string, string> = {
   instagramTotpSecret: "instagram_totp_secret",
   instagramSettingsJson: "instagram_settings_json",
   instagramProxy: "instagram_proxy",
+  sessionDeadAt: "session_dead_at",
 };
 
 /**
