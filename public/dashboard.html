@@ -698,8 +698,9 @@
       <div style="margin-top:14px;border-top:1px solid #21262d;padding-top:10px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
           <label style="font-size:11px;font-weight:700;color:var(--text-muted);">📷 Instagram Accounts (Broadcast to multiple)</label>
-          <div style="display:flex;gap:6px;">
-            <button type="button" class="btn-icon" style="padding:2px 8px;font-size:10px;color:#58a6ff;border-color:rgba(88,166,255,0.4);" onclick="openPickIgModal('modal')">🔍 Pick from Meta Account</button>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button type="button" class="btn-primary" style="padding:2px 10px;font-size:10px;background:#1877F2;border-color:#1877F2;" onclick="connectMetaOAuth('modal')">🔗 Connect with Facebook</button>
+            <button type="button" class="btn-icon" style="padding:2px 8px;font-size:10px;color:#58a6ff;border-color:rgba(88,166,255,0.4);" onclick="openPickIgModal('modal')">🔍 Pick (paste token)</button>
             <button type="button" class="btn-icon" style="padding:2px 8px;font-size:10px;" onclick="addModalIgRow()">➕ Add Manual</button>
           </div>
         </div>
@@ -1391,9 +1392,10 @@
           <!-- INSTAGRAM ACCOUNTS LIST -->
           <div style="margin-bottom:12px;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:6px;">
-              <span style="font-size:11px;font-weight:700;color:var(--text-muted);">📷 Instagram Accounts</span>
-              <div style="display:flex;gap:6px;">
-                <button type="button" class="btn-icon" style="padding:2px 8px;font-size:10px;color:#58a6ff;border-color:rgba(88,166,255,0.4);" onclick="openPickIgModal('${c.key}')">🔍 Pick from Meta Account</button>
+              <span style="font-size:11px;font-weight:700;color:var(--text-muted);">📷 Instagram / Facebook Publishing <span id="ig-token-status-${c.key}" style="font-weight:600;font-size:10px;margin-left:4px;">…</span></span>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                <button type="button" class="btn-primary" style="padding:2px 10px;font-size:10px;background:#1877F2;border-color:#1877F2;" onclick="connectMetaOAuth('${c.key}')">🔗 Connect with Facebook</button>
+                <button type="button" class="btn-icon" style="padding:2px 8px;font-size:10px;color:#58a6ff;border-color:rgba(88,166,255,0.4);" onclick="openPickIgModal('${c.key}')">🔍 Pick (paste token)</button>
                 <button type="button" class="btn-icon" style="padding:2px 8px;font-size:10px;" onclick="addCardIgRow(this)">➕ Add Manual</button>
               </div>
             </div>
@@ -1530,6 +1532,42 @@
       container.appendChild(card);
       loadScraperCred(c.key);
     });
+    loadChannelTokenStatus();
+  }
+
+  // Meta publish-token health badges on each channel card.
+  async function loadChannelTokenStatus() {
+    try {
+      const res = await fetch(BASE_URL + '/api/channels/token-status');
+      const d = await res.json();
+      (d.tokens || []).forEach(t => {
+        const el = document.getElementById('ig-token-status-' + t.key);
+        if (!el) return;
+        if (!t.hasToken) { el.textContent = '⚠ no token'; el.style.color = 'var(--warning)'; return; }
+        if (t.status === 'valid') {
+          if (!t.expiresAt || t.expiresAt <= 0) { el.textContent = '✓ token OK · never expires'; el.style.color = 'var(--success)'; }
+          else if (t.daysLeft <= 7) { el.textContent = '⚠ token expires in ' + t.daysLeft + 'd — reconnect'; el.style.color = 'var(--warning)'; }
+          else { el.textContent = '✓ token OK · ' + t.daysLeft + 'd left'; el.style.color = 'var(--success)'; }
+        } else if (t.status === 'expired') {
+          const on = t.message && t.message.match(/expired on ([^.]+)/);
+          el.textContent = '⛔ TOKEN EXPIRED' + (on ? ' (' + on[1].trim() + ')' : '') + ' — click "Connect with Facebook"';
+          el.style.color = 'var(--danger)';
+        } else if (t.status === 'invalid') {
+          el.textContent = '⛔ TOKEN INVALID — ' + (t.message || 'reconnect');
+          el.style.color = 'var(--danger)';
+        } else {
+          el.textContent = '';
+        }
+      });
+    } catch (_) {}
+  }
+
+  // "Connect with Facebook" — opens FB Login, gets a long-lived token, then
+  // reuses the existing account picker to wire it to this channel.
+  function connectMetaOAuth(targetKey) {
+    const w = window.open(BASE_URL + '/api/auth/meta/start?target=' + encodeURIComponent(targetKey),
+      'meta_oauth_window', 'width=600,height=760,menubar=no,toolbar=no');
+    if (!w) showToast('Popup blocked — allow popups for this site.', 'err');
   }
 
   async function loadScraperCred(key) {
@@ -1820,6 +1858,19 @@
 
   // Window message receiver for Google OAuth callback
   window.addEventListener('message', (event) => {
+    if (event.data && event.data.type === 'META_AUTH_SUCCESS') {
+      const { token, target } = event.data;
+      if (!token) { showToast('Facebook connect returned no token', 'err'); return; }
+      showToast('✅ Facebook connected — loading your pages…', 'ok');
+      // Feed the long-lived token into the existing account picker.
+      pickIgTargetKey = target;
+      const modal = document.getElementById('modal-pick-ig');
+      if (modal) modal.style.display = 'block';
+      const tokenInput = document.getElementById('pick-ig-token');
+      if (tokenInput) tokenInput.value = token;
+      inspectMetaAccounts();
+      return;
+    }
     if (event.data && event.data.type === 'YOUTUBE_AUTH_SUCCESS') {
       const { channelName, refreshToken, target } = event.data;
       if (target === 'modal') {

@@ -30,6 +30,70 @@ const OAUTH_PORT = parseInt(process.env.YOUTUBE_OAUTH_PORT || "3001", 10);
 const OAUTH_REDIRECT_URI =
   process.env.YOUTUBE_REDIRECT_URI || `http://localhost:${OAUTH_PORT}/oauth2callback`;
 
+const GRAPH_VERSION = "v19.0";
+const META_APP_ID = process.env.META_APP_ID || process.env.FACEBOOK_APP_ID || "";
+const META_APP_SECRET = process.env.META_APP_SECRET || process.env.FACEBOOK_APP_SECRET || "";
+/** Facebook Login redirect target. Defaults to <origin of the YT redirect>/meta/oauth2callback.
+ *  Must be listed in the FB app → Facebook Login → Settings → Valid OAuth Redirect URIs. */
+const META_REDIRECT_URI =
+  process.env.META_REDIRECT_URI ||
+  (() => {
+    try { return `${new URL(OAUTH_REDIRECT_URI).origin}/meta/oauth2callback`; }
+    catch { return `http://localhost:${OAUTH_PORT}/meta/oauth2callback`; }
+  })();
+const META_SCOPES = [
+  "pages_show_list",
+  "pages_read_engagement",
+  "pages_manage_posts",
+  "instagram_basic",
+  "instagram_content_publish",
+  "business_management",
+].join(",");
+
+/** App access token for reliable /debug_token calls (falls back to the token itself). */
+function metaAppToken(): string {
+  return META_APP_ID && META_APP_SECRET ? `${META_APP_ID}|${META_APP_SECRET}` : "";
+}
+
+/** Inspect a Meta token: returns { status, expiresAt, dataAccessExpiresAt, scopes, message }. */
+async function inspectMetaToken(token: string): Promise<{
+  status: "valid" | "expired" | "invalid" | "unknown";
+  expiresAt: number | null;
+  dataAccessExpiresAt: number | null;
+  scopes: string[];
+  message: string;
+}> {
+  if (!token) return { status: "unknown", expiresAt: null, dataAccessExpiresAt: null, scopes: [], message: "no token stored" };
+  const appTok = metaAppToken() || token;
+  try {
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), 12000);
+    const r = await fetch(
+      `https://graph.facebook.com/${GRAPH_VERSION}/debug_token?input_token=${encodeURIComponent(token)}&access_token=${encodeURIComponent(appTok)}`,
+      { signal: ac.signal },
+    ).finally(() => clearTimeout(t));
+    const j: any = await r.json();
+    if (j.error) {
+      const expired = /expired/i.test(j.error.message || "") || j.error.code === 190;
+      return { status: expired ? "expired" : "invalid", expiresAt: null, dataAccessExpiresAt: null, scopes: [], message: j.error.message || "invalid" };
+    }
+    const d = j.data || {};
+    if (d.is_valid === false) {
+      const expired = /expired/i.test(d.error?.message || "");
+      return { status: expired ? "expired" : "invalid", expiresAt: d.expires_at || null, dataAccessExpiresAt: d.data_access_expires_at || null, scopes: d.scopes || [], message: d.error?.message || "token not valid" };
+    }
+    return {
+      status: "valid",
+      expiresAt: d.expires_at || 0,
+      dataAccessExpiresAt: d.data_access_expires_at || null,
+      scopes: d.scopes || [],
+      message: d.expires_at ? "" : "never expires",
+    };
+  } catch (e: any) {
+    return { status: "unknown", expiresAt: null, dataAccessExpiresAt: null, scopes: [], message: e?.name === "AbortError" ? "Meta API timed out" : (e?.message || String(e)) };
+  }
+}
+
 /**
  * Handle the Google OAuth redirect (`/oauth2callback?code=...`). Exchanges the
  * code for a refresh token and returns an HTML page that posts it back to the
@@ -1025,6 +1089,100 @@ export function startLogServer(): void {
       } catch (err: any) {
         res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
         res.end(`<h3>❌ Error starting YouTube OAuth: ${escapeHtml(err.message)}</h3>`);
+      }
+      return;
+    }
+
+    // ── GET /api/auth/meta/start ─────────────────────────────────────────
+    // Kicks off Facebook Login. On success the callback posts a long-lived
+    // (~60-day) user token back to the dashboard, which then runs "Load Accounts".
+    if (req.method === "GET" && (url === "/api/auth/meta/start" || url.startsWith("/api/auth/meta/start?"))) {
+      const target = new URL(url, `http://localhost:${PORT}`).searchParams.get("target") || "";
+      if (!META_APP_ID || !META_APP_SECRET) {
+        res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
+        res.end("<h3>❌ META_APP_ID and META_APP_SECRET must be set in the environment.</h3>");
+        return;
+      }
+      const authUrl =
+        `https://www.facebook.com/${GRAPH_VERSION}/dialog/oauth?` +
+        new URLSearchParams({
+          client_id: META_APP_ID,
+          redirect_uri: META_REDIRECT_URI,
+          state: JSON.stringify({ target }),
+          scope: META_SCOPES,
+          response_type: "code",
+        }).toString();
+      res.writeHead(302, { Location: authUrl });
+      res.end();
+      return;
+    }
+
+    // ── GET /meta/oauth2callback ─────────────────────────────────────────
+    if (req.method === "GET" && (url === "/meta/oauth2callback" || url.startsWith("/meta/oauth2callback?"))) {
+      const qp = new URL(url, `http://localhost:${PORT}`).searchParams;
+      const code = qp.get("code");
+      let stateObj: any = {};
+      try { stateObj = JSON.parse(qp.get("state") || "{}"); } catch {}
+      const fail = (msg: string) => {
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(`<body style="font-family:sans-serif;background:#0d1117;color:#c9d1d9;padding:40px;text-align:center"><h3>❌ ${escapeHtml(msg)}</h3></body>`);
+      };
+      if (qp.get("error")) return void fail(`Facebook denied the request: ${qp.get("error_description") || qp.get("error")}`);
+      if (!code) return void fail("No authorization code returned.");
+      try {
+        const tokenRes = await fetch(
+          `https://graph.facebook.com/${GRAPH_VERSION}/oauth/access_token?` +
+          new URLSearchParams({ client_id: META_APP_ID, client_secret: META_APP_SECRET, redirect_uri: META_REDIRECT_URI, code }).toString(),
+        );
+        const shortJson: any = await tokenRes.json();
+        if (shortJson.error || !shortJson.access_token) return void fail(shortJson.error?.message || "Code exchange failed.");
+
+        // Short-lived -> long-lived (~60 days)
+        const llRes = await fetch(
+          `https://graph.facebook.com/${GRAPH_VERSION}/oauth/access_token?` +
+          new URLSearchParams({ grant_type: "fb_exchange_token", client_id: META_APP_ID, client_secret: META_APP_SECRET, fb_exchange_token: shortJson.access_token }).toString(),
+        );
+        const llJson: any = await llRes.json();
+        const longToken = llJson.access_token || shortJson.access_token;
+
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Facebook Connected</title>
+          <style>body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#0d1117;color:#c9d1d9;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center}
+          .box{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:32px;max-width:440px}h2{color:#3fb950;margin-top:0}</style></head>
+          <body><div class="box"><h2>✅ Facebook Connected</h2><p style="font-size:13px;color:#8b949e" id="m">Loading your pages…</p></div>
+          <script>
+            var payload = { type:'META_AUTH_SUCCESS', token:${JSON.stringify(longToken)}, target:${JSON.stringify(stateObj.target || "")} };
+            if (window.opener) { window.opener.postMessage(payload,'*'); setTimeout(function(){window.close()}, 1200); }
+            else { document.getElementById('m').textContent = 'Copy this token into the dashboard: ' + ${JSON.stringify(longToken)}; }
+          </script></body></html>`);
+      } catch (err: any) {
+        fail(`Token exchange failed: ${err?.message || err}`);
+      }
+      return;
+    }
+
+    // ── GET /api/channels/token-status ──────────────────────────────────
+    // Per-channel Meta publish-token health, for the config UI badges.
+    if (req.method === "GET" && (url === "/api/channels/token-status" || url.startsWith("/api/channels/token-status?"))) {
+      try {
+        const channels = await getAllStoredChannelConfigs();
+        const out = await Promise.all(
+          channels.map(async (c) => {
+            const info = await inspectMetaToken(c.instagramAccessToken || c.facebookAccessToken || "");
+            return {
+              key: c.key,
+              brandName: c.brandName,
+              hasToken: !!(c.instagramAccessToken || c.facebookAccessToken),
+              ...info,
+              daysLeft: info.expiresAt && info.expiresAt > 0 ? Math.round((info.expiresAt * 1000 - Date.now()) / 86400000) : null,
+            };
+          }),
+        );
+        res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ success: true, tokens: out }));
+      } catch (err: any) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: false, message: err?.message || String(err) }));
       }
       return;
     }
