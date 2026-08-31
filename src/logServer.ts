@@ -50,6 +50,8 @@ const META_SCOPES = [
   "business_management",
 ].join(",");
 
+let tokenStatusCache: { at: number; tokens: any[] } | null = null;
+
 /** App access token for reliable /debug_token calls (falls back to the token itself). */
 function metaAppToken(): string {
   return META_APP_ID && META_APP_SECRET ? `${META_APP_ID}|${META_APP_SECRET}` : "";
@@ -1163,8 +1165,16 @@ export function startLogServer(): void {
 
     // ── GET /api/channels/token-status ──────────────────────────────────
     // Per-channel Meta publish-token health, for the config UI badges.
+    // Cached 5 min server-side so the polling UI can't hammer the Graph API.
     if (req.method === "GET" && (url === "/api/channels/token-status" || url.startsWith("/api/channels/token-status?"))) {
       try {
+        const force = url.includes("force=1");
+        const now = Date.now();
+        if (!force && tokenStatusCache && now - tokenStatusCache.at < 5 * 60 * 1000) {
+          res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" });
+          res.end(JSON.stringify({ success: true, cached: true, metaConfigured: !!(META_APP_ID && META_APP_SECRET), tokens: tokenStatusCache.tokens }));
+          return;
+        }
         const channels = await getAllStoredChannelConfigs();
         const out = await Promise.all(
           channels.map(async (c) => {
@@ -1178,8 +1188,9 @@ export function startLogServer(): void {
             };
           }),
         );
+        tokenStatusCache = { at: now, tokens: out };
         res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" });
-        res.end(JSON.stringify({ success: true, tokens: out }));
+        res.end(JSON.stringify({ success: true, cached: false, metaConfigured: !!(META_APP_ID && META_APP_SECRET), tokens: out }));
       } catch (err: any) {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ success: false, message: err?.message || String(err) }));
@@ -1358,6 +1369,7 @@ export function startLogServer(): void {
         };
 
         await saveChannelConfig(storedConfig);
+        tokenStatusCache = null; // creds may have changed — force a fresh check
 
         // Update in-memory profile in config.profiles
         let existingProfile = config.profiles.find((p) => p.key === key);
