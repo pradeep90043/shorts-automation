@@ -4100,13 +4100,28 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       musicCaptionLine +
       timerText;
 
-    const reviewMessageId = await this.telegram.sendVideoForReview(
-      chatId,
-      reviewVideoPath,
-      caption,
-      id,
-      messageId,
-    );
+    let reviewMessageId = 0;
+    if (chatId && chatId > 0) {
+      try {
+        reviewMessageId = await this.telegram.sendVideoForReview(
+          chatId,
+          reviewVideoPath,
+          caption,
+          id,
+          messageId,
+        );
+      } catch (err) {
+        pipelineLogger.warn(
+          `Failed to send video review for ${id}: ${err instanceof Error ? err.message : err}`,
+          "DirectUploader",
+        );
+      }
+    } else {
+      pipelineLogger.info(
+        `[DirectUploader] Automated headless pipeline for ${id} (no admin chatId) — skipping Telegram review, auto-publishing.`,
+        "DirectUploader",
+      );
+    }
 
     const pendingUpload: PendingUpload = {
       id,
@@ -4124,13 +4139,14 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     };
 
     if (!isCompileFailure) {
+      const delayMs = chatId && chatId > 0 ? 60000 : 2000;
       pendingUpload.timer = setTimeout(() => {
         pipelineLogger.info(
           `Review timeout for ${id} — auto-publishing.`,
           "DirectUploader",
         );
         this.onPublish(id);
-      }, 60000);
+      }, delayMs);
     }
 
     this.pending.set(id, pendingUpload);
