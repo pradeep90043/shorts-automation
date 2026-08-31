@@ -30,89 +30,103 @@ const OAUTH_PORT = parseInt(process.env.YOUTUBE_OAUTH_PORT || "3001", 10);
 const OAUTH_REDIRECT_URI =
   process.env.YOUTUBE_REDIRECT_URI || `http://localhost:${OAUTH_PORT}/oauth2callback`;
 
+/**
+ * Handle the Google OAuth redirect (`/oauth2callback?code=...`). Exchanges the
+ * code for a refresh token and returns an HTML page that posts it back to the
+ * dashboard tab. Served from BOTH the main dashboard port (so it works on prod
+ * behind Caddy/HTTPS) and the legacy localhost:OAUTH_PORT listener (local dev).
+ */
+export async function renderYouTubeOAuthCallback(parsedUrl: URL, res: http.ServerResponse): Promise<void> {
+  const code = parsedUrl.searchParams.get("code");
+  const stateStr = parsedUrl.searchParams.get("state") || "{}";
+  let stateObj: any = {};
+  try { stateObj = JSON.parse(stateStr); } catch {}
+
+  if (!code) {
+    res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
+    res.end("<h3>❌ No authorization code found in callback.</h3>");
+    return;
+  }
+
+  try {
+    const clientId = process.env.YOUTUBE_CLIENT_ID || "";
+    const clientSecret = process.env.YOUTUBE_CLIENT_SECRET || "";
+    const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, OAUTH_REDIRECT_URI);
+    const { tokens } = await oauth2Client.getToken(code);
+    const refreshToken = tokens.refresh_token;
+
+    if (!refreshToken) {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end("<h3>⚠️ No refresh token returned. Revoke permissions at <a href='https://myaccount.google.com/permissions'>myaccount.google.com/permissions</a> and try again.</h3>");
+      return;
+    }
+
+    oauth2Client.setCredentials(tokens);
+    let channelTitle = "YouTube Channel";
+    try {
+      const yt = google.youtube({ version: "v3", auth: oauth2Client });
+      const listRes = await yt.channels.list({ part: ["snippet"], mine: true });
+      if (listRes.data.items?.[0]?.snippet?.title) {
+        channelTitle = listRes.data.items[0].snippet.title;
+      }
+    } catch (e: any) {
+      pipelineLogger.warn(`[OAuth] Could not fetch channel title: ${e.message}`);
+    }
+
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>YouTube Connected</title>
+        <style>
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; text-align: center; }
+          .box { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 32px; max-width: 420px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
+          h2 { color: #3fb950; margin-top: 0; }
+          .ch-badge { background: rgba(56, 139, 253, 0.15); color: #58a6ff; border: 1px solid rgba(56, 139, 253, 0.4); padding: 4px 10px; border-radius: 6px; font-weight: 700; display: inline-block; margin: 12px 0; font-size: 15px; }
+        </style>
+      </head>
+      <body>
+        <div class="box">
+          <h2>✅ YouTube Connected!</h2>
+          <div class="ch-badge">📺 ${escapeHtml(channelTitle)}</div>
+          <p style="font-size: 13px; color: #8b949e;">Adding channel and token to your dashboard...</p>
+        </div>
+        <script>
+          const payload = {
+            type: 'YOUTUBE_AUTH_SUCCESS',
+            channelName: ${JSON.stringify(channelTitle)},
+            refreshToken: ${JSON.stringify(refreshToken)},
+            target: ${JSON.stringify(stateObj.target || '')}
+          };
+          if (window.opener) {
+            window.opener.postMessage(payload, '*');
+            setTimeout(() => window.close(), 1200);
+          } else {
+            document.querySelector('p').textContent = 'Copy this refresh token into the dashboard: ' + ${JSON.stringify(refreshToken)};
+          }
+        </script>
+      </body>
+      </html>
+    `);
+  } catch (err: any) {
+    res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(`<h3>❌ Token exchange failed: ${escapeHtml(err.message)}</h3>`);
+  }
+}
+
 function ensureYouTubeOAuthServer(): void {
   if (ytOAuthServer) return;
+  // Only needed for local dev: on prod the redirect URI is the public HTTPS
+  // domain, and /oauth2callback is served by the main dashboard port.
+  if (!/^https?:\/\/(localhost|127\.0\.0\.1)(:|\/)/.test(OAUTH_REDIRECT_URI)) return;
   try {
     const oauthPort = OAUTH_PORT;
     ytOAuthServer = http.createServer(async (req, res) => {
       const parsedUrl = new URL(req.url || "/", `http://localhost:${oauthPort}`);
       if (parsedUrl.pathname === "/oauth2callback") {
-        const code = parsedUrl.searchParams.get("code");
-        const stateStr = parsedUrl.searchParams.get("state") || "{}";
-        let stateObj: any = {};
-        try { stateObj = JSON.parse(stateStr); } catch {}
-
-        if (!code) {
-          res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
-          res.end("<h3>❌ No authorization code found in callback.</h3>");
-          return;
-        }
-
-        try {
-          const clientId = process.env.YOUTUBE_CLIENT_ID || "";
-          const clientSecret = process.env.YOUTUBE_CLIENT_SECRET || "";
-          const redirectUri = OAUTH_REDIRECT_URI;
-          const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
-          const { tokens } = await oauth2Client.getToken(code);
-          const refreshToken = tokens.refresh_token;
-
-          if (!refreshToken) {
-            res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-            res.end("<h3>⚠️ No refresh token returned. Revoke permissions at <a href='https://myaccount.google.com/permissions'>myaccount.google.com/permissions</a> and try again.</h3>");
-            return;
-          }
-
-          oauth2Client.setCredentials(tokens);
-          let channelTitle = "YouTube Channel";
-          try {
-            const yt = google.youtube({ version: "v3", auth: oauth2Client });
-            const listRes = await yt.channels.list({ part: ["snippet"], mine: true });
-            if (listRes.data.items?.[0]?.snippet?.title) {
-              channelTitle = listRes.data.items[0].snippet.title;
-            }
-          } catch (e: any) {
-            pipelineLogger.warn(`[OAuth] Could not fetch channel title: ${e.message}`);
-          }
-
-          res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-          res.end(`
-            <!DOCTYPE html>
-            <html>
-            <head>
-              <meta charset="utf-8">
-              <title>YouTube Connected</title>
-              <style>
-                body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; text-align: center; }
-                .box { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 32px; max-width: 420px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
-                h2 { color: #3fb950; margin-top: 0; }
-                .ch-badge { background: rgba(56, 139, 253, 0.15); color: #58a6ff; border: 1px solid rgba(56, 139, 253, 0.4); padding: 4px 10px; border-radius: 6px; font-weight: 700; display: inline-block; margin: 12px 0; font-size: 15px; }
-              </style>
-            </head>
-            <body>
-              <div class="box">
-                <h2>✅ YouTube Connected!</h2>
-                <div class="ch-badge">📺 ${escapeHtml(channelTitle)}</div>
-                <p style="font-size: 13px; color: #8b949e;">Adding channel and token to your dashboard...</p>
-              </div>
-              <script>
-                const payload = {
-                  type: 'YOUTUBE_AUTH_SUCCESS',
-                  channelName: ${JSON.stringify(channelTitle)},
-                  refreshToken: ${JSON.stringify(refreshToken)},
-                  target: ${JSON.stringify(stateObj.target || '')}
-                };
-                if (window.opener) {
-                  window.opener.postMessage(payload, '*');
-                  setTimeout(() => window.close(), 1200);
-                }
-              </script>
-            </body>
-            </html>
-          `);
-        } catch (err: any) {
-          res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
-          res.end(`<h3>❌ Token exchange failed: ${escapeHtml(err.message)}</h3>`);
-        }
+        await renderYouTubeOAuthCallback(parsedUrl, res);
       } else {
         res.writeHead(404);
         res.end();
@@ -963,6 +977,16 @@ export function startLogServer(): void {
         "Access-Control-Max-Age": "86400",
       });
       res.end();
+      return;
+    }
+
+    // ── GET /oauth2callback ──────────────────────────────────────────────
+    // Google OAuth redirect target. Served here (not only on the legacy
+    // localhost:OAUTH_PORT listener) so the flow works on prod behind Caddy:
+    // set YOUTUBE_REDIRECT_URI=https://<your-domain>/oauth2callback.
+    if (req.method === "GET" && (url === "/oauth2callback" || url.startsWith("/oauth2callback?"))) {
+      const parsedUrl = new URL(url, `http://localhost:${PORT}`);
+      await renderYouTubeOAuthCallback(parsedUrl, res);
       return;
     }
 
