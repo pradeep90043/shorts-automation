@@ -14,10 +14,11 @@ const GV = "v19.0";
 const APP_ID = process.env.META_APP_ID || process.env.FACEBOOK_APP_ID || "";
 const APP_SECRET = process.env.META_APP_SECRET || process.env.FACEBOOK_APP_SECRET || "";
 
-const CHANNELS: Record<string, { env: string; pageId: string; igId: string }> = {
+const CHANNELS: Record<string, { env: string; pageId: string; igId: string; brand?: string; handle?: string; niche?: string }> = {
   codeorcap:  { env: "ADMIN_CODEORCAP_TOKEN",  pageId: "1155595804312771", igId: "17841468985961363" },
   storiyum:   { env: "ADMIN_STORIYUM_TOKEN",   pageId: "1244228672098266", igId: "17841415627232845" },
   prompt_gag: { env: "ADMIN_PROMPTGAG_TOKEN",  pageId: "1290985010756929", igId: "17841444444088275" },
+  infoonspot: { env: "ADMIN_INFOONSPOT_TOKEN", pageId: "1303034359557567", igId: "17841434886687113", brand: "InfoOnSpot", handle: "@infoonspot", niche: "tech" },
 };
 
 async function g(path: string, params: Record<string, string>): Promise<any> {
@@ -57,7 +58,7 @@ async function main() {
     }
 
     const igAccounts = JSON.stringify([{ name: `${pg.name} Instagram`, igUserId: cfg.igId, accessToken: pageToken }]);
-    await pool.query(
+    const upd = await pool.query(
       `UPDATE channel_configs SET
          instagram_access_token = $1,
          facebook_access_token  = $1,
@@ -68,6 +69,20 @@ async function main() {
        WHERE key = $5`,
       [pageToken, cfg.pageId, cfg.igId, igAccounts, key],
     );
+    if (upd.rowCount === 0) {
+      // New channel — insert a row so it shows in the dashboard.
+      await pool.query(
+        `INSERT INTO channel_configs
+           (key, brand_name, handle, niche, is_default, is_watch_only,
+            instagram_accounts, instagram_user_id, instagram_access_token,
+            facebook_page_id, facebook_access_token, search_mode, daily_count,
+            schedule_time, gap_hours, video_mode, subtitle_style, updated_at)
+         VALUES ($1,$2,$3,$4,false,true,$5::jsonb,$6,$7,$8,$7,'hashtags',5,'09:30',3,'curator','classic',NOW())
+         ON CONFLICT (key) DO NOTHING`,
+        [key, cfg.brand || key, cfg.handle || `@${key}`, cfg.niche || "tech", igAccounts, cfg.igId, pageToken, cfg.pageId],
+      );
+      console.log(`NEW  ${key} — inserted channel_configs row.`);
+    }
     console.log(`OK   ${key} — page "${pg.name}" @${iba?.username} — wrote page token (${pageToken.length} chars). ${expiryNote}`);
   }
 

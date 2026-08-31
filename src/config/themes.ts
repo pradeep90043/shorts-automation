@@ -123,9 +123,50 @@ const humorTheme: ContentTheme = {
   },
 };
 
+// InfoOnSpot — informative tech / AI / money / social / trending "explained" reels.
+// Encodes the InfoOnSpot content template: strong short headline, structured
+// caption (hook → transition → bullets → reality check → takeaway → keyword CTA
+// → credit → disclaimer), 5-8 hashtags, credible non-clickbait voice.
+const infoOnSpotTheme: ContentTheme = {
+  niche: "infoonspot",
+  channelDescriptor:
+    "InfoOnSpot — a fast, credible tech/AI/money/social explainer channel that turns a viral clip into one genuinely useful, easy-to-understand insight",
+  titleRules: `TITLE RULES: A 5-10 word headline that is the main hook. Punchy, immediately understandable, strong verbs, powerful first words. ALL CAPS is fine for the headline. Numbers only when genuinely useful. NO fake claims, NO "YOU WON'T BELIEVE THIS", NO clickbait the reel doesn't support. Examples: "OPENAI JUST CHANGED AI", "THIS AI BUILDS WEBSITES", "AI IS CHANGING CODING".`,
+  descriptionRules: (brandName: string) =>
+    `CAPTION RULES — follow this exact structure, separated by \\n\\n:\n` +
+    `1) HOOK: one surprising fact / question / scenario + 1-2 relevant emojis. Never start with "In this video".\n` +
+    `2) TRANSITION: one short line, e.g. "Here's what you need to know:" or "But there's a catch:".\n` +
+    `3) BREAKDOWN: 3-6 bullet lines, each starting with "• " then a relevant emoji, each communicating ONE idea, concise.\n` +
+    `4) REALITY CHECK: a balanced line on the limitation, uncertainty, risk or condition. For money/side-hustle topics you MUST say results vary and there is no guaranteed income. Never present uncertain claims as fact.\n` +
+    `5) TAKEAWAY: exactly one sentence starting with "The takeaway: " that answers "so what?".\n` +
+    `6) ENGAGEMENT: 'Comment "KEYWORD" if you want more like this.' where KEYWORD is one specific word tied to the topic (AI / TECH / MONEY / TOOL / etc).\n` +
+    `7) CREDIT: "Credit: @<original_creator>" then a new line "DM for credit or removal." Use "@creator" as a placeholder if the creator handle is unknown.\n` +
+    `8) DISCLAIMER: "Disclaimer: Shared for informational and educational purposes only. Not professional, financial, investment, legal or business advice. Results may vary and no outcome is guaranteed."\n` +
+    `Voice: fast, clear, informative, slightly curious, modern, credible. Avoid fake urgency, guaranteed-income claims, excessive emojis, long paragraphs. Follow @${brandName} for more. End with the hashtag line.`,
+  keywordsRule: `Provide 1 primary keyword, 5 secondary keywords, 15 tags, and EXACTLY 5-8 highly relevant hashtags (no spam) — ALWAYS include #InfoOnSpot. Tech/AI example: #AI #ArtificialIntelligence #Tech #AITools #Technology #InfoOnSpot.`,
+  analysisRules:
+    `INFO RULES: Classify the clip into EXACTLY ONE category: AI, TECH, MONEY, SOCIAL, TRENDING, or EXPLAINED. Extract: the topic, what happened, why it's interesting/useful, and the original creator handle if visible. Only treat the clip as post-worthy if it teaches, informs, surprises, or gives useful information — not merely because it's viral. Set mood to "technical" for AI/TECH, "other" otherwise.`,
+  appendVerdict: false,
+  requiredHashtag: "InfoOnSpot",
+  noHistoryHint:
+    "No historical uploads data yet. Prefer clear, curiosity-driven 'X just changed Y' style hooks; lead with the concrete news or capability.",
+  fallback: {
+    title: "THE AI UPDATE EVERYONE MISSED",
+    description:
+      "🤯 Something just shifted in tech and most people haven't noticed.\n\nHere's what you need to know:\n\n" +
+      "• 🤖 A new capability went live this week.\n• ⚡ It automates work that used to take hours.\n• 🧠 The output still needs a human check.\n• 🚀 Early adopters are already using it daily.\n\n" +
+      "Reality check: it's powerful but not magic — results depend on how you use it.\n\nThe takeaway: the edge isn't the tool, it's knowing how to use it.\n\n" +
+      'Comment "AI" if you want more like this.\n\nCredit: @creator\nDM for credit or removal.\n\n' +
+      "Disclaimer: Shared for informational and educational purposes only. Not professional, financial, investment, legal or business advice. Results may vary and no outcome is guaranteed.\n\n" +
+      "#AI #ArtificialIntelligence #Tech #Technology #AITools #InfoOnSpot",
+    tags: ["ai", "artificial intelligence", "tech", "technology", "ai tools", "explained", "infoonspot"],
+  },
+};
+
 export const CONTENT_THEMES: Record<string, ContentTheme> = {
   tech: techTheme,
   stories: storiesTheme,
   humor: humorTheme,
+  infoonspot: infoOnSpotTheme,
 };
 
