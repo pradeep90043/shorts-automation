@@ -108,6 +108,10 @@ export interface VideoMetadata {
   howItWorks?: string; // explanation for the middle transition clip
   diagramWorkflow?: string; // Mermaid flowchart representing the code execution logic
   diagramTitle?: string; // Title for the Mermaid diagram card
+  // InfoOnSpot cover card (burned onto the opening ~3s of the reel)
+  coverCategory?: string; // one of: AI | TECH | MONEY | SOCIAL | TRENDING | EXPLAINED | UPDATE
+  coverEmoji?: string;    // reaction emoji, e.g. 😱 🤯 👀 🚨
+  coverHeadline?: string; // 2-3 short UPPERCASE lines separated by \n; first line is the accent-coloured hook
 }
 
 export interface ReviewSettings {

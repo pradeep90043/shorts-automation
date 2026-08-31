@@ -55,6 +55,25 @@ const HASHTAG_MAP: Record<string, Record<string, string[]>> = {
     horror: ["horrorstories", "scarystories", "horror", "scary", "creepy", "ghoststories", "spooky"],
     romantic: ["romanticstory", "loveletters", "romance", "lovestory", "love", "feelgood", "romantic"],
   },
+  infoonspot: {
+    default: [
+      "tech", "technology", "artificialintelligence", "ai", "aitools",
+      "innovation", "futuretech", "techupdate", "technews", "trendingtech",
+      "explained", "money", "sidehustle", "digitaltools", "lifehack", "infoonspot",
+    ],
+    ai: [
+      "artificialintelligence", "ai", "aitools", "aitechnology", "chatgpt",
+      "openai", "generativeai", "machinelearning", "deeplearning", "aishorts",
+    ],
+    tech: [
+      "technology", "tech", "technews", "techupdates", "gadgets", "software",
+      "innovation", "futuretech", "techtrends",
+    ],
+    money: [
+      "money", "sidehustle", "finance", "businesstips", "productivity",
+      "financialfreedom", "onlinebusiness",
+    ],
+  },
 };
 
 /**

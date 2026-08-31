@@ -17,7 +17,14 @@ export interface ContentTheme {
   requiredHashtag: string;
   // ViralAnalyzer hint used when there is no upload history yet
   noHistoryHint: string;
-  fallback: { title: string; description: string; tags: string[] };
+  fallback: {
+    title: string;
+    description: string;
+    tags: string[];
+    coverCategory?: string;
+    coverEmoji?: string;
+    coverHeadline?: string;
+  };
 }
 
 export function createCustomTheme(nicheRaw: string, brandName?: string): ContentTheme {
@@ -160,6 +167,9 @@ const infoOnSpotTheme: ContentTheme = {
       "Disclaimer: Shared for informational and educational purposes only. Not professional, financial, investment, legal or business advice. Results may vary and no outcome is guaranteed.\n\n" +
       "#AI #ArtificialIntelligence #Tech #Technology #AITools #InfoOnSpot",
     tags: ["ai", "artificial intelligence", "tech", "technology", "ai tools", "explained", "infoonspot"],
+    coverCategory: "AI",
+    coverEmoji: "⚡",
+    coverHeadline: "AI UPDATE\nYOU MISSED",
   },
 };
 

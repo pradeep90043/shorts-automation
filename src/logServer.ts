@@ -602,6 +602,18 @@ async function getDashboardData() {
       igFollowers: null,
       ytSubscribers: null,
     },
+    {
+      key: "infoonspot",
+      name: "InfoOnSpot",
+      handle: "@infoonspot",
+      niche: "infoonspot",
+      initials: "IO",
+      color: "teal",
+      dailyLimit: 5,
+      active: true,
+      igFollowers: null,
+      ytSubscribers: null,
+    },
   ];
 
   defaultFallbackProfiles.forEach((fb) => {
@@ -700,6 +712,7 @@ async function getDashboardData() {
       "codeorcap",
       "storiyum",
       "prompt_gag",
+      "infoonspot",
     ]),
   );
 
