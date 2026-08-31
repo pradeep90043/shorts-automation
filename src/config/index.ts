@@ -351,6 +351,8 @@ function loadExtraProfiles(): ChannelProfile[] {
   prefixes.add("STORIYUM");
   prefixes.add("PROMPT_GAG");
   prefixes.add("INFOONSPOT");
+  // Primary profile is CodeOrCap — never generate a duplicate extra profile for it
+  prefixes.delete("CODEORCAP");
 
   const masterToken = getMasterTelegramToken();
   const profiles: ChannelProfile[] = [];
@@ -365,6 +367,7 @@ function loadExtraProfiles(): ChannelProfile[] {
     let brandName = env("BRAND_NAME");
     if (!brandName) {
       if (prefix === "PROMPT_GAG") brandName = "PromptGag";
+      else if (prefix === "INFOONSPOT") brandName = "InfoOnSpot";
       else brandName = titleCase(prefix);
     }
     
@@ -374,7 +377,7 @@ function loadExtraProfiles(): ChannelProfile[] {
       if (!fbPageId) fbPageId = "1244228672098266";
     }
 
-    const nicheEnv = env("NICHE") || (prefix === "PROMPT_GAG" ? "humor" : undefined);
+    const nicheEnv = env("NICHE") || (prefix === "PROMPT_GAG" ? "humor" : prefix === "INFOONSPOT" ? "infoonspot" : undefined);
 
     profiles.push({
       key: prefix.toLowerCase(),
@@ -391,6 +394,19 @@ function loadExtraProfiles(): ChannelProfile[] {
     });
   }
   return profiles;
+}
+
+function deduplicateProfiles(profiles: ChannelProfile[]): ChannelProfile[] {
+  const seen = new Set<string>();
+  const result: ChannelProfile[] = [];
+  for (const p of profiles) {
+    const k = (p.key || p.brandName || "").toLowerCase();
+    if (!seen.has(k)) {
+      seen.add(k);
+      result.push(p);
+    }
+  }
+  return result;
 }
 
 function loadPrimaryProfile(): ChannelProfile {
@@ -426,8 +442,8 @@ export const config: AppConfig = {
   telegramToken: primaryProfile.telegramToken,
   youtube: primaryProfile.youtube,
   instagram: primaryProfile.instagram,
-  profiles: [primaryProfile, ...loadExtraProfiles()].filter(
-    (p) => p.telegramToken,
+  profiles: deduplicateProfiles(
+    [primaryProfile, ...loadExtraProfiles()].filter((p) => p.telegramToken),
   ),
   ai: {
     provider: (process.env.AI_PROVIDER || "mock") as

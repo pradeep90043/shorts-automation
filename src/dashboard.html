@@ -739,8 +739,25 @@
     } catch(e) { console.error('Dashboard fetch failed:', e); }
   }
 
+  function deduplicateChannels(arr) {
+    if (!Array.isArray(arr)) return [];
+    const seen = new Set();
+    const out = [];
+    arr.forEach(c => {
+      const k = (c.key || '').toLowerCase();
+      if (!seen.has(k)) {
+        seen.add(k);
+        out.push(c);
+      }
+    });
+    return out;
+  }
+
   function renderDashboard(data) {
     try {
+      if (data && data.channels) {
+        data.channels = deduplicateChannels(data.channels);
+      }
       const qPending = (data.queue || []).filter(q => q.status === 'queued').length;
       setElText('nav-badge-queued', qPending);
       renderHeaderAudienceCards(data.channels);
@@ -763,7 +780,7 @@
       { key:'prompt_gag',name:'PromptGag', handle:'@prompt_gag',color:'warning', initials:'PG', igFollowers:null, ytSubscribers:null, niche:'HUMOR' },
       { key:'infoonspot',name:'InfoOnSpot',handle:'@infoonspot',color:'teal',    initials:'IO', igFollowers:null, ytSubscribers:null, niche:'EXPLAINED' }
     ];
-    const list = (channels && channels.length > 0) ? channels : defaults;
+    const list = deduplicateChannels((channels && channels.length > 0) ? channels : defaults);
     let totalIg = 0, totalYt = 0;
     list.forEach(c => {
       if (c.igFollowers > 0) totalIg += c.igFollowers;
@@ -832,7 +849,7 @@
       { key:'prompt_gag',name:'PromptGag', color:'warning', initials:'PG', niche:'HUMOR',   handle:'@prompt_gag',dailyLimit:6, queueCount:0, igFollowers:0, ytSubscribers:0, stats:{publishedCount:0} },
       { key:'infoonspot',name:'InfoOnSpot',color:'teal',    initials:'IO', niche:'EXPLAINED',handle:'@infoonspot',dailyLimit:5, queueCount:0, igFollowers:0, ytSubscribers:0, stats:{publishedCount:0} }
     ];
-    const list = (channels && channels.length > 0) ? channels : defaults;
+    const list = deduplicateChannels((channels && channels.length > 0) ? channels : defaults);
 
     /* Sidebar */
     const sideList = document.getElementById('sidebar-channels-list');
@@ -1084,7 +1101,7 @@
       { key:'prompt_gag',name:'PromptGag', color:'warning', initials:'PG', handle:'@prompt_gag',dailyLimit:6, queueCount:0, stats:{publishedCount:0}, searchMode:'hashtags', nicheHashtags:[], defaultHashtags:[], watchedChannels:[], excludeChannels:[] },
       { key:'infoonspot',name:'InfoOnSpot',color:'teal',    initials:'IO', handle:'@infoonspot',dailyLimit:5, queueCount:0, stats:{publishedCount:0}, searchMode:'hashtags', nicheHashtags:[], defaultHashtags:[], watchedChannels:[], excludeChannels:[] }
     ];
-    const list = (channels && channels.length > 0) ? channels : defaults;
+    const list = deduplicateChannels((channels && channels.length > 0) ? channels : defaults);
     const filtered = focusedChannel === 'all' ? list : list.filter(c => c.key === focusedChannel);
     container.innerHTML = '';
     filtered.forEach(c => {
