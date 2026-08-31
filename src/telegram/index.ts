@@ -163,19 +163,31 @@ export class TelegramService implements ITelegramService {
     id: string,
     replyToMessageId?: number,
   ): Promise<number> {
-    const res = await this.bot.telegram.sendVideo(
-      chatId,
-      { source: fs.createReadStream(videoPath) },
-      {
-        caption,
-        parse_mode: "Markdown",
-        reply_parameters: replyToMessageId
-          ? { message_id: replyToMessageId }
-          : undefined,
-        reply_markup: this.reviewKeyboard(id),
-      } as any,
-    );
-    return res.message_id;
+    if (!chatId || chatId <= 0) {
+      pipelineLogger.info(`[Telegram] sendVideoForReview bypassed — no valid chatId (${chatId})`, "Telegram");
+      return 0;
+    }
+    try {
+      const res = await this.bot.telegram.sendVideo(
+        chatId,
+        { source: fs.createReadStream(videoPath) },
+        {
+          caption,
+          parse_mode: "Markdown",
+          reply_parameters: replyToMessageId
+            ? { message_id: replyToMessageId }
+            : undefined,
+          reply_markup: this.reviewKeyboard(id),
+        } as any,
+      );
+      return res.message_id;
+    } catch (err) {
+      pipelineLogger.warn(
+        `Failed to send video review to Telegram chat ${chatId}: ${err instanceof Error ? err.message : err}`,
+        "Telegram",
+      );
+      return 0;
+    }
   }
   private static readonly MOOD_EMOJI: Record<string, string> = {
     funny: "😂",
@@ -261,30 +273,39 @@ export class TelegramService implements ITelegramService {
     replyToMessageId?: number,
     previewImagePath?: string,
   ): Promise<number> {
-    if (previewImagePath && fs.existsSync(previewImagePath)) {
-      const res = await this.bot.telegram.sendPhoto(
-        chatId,
-        { source: fs.readFileSync(previewImagePath) },
-        {
-          caption: text,
-          parse_mode: "Markdown",
-          reply_parameters: replyToMessageId
-            ? { message_id: replyToMessageId }
-            : undefined,
-          reply_markup: this.settingsKeyboard(id, settings, mood),
-        } as any,
-      );
-      return res.message_id;
-    }
+    if (!chatId || chatId <= 0) return 0;
+    try {
+      if (previewImagePath && fs.existsSync(previewImagePath)) {
+        const res = await this.bot.telegram.sendPhoto(
+          chatId,
+          { source: fs.readFileSync(previewImagePath) },
+          {
+            caption: text,
+            parse_mode: "Markdown",
+            reply_parameters: replyToMessageId
+              ? { message_id: replyToMessageId }
+              : undefined,
+            reply_markup: this.settingsKeyboard(id, settings, mood),
+          } as any,
+        );
+        return res.message_id;
+      }
 
-    const res = await this.bot.telegram.sendMessage(chatId, text, {
-      parse_mode: "Markdown",
-      reply_parameters: replyToMessageId
-        ? { message_id: replyToMessageId }
-        : undefined,
-      reply_markup: this.settingsKeyboard(id, settings, mood),
-    } as any);
-    return res.message_id;
+      const res = await this.bot.telegram.sendMessage(chatId, text, {
+        parse_mode: "Markdown",
+        reply_parameters: replyToMessageId
+          ? { message_id: replyToMessageId }
+          : undefined,
+        reply_markup: this.settingsKeyboard(id, settings, mood),
+      } as any);
+      return res.message_id;
+    } catch (err) {
+      pipelineLogger.warn(
+        `Failed to send settings review to Telegram chat ${chatId}: ${err instanceof Error ? err.message : err}`,
+        "Telegram",
+      );
+      return 0;
+    }
   }
 
   /**
@@ -300,6 +321,7 @@ export class TelegramService implements ITelegramService {
     settings: ReviewSettings,
     mood: string,
   ): Promise<void> {
+    if (!chatId || chatId <= 0 || !messageId) return;
     const extra = {
       parse_mode: "Markdown",
       reply_markup: this.settingsKeyboard(id, settings, mood),
@@ -489,6 +511,7 @@ export class TelegramService implements ITelegramService {
     text: string,
     replyToMessageId?: number,
   ): Promise<void> {
+    if (!chatId || chatId <= 0) return;
     try {
       await this.bot.telegram.sendMessage(chatId, text, {
         reply_parameters: replyToMessageId
@@ -497,15 +520,15 @@ export class TelegramService implements ITelegramService {
         parse_mode: "Markdown",
       });
     } catch (err) {
-      pipelineLogger.error(
-        `Failed to send Telegram message to chat ${chatId}`,
-        err,
+      pipelineLogger.warn(
+        `Failed to send Telegram message to chat ${chatId}: ${err instanceof Error ? err.message : err}`,
         "Telegram",
       );
     }
   }
 
   public async deleteMessage(chatId: number, messageId: number): Promise<void> {
+    if (!chatId || chatId <= 0 || !messageId) return;
     try {
       await this.bot.telegram.deleteMessage(chatId, messageId);
       pipelineLogger.info(
