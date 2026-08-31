@@ -1139,8 +1139,15 @@ Rules:
       prompt += `\n\nOCR TEXT EXTRACTED FROM IMAGE:\n"${context.ocr.text}"\nPlease use this text for context when generating the metadata title and description.\n`;
     }
 
+    if (this.theme.niche === "infoonspot") {
+      prompt += `\n\nINFOONSPOT COVER: also produce a cover card for the opening of the reel:
+- coverCategory: EXACTLY ONE of AI, TECH, MONEY, SOCIAL, TRENDING, EXPLAINED, UPDATE.
+- coverEmoji: one reaction emoji that fits (😱 🤯 👀 🚨 ⚡ 🔥).
+- coverHeadline: 2-3 SHORT UPPERCASE lines (2-4 words each), separated by \\n. The first line is the punchy hook. It must match the reel and never overstate it. e.g. "AI JUST\\nCHANGED\\nCODING".`;
+    }
+
     prompt += `\nReturn ONLY a raw JSON object — no markdown, no explanation:
-{"title":"...","description":"...","tags":["...","..."],"mood":"funny" | "sad" | "other", "factCheckScore": 10, "verdict": "...", "voiceoverScript": "...", "howItWorks": "...", "diagramWorkflow": "...", "diagramTitle": "..."}`;
+{"title":"...","description":"...","tags":["...","..."],"mood":"funny" | "sad" | "other", "factCheckScore": 10, "verdict": "...", "voiceoverScript": "...", "howItWorks": "...", "diagramWorkflow": "...", "diagramTitle": "...", "coverCategory":"...", "coverEmoji":"...", "coverHeadline":"..."}`;
 
     for (let attempt = 0; attempt < AI_MAX_ATTEMPTS; attempt++) {
       try {
@@ -1216,6 +1223,9 @@ Rules:
         ...this.theme.fallback.tags,
         this.profile.handle.replace("@", ""),
       ],
+      coverCategory: this.theme.fallback.coverCategory,
+      coverEmoji: this.theme.fallback.coverEmoji,
+      coverHeadline: this.theme.fallback.coverHeadline,
     };
   }
 
@@ -1255,8 +1265,15 @@ ${this.theme.analysisRules}`;
       prompt += `\n\nOCR TEXT EXTRACTED FROM IMAGE:\n"${context.ocr.text}"\nPlease use this text for context when generating the metadata title and description.\n`;
     }
 
+    if (this.theme.niche === "infoonspot") {
+      prompt += `\n\nINFOONSPOT COVER: also produce a cover card for the opening of the reel:
+- coverCategory: EXACTLY ONE of AI, TECH, MONEY, SOCIAL, TRENDING, EXPLAINED, UPDATE.
+- coverEmoji: one reaction emoji that fits (😱 🤯 👀 🚨 ⚡ 🔥).
+- coverHeadline: 2-3 SHORT UPPERCASE lines (2-4 words each), separated by \\n. The first line is the punchy hook. It must match the reel and never overstate it. e.g. "AI JUST\\nCHANGED\\nCODING".`;
+    }
+
     prompt += `\nReturn ONLY raw JSON — no markdown:
-{"title":"...","description":"...","primaryKeyword":"...","secondaryKeywords":["..."],"tags":["..."],"hashtags":["..."],"thumbnailText":"...","filename":"...","mood":"funny" | "sad" | "other","factCheckScore":10,"verdict":"...","howItWorks":"...","diagramWorkflow":"...","diagramTitle":"..."}`;
+{"title":"...","description":"...","primaryKeyword":"...","secondaryKeywords":["..."],"tags":["..."],"hashtags":["..."],"thumbnailText":"...","filename":"...","mood":"funny" | "sad" | "other","factCheckScore":10,"verdict":"...","howItWorks":"...","diagramWorkflow":"...","diagramTitle":"...","coverCategory":"...","coverEmoji":"...","coverHeadline":"..."}`;
 
     for (let attempt = 0; attempt < AI_MAX_ATTEMPTS; attempt++) {
       try {

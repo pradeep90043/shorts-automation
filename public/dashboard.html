@@ -915,7 +915,7 @@
       const ch = globalDashboardData.channels.find(c => c.key === key);
       if (ch) displayName = ch.name + ' (' + (ch.handle || '@' + key) + ')';
     } else {
-      const NAMES = { codeorcap:'CodeOrCap (@codeorcap)', storiyum:'Storiyum (@storiyum)', prompt_gag:'PromptGag (@prompt_gag)' };
+      const NAMES = { codeorcap:'CodeOrCap (@codeorcap)', storiyum:'Storiyum (@storiyum)', prompt_gag:'PromptGag (@prompt_gag)', infoonspot:'InfoOnSpot (@infoonspot)' };
       displayName = NAMES[key] || key;
     }
 
@@ -1023,7 +1023,8 @@
     const defaults = [
       { key:'codeorcap', name:'CodeOrCap', handle:'@codeorcap', color:'primary', initials:'CO', igFollowers:null, ytSubscribers:null, niche:'TECH/AI' },
       { key:'storiyum',  name:'Storiyum',  handle:'@storiyum',  color:'purple',  initials:'ST', igFollowers:null, ytSubscribers:null, niche:'STORIES' },
-      { key:'prompt_gag',name:'PromptGag', handle:'@prompt_gag',color:'warning', initials:'PG', igFollowers:null, ytSubscribers:null, niche:'HUMOR' }
+      { key:'prompt_gag',name:'PromptGag', handle:'@prompt_gag',color:'warning', initials:'PG', igFollowers:null, ytSubscribers:null, niche:'HUMOR' },
+      { key:'infoonspot',name:'InfoOnSpot',handle:'@infoonspot',color:'teal',    initials:'IO', igFollowers:null, ytSubscribers:null, niche:'EXPLAINED' }
     ];
     const list = (channels && channels.length > 0) ? channels : defaults;
     let totalIg = 0, totalYt = 0;
@@ -1092,7 +1093,8 @@
     const defaults = [
       { key:'codeorcap', name:'CodeOrCap', color:'primary', initials:'CO', niche:'TECH/AI', handle:'@codeorcap', dailyLimit:6, queueCount:0, igFollowers:0, ytSubscribers:0, stats:{publishedCount:0} },
       { key:'storiyum',  name:'Storiyum',  color:'purple',  initials:'ST', niche:'STORIES', handle:'@storiyum',  dailyLimit:6, queueCount:0, igFollowers:0, ytSubscribers:0, stats:{publishedCount:0} },
-      { key:'prompt_gag',name:'PromptGag', color:'warning', initials:'PG', niche:'HUMOR',   handle:'@prompt_gag',dailyLimit:6, queueCount:0, igFollowers:0, ytSubscribers:0, stats:{publishedCount:0} }
+      { key:'prompt_gag',name:'PromptGag', color:'warning', initials:'PG', niche:'HUMOR',   handle:'@prompt_gag',dailyLimit:6, queueCount:0, igFollowers:0, ytSubscribers:0, stats:{publishedCount:0} },
+      { key:'infoonspot',name:'InfoOnSpot',color:'teal',    initials:'IO', niche:'EXPLAINED',handle:'@infoonspot',dailyLimit:5, queueCount:0, igFollowers:0, ytSubscribers:0, stats:{publishedCount:0} }
     ];
     const list = (channels && channels.length > 0) ? channels : defaults;
 
@@ -2602,7 +2604,7 @@
     let vis=0;
     document.querySelectorAll('#log-container > div').forEach(el => {
       const txt = (el.dataset.text||'');
-      const chOk = focusedChannel==='all' || !(['codeorcap','storiyum','prompt_gag','promptgag'].filter(k=>k!==focusedChannel&&k!==focusedChannel.replace(/_/g,'')).some(k=>txt.includes(k)));
+      const chOk = focusedChannel==='all' || !(['codeorcap','storiyum','prompt_gag','promptgag','infoonspot'].filter(k=>k!==focusedChannel&&k!==focusedChannel.replace(/_/g,'')).some(k=>txt.includes(k)));
       const qOk = !logFilterStr || txt.includes(logFilterStr);
       el.style.display = (chOk && qOk) ? '' : 'none';
       if (chOk && qOk) vis++;

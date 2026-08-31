@@ -347,9 +347,10 @@ function loadExtraProfiles(): ChannelProfile[] {
     }
   }
 
-  // Always ensure STORIYUM and PROMPT_GAG are considered as prefixes
+  // Always ensure STORIYUM, PROMPT_GAG, and INFOONSPOT are considered as prefixes
   prefixes.add("STORIYUM");
   prefixes.add("PROMPT_GAG");
+  prefixes.add("INFOONSPOT");
 
   const masterToken = getMasterTelegramToken();
   const profiles: ChannelProfile[] = [];

@@ -147,6 +147,76 @@ export class VideoRenderer implements IVideoRenderer {
     return wmPath;
   }
 
+  /**
+   * InfoOnSpot cover card: a full-frame (1080x1920) transparent PNG with a
+   * category badge + reaction emoji top-left, a 2-3 line accent/white headline,
+   * and an INFOONSPOT bug bottom-right. Returns "" when the metadata has no
+   * coverHeadline (i.e. every non-InfoOnSpot profile).
+   */
+  private async buildInfoOnSpotCover(
+    context: PipelineContext,
+    dir: string,
+  ): Promise<string> {
+    const m = context.metadata;
+    const headlineRaw = (m?.coverHeadline || "").trim();
+    if (!headlineRaw) return "";
+
+    const esc = (s: string) =>
+      s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+    const lines = headlineRaw
+      .split(/\\n|\n/)
+      .map((l) => l.trim().toUpperCase())
+      .filter(Boolean)
+      .slice(0, 3);
+    if (lines.length === 0) return "";
+
+    const W = 1080, H = 1920;
+    const cat = (m?.coverCategory || "UPDATE").toUpperCase().replace(/[^A-Z]/g, "").slice(0, 12) || "UPDATE";
+    const emoji = (m?.coverEmoji || "⚡").trim().slice(0, 4);
+
+    // Headline sizing: fit the widest line into ~940px.
+    const maxChars = Math.max(...lines.map((l) => l.length), 1);
+    const fontSize = Math.max(70, Math.min(150, Math.round(940 / (maxChars * 0.62))));
+    const lineH = Math.round(fontSize * 1.06);
+    const blockTop = 360;
+    const textLeft = 70;
+
+    const catText = `${emoji}  ${cat}`;
+    const pillW = Math.round(catText.length * 24 + 56);
+
+    const headlineTspans = lines
+      .map((l, i) => {
+        const fill = i === 0 ? "#FFB800" : "#FFFFFF";
+        const y = blockTop + i * lineH + fontSize;
+        return `<text x="${textLeft}" y="${y}" font-family="'Archivo Black','Anton',Impact,'Arial Black',sans-serif" font-size="${fontSize}" font-weight="900" fill="${fill}" stroke="#000000" stroke-width="${Math.round(fontSize * 0.06)}" paint-order="stroke" letter-spacing="1">${esc(l)}</text>`;
+      })
+      .join("\n      ");
+
+    const svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="scrim" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#000000" stop-opacity="0.72"/>
+          <stop offset="0.55" stop-color="#000000" stop-opacity="0.30"/>
+          <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+        </linearGradient>
+      </defs>
+      <rect x="0" y="0" width="${W}" height="${Math.round(H * 0.62)}" fill="url(#scrim)"/>
+      <rect x="${textLeft}" y="150" width="${pillW}" height="76" rx="16" fill="#0B0B0B" fill-opacity="0.92" stroke="#FFB800" stroke-width="2.5"/>
+      <text x="${textLeft + pillW / 2}" y="201" font-family="-apple-system,'Segoe UI',Arial,sans-serif" font-size="34" font-weight="800" fill="#FFFFFF" text-anchor="middle" letter-spacing="1">${esc(catText)}</text>
+      ${headlineTspans}
+      <text x="${W - 60}" y="${H - 70}" font-family="-apple-system,'Segoe UI',Arial,sans-serif" font-size="30" font-weight="800" fill="#FFFFFF" fill-opacity="0.92" text-anchor="end" letter-spacing="2">◉ INFOONSPOT</text>
+    </svg>`;
+
+    const outPath = path.join(dir, "infoonspot_cover.png");
+    await sharp(Buffer.from(svg)).png().toFile(outPath);
+    pipelineLogger.info(
+      `InfoOnSpot cover card generated (${lines.length} line(s), category "${cat}")`,
+      "VideoRenderer",
+    );
+    return outPath;
+  }
+
   public async renderImageToVideo(
     imagePath: string,
     outputPath: string,
@@ -569,18 +639,40 @@ export class VideoRenderer implements IVideoRenderer {
     }
     const hasWatermark = watermarkPath !== "" && fs.existsSync(watermarkPath);
 
+    // 7b. InfoOnSpot cover card — a full-frame branded title card burned onto the
+    // opening seconds of the reel (category badge + reaction emoji + headline).
+    let coverPath = "";
+    try {
+      coverPath = await this.buildInfoOnSpotCover(context, path.dirname(outputPath));
+    } catch (err) {
+      pipelineLogger.warn(
+        `InfoOnSpot cover generation failed: ${err instanceof Error ? err.message : err}`,
+        "VideoRenderer",
+      );
+    }
+    const hasCover = coverPath !== "" && fs.existsSync(coverPath);
+    const COVER_SECS = 3;
+
     // 8. Execute FFmpeg
     const fps = options.fps;
-    const badgeInputArgs = badgeInputPaths
-      .map((p) => `-i "${p}"`)
-      .join(" ");
+    const extraInputs = [...badgeInputPaths];
+    if (hasWatermark) extraInputs.push(watermarkPath);
+    if (hasCover) extraInputs.push(coverPath);
+    const extraInputArgs = extraInputs.map((p) => `-i "${p}"`).join(" ");
     const watermarkInputIndex = 1 + badgeInputPaths.length;
-    let finalCmd = "";
+    const coverInputIndex = watermarkInputIndex + (hasWatermark ? 1 : 0);
+
+    let chain = filterChain;
+    let last = currentLabel;
     if (hasWatermark) {
-      finalCmd = `ffmpeg -y -i "${videoPath}" ${badgeInputArgs} -i "${watermarkPath}" -filter_complex "${filterChain}; [${currentLabel}][${watermarkInputIndex}:v]overlay=W-w-40:H-h-40[out]" -map "[out]" -map 0:a? -c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p -r ${fps} -c:a copy -movflags +faststart "${outputPath}"`;
-    } else {
-      finalCmd = `ffmpeg -y -i "${videoPath}" ${badgeInputArgs} -filter_complex "${filterChain}" -map "[${currentLabel}]" -map 0:a? -c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p -r ${fps} -c:a copy -movflags +faststart "${outputPath}"`;
+      chain += `; [${last}][${watermarkInputIndex}:v]overlay=W-w-40:H-h-40[wm]`;
+      last = "wm";
     }
+    if (hasCover) {
+      chain += `; [${last}][${coverInputIndex}:v]overlay=0:0:enable='lte(t,${COVER_SECS})'[cov]`;
+      last = "cov";
+    }
+    const finalCmd = `ffmpeg -y -i "${videoPath}" ${extraInputArgs} -filter_complex "${chain}" -map "[${last}]" -map 0:a? -c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p -r ${fps} -c:a copy -movflags +faststart "${outputPath}"`;
 
     pipelineLogger.info(
       `Executing FFmpeg video processing command: ${finalCmd}`,
