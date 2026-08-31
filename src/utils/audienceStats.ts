@@ -25,7 +25,10 @@ async function fetchInstagramFollowers(
   if (!userId || !accessToken) return { followers: null, mediaCount: null };
   try {
     const url = `https://graph.facebook.com/v19.0/${userId}?fields=followers_count,media_count&access_token=${accessToken}`;
-    const res = await fetch(url);
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 4000);
+    const res = await fetch(url, { signal: ac.signal });
+    clearTimeout(timer);
     const data = (await res.json()) as any;
     if (data && typeof data.followers_count === "number") {
       return {
@@ -59,11 +62,17 @@ async function fetchYouTubeSubscribers(
     );
     oauth2Client.setCredentials({ refresh_token: refreshToken });
     const yt = google.youtube({ version: "v3", auth: oauth2Client });
-    const res = await yt.channels.list({
+    
+    const callPromise = yt.channels.list({
       part: ["statistics"],
       mine: true,
     });
-    const stats = res.data.items?.[0]?.statistics;
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("YouTube API timeout after 4s")), 4000)
+    );
+
+    const res = await Promise.race([callPromise, timeoutPromise]);
+    const stats = (res as any)?.data?.items?.[0]?.statistics;
     if (stats) {
       return {
         subscribers: stats.subscriberCount ? parseInt(stats.subscriberCount, 10) : null,
@@ -179,19 +188,24 @@ export async function getAllAudienceStats(): Promise<Record<string, AudienceStat
   const profiles = config.profiles;
   const results: Record<string, AudienceStats> = {};
 
-  await Promise.all(
-    profiles.map(async (p) => {
-      try {
-        results[p.key.toLowerCase()] = await getProfileAudienceStats(p.key);
-      } catch {
-        results[p.key.toLowerCase()] = {
-          igFollowers: null,
-          ytSubscribers: null,
-          lastUpdated: Date.now(),
-        };
-      }
-    }),
-  );
+  try {
+    await Promise.race([
+      Promise.all(
+        profiles.map(async (p) => {
+          try {
+            results[p.key.toLowerCase()] = await getProfileAudienceStats(p.key);
+          } catch {
+            results[p.key.toLowerCase()] = {
+              igFollowers: null,
+              ytSubscribers: null,
+              lastUpdated: Date.now(),
+            };
+          }
+        }),
+      ),
+      new Promise((r) => setTimeout(r, 5000)),
+    ]);
+  } catch {}
 
   return results;
 }
