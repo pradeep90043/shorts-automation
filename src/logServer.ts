@@ -69,7 +69,7 @@ async function inspectMetaToken(token: string): Promise<{
   const appTok = metaAppToken() || token;
   try {
     const ac = new AbortController();
-    const t = setTimeout(() => ac.abort(), 12000);
+    const t = setTimeout(() => ac.abort(), 25000);
     const r = await fetch(
       `https://graph.facebook.com/${GRAPH_VERSION}/debug_token?input_token=${encodeURIComponent(token)}&access_token=${encodeURIComponent(appTok)}`,
       { signal: ac.signal },
