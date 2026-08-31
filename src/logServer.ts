@@ -242,11 +242,11 @@ function readLastLines(filePath: string, maxLines: number): string[] {
     if (fileSize === 0) return [];
 
     const fd = fs.openSync(filePath, "r");
-    const bufferSize = 8192;
+    const bufferSize = 65536;
     const buffer = Buffer.alloc(bufferSize);
     let filePosition = fileSize;
     let lineCount = 0;
-    let output = "";
+    const chunks: string[] = [];
 
     while (filePosition > 0 && lineCount <= maxLines) {
       const readLength = Math.min(bufferSize, filePosition);
@@ -254,7 +254,7 @@ function readLastLines(filePath: string, maxLines: number): string[] {
       fs.readSync(fd, buffer, 0, readLength, filePosition);
       
       const chunk = buffer.toString("utf8", 0, readLength);
-      output = chunk + output;
+      chunks.unshift(chunk);
       
       let pos = -1;
       while ((pos = chunk.indexOf("\n", pos + 1)) !== -1) {
@@ -264,7 +264,8 @@ function readLastLines(filePath: string, maxLines: number): string[] {
 
     fs.closeSync(fd);
 
-    const lines = output.split("\n").filter((l) => l.trim());
+    const fullText = chunks.join("");
+    const lines = fullText.split("\n").filter((l) => l.trim());
     return lines.slice(-maxLines);
   } catch (err) {
     console.error("Error reading last lines of log file:", err);
