@@ -179,33 +179,38 @@ export class VideoRenderer implements IVideoRenderer {
     const maxChars = Math.max(...lines.map((l) => l.length), 1);
     const fontSize = Math.max(70, Math.min(150, Math.round(940 / (maxChars * 0.62))));
     const lineH = Math.round(fontSize * 1.06);
-    const blockTop = 360;
+    // Bottom Hook layout: position the hook card near the bottom of the video frame
+    const bottomPadding = 160;
+    const blockHeight = lines.length * lineH + 90; // headline height + pill height
+    const blockTop = H - bottomPadding - blockHeight;
     const textLeft = 70;
 
     const catText = `${emoji}  ${cat}`;
     const pillW = Math.round(catText.length * 24 + 56);
+    const pillY = blockTop;
 
+    const headlineStartY = pillY + 95;
     const headlineTspans = lines
       .map((l, i) => {
         const fill = i === 0 ? "#FFB800" : "#FFFFFF";
-        const y = blockTop + i * lineH + fontSize;
+        const y = headlineStartY + i * lineH;
         return `<text x="${textLeft}" y="${y}" font-family="'Archivo Black','Anton',Impact,'Arial Black',sans-serif" font-size="${fontSize}" font-weight="900" fill="${fill}" stroke="#000000" stroke-width="${Math.round(fontSize * 0.06)}" paint-order="stroke" letter-spacing="1">${esc(l)}</text>`;
       })
       .join("\n      ");
 
     const svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
       <defs>
-        <linearGradient id="scrim" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stop-color="#000000" stop-opacity="0.72"/>
-          <stop offset="0.55" stop-color="#000000" stop-opacity="0.30"/>
-          <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+        <linearGradient id="scrimBottom" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#000000" stop-opacity="0"/>
+          <stop offset="0.35" stop-color="#000000" stop-opacity="0.45"/>
+          <stop offset="1" stop-color="#000000" stop-opacity="0.88"/>
         </linearGradient>
       </defs>
-      <rect x="0" y="0" width="${W}" height="${Math.round(H * 0.62)}" fill="url(#scrim)"/>
-      <rect x="${textLeft}" y="150" width="${pillW}" height="76" rx="16" fill="#0B0B0B" fill-opacity="0.92" stroke="#FFB800" stroke-width="2.5"/>
-      <text x="${textLeft + pillW / 2}" y="201" font-family="-apple-system,'Segoe UI',Arial,sans-serif" font-size="34" font-weight="800" fill="#FFFFFF" text-anchor="middle" letter-spacing="1">${esc(catText)}</text>
+      <rect x="0" y="${Math.max(0, blockTop - 120)}" width="${W}" height="${H - Math.max(0, blockTop - 120)}" fill="url(#scrimBottom)"/>
+      <rect x="${textLeft}" y="${pillY}" width="${pillW}" height="64" rx="14" fill="#0B0B0B" fill-opacity="0.95" stroke="#FFB800" stroke-width="2.5"/>
+      <text x="${textLeft + pillW / 2}" y="${pillY + 44}" font-family="-apple-system,'Segoe UI',Arial,sans-serif" font-size="30" font-weight="800" fill="#FFFFFF" text-anchor="middle" letter-spacing="1">${esc(catText)}</text>
       ${headlineTspans}
-      <text x="${W - 60}" y="${H - 70}" font-family="-apple-system,'Segoe UI',Arial,sans-serif" font-size="30" font-weight="800" fill="#FFFFFF" fill-opacity="0.92" text-anchor="end" letter-spacing="2">◉ INFOONSPOT</text>
+      <text x="${W - 60}" y="${H - 70}" font-family="-apple-system,'Segoe UI',Arial,sans-serif" font-size="28" font-weight="800" fill="#FFFFFF" fill-opacity="0.92" text-anchor="end" letter-spacing="2">◉ INFOONSPOT</text>
     </svg>`;
 
     const outPath = path.join(dir, "infoonspot_cover.png");

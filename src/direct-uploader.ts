@@ -341,8 +341,12 @@ ${this.theme.descriptionRules(this.profile.brandName)}
 KEYWORDS: ${this.theme.keywordsRule}
 THUMBNAIL: Max 5 words, highly clickable, curiosity driven.
 FILENAME: SEO-friendly filename (e.g., short-video-2026.mp4).
-MOOD: Determine emotional tone: "funny", "serious", "emotional", "motivational", "technical", "horror", "romantic", "sad", or "other".
 VOICEOVER: ${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} that describes the content. It should sound very natural, hook the viewer immediately, and explain what is happening or read the meme text in an entertaining way.
+${this.theme.niche === "infoonspot" || this.profile.key.toLowerCase() === "infoonspot" ? `
+INFOONSPOT BOTTOM HOOK: produce a punchy hook card for the opening/thumbnail of the reel:
+- coverCategory: EXACTLY ONE of AI, TECH, WEBSITES, MONEY, CAREER, TOOLS, UPDATE, EXPLAINED.
+- coverEmoji: one reaction emoji that fits (⚡ 💻 🤖 🤯 👀 🚨 💡 🔥).
+- coverHeadline: 2-3 SHORT UPPERCASE lines (2-4 words each), separated by \\n. The first line is the punchy hook. e.g. "GENERATE QR CODES\\nIN MS WORD\\nWITHOUT ADD-INS".` : ""}
 
 TASK 3: Verbatim Text Extraction
 Read all text written on the image exactly as it appears verbatim, without correcting spelling, punctuation, or formatting. If there is no text, return an empty string.
@@ -440,7 +444,10 @@ Return ONLY a raw JSON object matching this schema — no markdown, no explanati
     "mood": "funny" | "serious" | "emotional" | "motivational" | "technical" | "horror" | "romantic" | "sad" | "other",
     "factCheckScore": number,
     "verdict": string,
-    "voiceoverScript": string
+    "voiceoverScript": string,
+    "coverCategory": string,
+    "coverEmoji": string,
+    "coverHeadline": string
   },
   "brandingZones": [
     {
@@ -653,6 +660,9 @@ Use this to write a voiceover script that matches the content arc of the video. 
           howItWorks: (data as any).howItWorks,
           diagramWorkflow: (data as any).diagramWorkflow,
           diagramTitle: (data as any).diagramTitle,
+          coverCategory: (data as any).coverCategory,
+          coverEmoji: (data as any).coverEmoji,
+          coverHeadline: (data as any).coverHeadline,
         };
       }
 
@@ -667,6 +677,30 @@ Use this to write a voiceover script that matches the content arc of the video. 
       }
 
       context.metadata = this.ensureRequiredHashtags(data.metadata);
+
+      // InfoOnSpot cover fields guarantee
+      if (this.theme.niche === "infoonspot" || this.profile.key.toLowerCase() === "infoonspot") {
+        if (!context.metadata.coverHeadline) {
+          // Derive punchy 2-3 line uppercase headline from title or OCR
+          const rawTitle = (context.metadata.title || context.ocr?.text || "VIRAL TECH UPDATE")
+            .replace(/[^\w\s]/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+          const words = rawTitle.split(" ").filter(Boolean);
+          if (words.length <= 4) {
+            context.metadata.coverHeadline = words.join(" ").toUpperCase();
+          } else {
+            const mid = Math.ceil(words.length / 2);
+            context.metadata.coverHeadline = `${words.slice(0, mid).join(" ").toUpperCase()}\n${words.slice(mid).join(" ").toUpperCase()}`;
+          }
+        }
+        if (!context.metadata.coverCategory) {
+          context.metadata.coverCategory = "TECH";
+        }
+        if (!context.metadata.coverEmoji) {
+          context.metadata.coverEmoji = "⚡";
+        }
+      }
 
       if (this.theme.appendVerdict && context.metadata.verdict && context.metadata.factCheckScore) {
         context.metadata.description += `\n\n🤖 Tech Fact Check Verdict: [${context.metadata.verdict}] (${context.metadata.factCheckScore}/10)`;
@@ -2759,6 +2793,38 @@ ${this.theme.analysisRules}`;
       if (isPromptGag) {
         pipelineLogger.info(
           "PromptGag profile detected — applying preset overrides: captions off, voiceover off, sticker on",
+          "DirectUploader"
+        );
+        const keepOriginalAudio = !context.originalAudioCopyright?.matched;
+        if (!context.reviewSettings) {
+          context.reviewSettings = {
+            voiceover: false,
+            originalAudio: keepOriginalAudio,
+            captions: false,
+            cropTopPct: 0,
+            cropBottomPct: 0,
+            sticker: true,
+          };
+        } else {
+          context.reviewSettings.voiceover = false;
+          context.reviewSettings.originalAudio = keepOriginalAudio;
+          context.reviewSettings.captions = false;
+          context.reviewSettings.sticker = true;
+        }
+
+        if (context.aiRecommendedSettings) {
+          context.aiRecommendedSettings.voiceover = false;
+          context.aiRecommendedSettings.originalAudio = keepOriginalAudio;
+          context.aiRecommendedSettings.captions = false;
+          context.aiRecommendedSettings.sticker = true;
+        }
+      }
+
+      // Apply preset overrides for InfoOnSpot: real video with original audio, bottom hook, no voiceover, no burned subtitles
+      const isInfoOnSpot = this.profile.key.toLowerCase() === "infoonspot";
+      if (isInfoOnSpot) {
+        pipelineLogger.info(
+          "InfoOnSpot profile detected — applying preset overrides: original audio ON, voiceover OFF, captions OFF, bottom hook ON",
           "DirectUploader"
         );
         const keepOriginalAudio = !context.originalAudioCopyright?.matched;
