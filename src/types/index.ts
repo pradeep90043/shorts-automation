@@ -235,6 +235,7 @@ export interface PipelineContext {
     words: Array<{ word: string; start: number; end: number }>;
   } | null;
   hasOriginalAudio?: boolean; // video has an audio stream (independent of Whisper availability)
+  originalAudioCopyright?: { matched: boolean; title?: string; artist?: string; error?: string }; // Shazam copyright check result on original video audio
   creatorTextDetected?: boolean; // AI found creator captions/text baked into the video
   aiRecommendedSettings?: ReviewSettings; // what the AI suggests
   reviewSettings?: ReviewSettings; // final settings (user overrides or AI defaults)

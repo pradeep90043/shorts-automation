@@ -58,6 +58,8 @@ export class YouTubeService {
           );
 
           const mediaStream = fs.createReadStream(videoPath);
+          // Track last logged milestone to avoid flooding logs with every progress tick
+          let lastLoggedPct = -1;
 
           const response = await yt.videos.insert(
             {
@@ -80,11 +82,16 @@ export class YouTubeService {
             {
               retry: false, // Handle retries in our loop so a fresh stream is provided
               onUploadProgress: (evt: { bytesRead: number }) => {
-                const pct = ((evt.bytesRead / fileSize) * 100).toFixed(0);
-                pipelineLogger.info(
-                  `[${channel.name}] Upload ${pct}%`,
-                  "YouTubeService",
-                );
+                const pct = Math.floor((evt.bytesRead / fileSize) * 100);
+                // Log only at every 10% milestone to prevent flooding the log
+                const milestone = Math.floor(pct / 10) * 10;
+                if (milestone > lastLoggedPct) {
+                  lastLoggedPct = milestone;
+                  pipelineLogger.info(
+                    `[${channel.name}] Upload ${milestone}%`,
+                    "YouTubeService",
+                  );
+                }
               },
             },
           );

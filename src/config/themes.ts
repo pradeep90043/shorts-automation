@@ -137,39 +137,51 @@ const humorTheme: ContentTheme = {
 const infoOnSpotTheme: ContentTheme = {
   niche: "infoonspot",
   channelDescriptor:
-    "InfoOnSpot — a fast, credible tech/AI/money/social explainer channel that turns a viral clip into one genuinely useful, easy-to-understand insight",
-  titleRules: `TITLE RULES: A 5-10 word headline that is the main hook. Punchy, immediately understandable, strong verbs, powerful first words. ALL CAPS is fine for the headline. Numbers only when genuinely useful. NO fake claims, NO "YOU WON'T BELIEVE THIS", NO clickbait the reel doesn't support. Examples: "OPENAI JUST CHANGED AI", "THIS AI BUILDS WEBSITES", "AI IS CHANGING CODING".`,
-  descriptionRules: (brandName: string) =>
-    `CAPTION RULES — follow this exact structure, separated by \\n\\n:\n` +
-    `1) HOOK: one surprising fact / question / scenario + 1-2 relevant emojis. Never start with "In this video".\n` +
-    `2) TRANSITION: one short line, e.g. "Here's what you need to know:" or "But there's a catch:".\n` +
-    `3) BREAKDOWN: 3-6 bullet lines, each starting with "• " then a relevant emoji, each communicating ONE idea, concise.\n` +
-    `4) REALITY CHECK: a balanced line on the limitation, uncertainty, risk or condition. For money/side-hustle topics you MUST say results vary and there is no guaranteed income. Never present uncertain claims as fact.\n` +
-    `5) TAKEAWAY: exactly one sentence starting with "The takeaway: " that answers "so what?".\n` +
-    `6) ENGAGEMENT: 'Comment "KEYWORD" if you want more like this.' where KEYWORD is one specific word tied to the topic (AI / TECH / MONEY / TOOL / etc).\n` +
-    `7) CREDIT: "Credit: @<original_creator>" then a new line "DM for credit or removal." Use "@creator" as a placeholder if the creator handle is unknown.\n` +
-    `8) DISCLAIMER: "Disclaimer: Shared for informational and educational purposes only. Not professional, financial, investment, legal or business advice. Results may vary and no outcome is guaranteed."\n` +
-    `Voice: fast, clear, informative, slightly curious, modern, credible. Avoid fake urgency, guaranteed-income claims, excessive emojis, long paragraphs. Follow @${brandName} for more. End with the hashtag line.`,
-  keywordsRule: `Provide 1 primary keyword, 5 secondary keywords, 15 tags, and EXACTLY 5-8 highly relevant hashtags (no spam) — ALWAYS include #InfoOnSpot. Tech/AI example: #AI #ArtificialIntelligence #Tech #AITools #Technology #InfoOnSpot.`,
+    "InfoOnSpot — a fast, credible tech, AI, websites, career, and digital tools explainer channel modeled after @briefonspot and @indfeed24hr",
+  titleRules: `TITLE RULES: A 5-8 word punchy ALL-CAPS headline flanked by 1-2 relevant emojis. Examples: "🤖 3 WEBSITES TO FIND REMOTE AI WORK! 🤯", "🎬 TURN LONG VIDEOS INTO SHORTS WITH AI! 🔥", "💻 GENERATE QR CODES IN MS WORD! ⚡", "🚀 THIS AI BUILDS ENTIRE WEBSITES! 👀".`,
+  descriptionRules: (_brandName: string) =>
+    `CAPTION RULES — follow this EXACT structure separated by \\n\\n:\n` +
+    `Content taken by this page & for more follow\n@<original_creator>\n\n` +
+    `[EMOJI] [PUNCHY ALL-CAPS HEADLINE] [EMOJI]\n\n` +
+    `[1-2 sentence compelling summary of what happens or what this tool/update does + 👀 emoji].\n\n` +
+    `[SECTION HEADER IN CAPS WITH EMOJI, e.g. 🌐 PLATFORMS TO CHECK OUT / 📚 WHAT YOU'LL LEARN / 🤖 HOW IT WORKS / ⚡ KEY HIGHLIGHTS]\n\n` +
+    `• [Bullet point 1 — concise takeaway or feature]\n` +
+    `• [Bullet point 2 — concise takeaway or feature]\n` +
+    `• [Bullet point 3 — concise takeaway or feature]\n` +
+    `• [Bullet point 4 — concise takeaway or feature]\n\n` +
+    `💡 WHY THIS MATTERS\n[1-2 balanced sentences on practical utility, limitation, or reality check. Never guarantee income or overstate capabilities].\n\n` +
+    `💬 WANT THE LINK / DETAILS?\nComment "KEYWORD" and check your DMs! (KEYWORD = 1 specific word tied to the tool/topic, e.g. AI / TOOL / REMOTE / PROMPT / CODE).\n\n` +
+    `📌 SAVE THIS REEL\nSave it for later and share it with someone who needs this. 👇\n\n` +
+    `📲 CONTENT SOURCE/CREDIT: @<original_creator>\n(Respective Owner)\nDM FOR CREDIT OR REMOVAL\n\n` +
+    `Disclaimer: This content is shared for informational and educational purposes only. Tools, features, eligibility, and results can vary over time. Always verify before using or investing.\n\n` +
+    `#InfoOnSpot #Tech #AI #AITools #Technology #DigitalTools #Productivity`,
+  keywordsRule: `Provide 1 primary keyword, 5 secondary keywords, 15 tags, and 6-8 clean hashtags — ALWAYS include #InfoOnSpot #Tech #AI #Technology #AITools.`,
   analysisRules:
-    `INFO RULES: Classify the clip into EXACTLY ONE category: AI, TECH, MONEY, SOCIAL, TRENDING, or EXPLAINED. Extract: the topic, what happened, why it's interesting/useful, and the original creator handle if visible. Only treat the clip as post-worthy if it teaches, informs, surprises, or gives useful information — not merely because it's viral. Set mood to "technical" for AI/TECH, "other" otherwise.`,
+    `INFO RULES: Classify the clip into EXACTLY ONE category: AI, TECH, WEBSITES, MONEY, CAREER, or TOOLS. Extract: 1) What tool, feature, website, or news is shown. 2) 3-4 concrete bullet points explaining what it does. 3) The original creator handle (@username). 4) One short keyword for comment CTA. Set mood to "technical" for AI/Tech, "other" otherwise.`,
   appendVerdict: false,
   requiredHashtag: "InfoOnSpot",
   noHistoryHint:
-    "No historical uploads data yet. Prefer clear, curiosity-driven 'X just changed Y' style hooks; lead with the concrete news or capability.",
+    "No historical uploads data yet. Prefer clear, high-utility tool/website/AI explainers with concise bullet points and direct engagement hooks.",
   fallback: {
-    title: "THE AI UPDATE EVERYONE MISSED",
+    title: "🤖 3 WEBSITES TO FIND REMOTE AI WORK! 🤯",
     description:
-      "🤯 Something just shifted in tech and most people haven't noticed.\n\nHere's what you need to know:\n\n" +
-      "• 🤖 A new capability went live this week.\n• ⚡ It automates work that used to take hours.\n• 🧠 The output still needs a human check.\n• 🚀 Early adopters are already using it daily.\n\n" +
-      "Reality check: it's powerful but not magic — results depend on how you use it.\n\nThe takeaway: the edge isn't the tool, it's knowing how to use it.\n\n" +
-      'Comment "AI" if you want more like this.\n\nCredit: @creator\nDM for credit or removal.\n\n' +
-      "Disclaimer: Shared for informational and educational purposes only. Not professional, financial, investment, legal or business advice. Results may vary and no outcome is guaranteed.\n\n" +
-      "#AI #ArtificialIntelligence #Tech #Technology #AITools #InfoOnSpot",
-    tags: ["ai", "artificial intelligence", "tech", "technology", "ai tools", "explained", "infoonspot"],
-    coverCategory: "AI",
-    coverEmoji: "⚡",
-    coverHeadline: "AI UPDATE\nYOU MISSED",
+      "Content taken by this page & for more follow\n@creator\n\n" +
+      "💻 3 WEBSITES TO FIND REMOTE AI WORK! 🤯\n\n" +
+      "Looking for ways to build a side income online? These platforms could be worth exploring. 👀\n\n" +
+      "🌐 3 PLATFORMS TO CHECK OUT\n\n" +
+      "• 🤖 Platform 1: AI training, evaluation and data labeling tasks\n" +
+      "• 💼 Platform 2: Connecting skilled professionals with remote tech projects\n" +
+      "• 🚀 Platform 3: Specialized freelancing for modern digital creators\n\n" +
+      "💡 WHY THIS MATTERS\nYou don't need huge upfront investment to start building online skills. Focus on practical opportunities that reward what you already know.\n\n" +
+      '💬 WANT THE COMPLETE LIST?\nComment "REMOTE" and check your DMs! 👇\n\n' +
+      "📌 SAVE THIS REEL\nSave it for later and share it with someone looking for remote work. 👇\n\n" +
+      "📲 CONTENT SOURCE/CREDIT: @creator\n(Respective Owner)\nDM FOR CREDIT OR REMOVAL\n\n" +
+      "Disclaimer: This content is shared for informational and educational purposes only. Platform availability, task availability, eligibility, and earnings can vary. Income is not guaranteed.\n\n" +
+      "#InfoOnSpot #Tech #AI #AITools #Technology #RemoteWork #DigitalSkills",
+    tags: ["infoonspot", "tech", "ai", "ai tools", "technology", "remote work", "digital tools", "explained"],
+    coverCategory: "TECH",
+    coverEmoji: "💻",
+    coverHeadline: "3 WEBSITES FOR\nREMOTE AI WORK",
   },
 };
 

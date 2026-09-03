@@ -60,9 +60,24 @@ export class ReelHistoryStore {
     );
   }
 
-  /** True if this shortcode has ever been picked (regardless of publish outcome). */
+  /** True if this shortcode has ever been picked (regardless of publish outcome) for this profile. */
   public has(shortcode: string): boolean {
     return this.records.has(shortcode);
+  }
+
+  /** Checks if a shortcode was ever published or picked across ANY profile in the database. */
+  public static async isPublishedAnywhere(shortcode: string): Promise<boolean> {
+    if (!shortcode) return false;
+    try {
+      const pool = await getPool();
+      const { rows } = await pool.query(
+        `SELECT 1 FROM reel_history WHERE shortcode = $1 AND (published_at IS NOT NULL OR failed = false) LIMIT 1`,
+        [shortcode],
+      );
+      return rows.length > 0;
+    } catch {
+      return false;
+    }
   }
 
   /** Record a newly-picked reel before it enters the publish queue. */
