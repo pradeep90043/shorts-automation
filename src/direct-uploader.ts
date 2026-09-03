@@ -20,6 +20,8 @@ import { getFileHash } from "./utils/cache";
 import { JobDatabase } from "./utils/db";
 import { getStoredChannelConfig, StoredInstagramAccount, StoredYoutubeChannel } from "./utils/channelConfigStore";
 import { getCopyrightRisk, formatRisk } from "./audio/copyrightCheck";
+import { identifyAudio } from "./audio/shazam";
+import { ReelHistoryStore } from "./utils/reelHistoryStore";
 
 import { ViralAnalyzer } from "./utils/viral-analyzer";
 import { JobQueue } from "./utils/queue";
@@ -1901,11 +1903,17 @@ ${this.theme.analysisRules}`;
       : context.metadata?.voiceoverScript
         ? "Voiceover script"
         : "None available";
+    
+    let audioStatusText = context.hasOriginalAudio ? "Yes" : "No";
+    if (context.originalAudioCopyright?.matched) {
+      audioStatusText += ` ⚠️ *Copyrighted:* "${escapeMarkdown(context.originalAudioCopyright.title || "")}" by ${escapeMarkdown(context.originalAudioCopyright.artist || "Unknown")} (Auto-switched to background music)`;
+    }
+
     return (
       `🛠 *Review Processing Settings*\n\n` +
       `🎭 *Mood:* ${escapeMarkdown(mood)} _(tap a mood below to change — rewrites the storyline to match)_\n` +
       `✍️ *Creator text detected:* ${context.creatorTextDetected ? "Yes" : "No"}\n` +
-      `🔊 *Original audio present:* ${context.hasOriginalAudio ? "Yes" : "No"}\n` +
+      `🔊 *Original audio present:* ${audioStatusText}\n` +
       `💬 *Caption source:* ${captionSource}\n` +
       `✂️ *AI suggested crop:* top ${rec?.cropTopPct ?? 0}% / bottom ${rec?.cropBottomPct ?? 0}%\n\n` +
       `⏳ _Auto-starts in 60s with the settings below. Any tap resets the timer._`
@@ -2327,6 +2335,31 @@ ${this.theme.analysisRules}`;
     }
 
     try {
+      // ── Duplicate Content Check ──────────────────────────────────────────
+      // If this reel was already picked or published for ANY profile, refuse to process it again.
+      if (context.shortcode && !context.userPrompt) {
+        const isAlreadyPublished = await ReelHistoryStore.isPublishedAnywhere(context.shortcode);
+        if (isAlreadyPublished) {
+          pipelineLogger.warn(
+            `[DirectUploader] Shortcode "${context.shortcode}" has already been published in the past — blocking duplicate re-upload!`,
+            "DirectUploader"
+          );
+          await this.telegram.sendMessage(
+            chatId,
+            `⚠️ *Duplicate Content Detected!*\n\nReel \`#${context.shortcode}\` has already been published. Skipping to avoid duplicate content on social channels.`,
+            messageId,
+          );
+          this.db.createJob(id, {
+            status: "failed",
+            currentStep: "Blocked duplicate content",
+            error: `Shortcode ${context.shortcode} was already published`,
+            context,
+          });
+          this.resolveJob(id);
+          return;
+        }
+      }
+
       this.db.createJob(id, {
         status: "pending",
         currentStep: "Ingestion and setup completed",
@@ -2574,46 +2607,66 @@ ${this.theme.analysisRules}`;
       }
 
       // ── Mood-Based Channel Recognition & Auto-Routing ────────────────────
-      const mood = normalizeMood(context.metadata?.mood);
-      const rawText = `${context.captionMetadata?.title || ""} ${context.captionMetadata?.description || ""} ${(context.metadata?.tags || []).join(" ")}`.toLowerCase();
+      // Applies ONLY to unpinned manual Telegram uploads on the default catch-all bot.
+      // Dedicated channels and automated watcher reels must NEVER be re-routed.
+      const isDefaultBot = this.profile.isDefault && (this.profile.key.toLowerCase() === "codeorcap" || this.profile.key.toLowerCase() === "default");
+      const shouldAutoRoute = isDefaultBot && !context.channelPinned && !context.instagramSource;
 
-      let targetChannelKey = "codeorcap";
-      if (
-        mood === "funny" ||
-        rawText.includes("#meme") ||
-        rawText.includes("#funny") ||
-        rawText.includes("#comedy") ||
-        rawText.includes("#joke") ||
-        rawText.includes("#prank")
-      ) {
-        targetChannelKey = "prompt_gag";
-      } else if (
-        mood === "emotional" ||
-        mood === "sad" ||
-        mood === "romantic" ||
-        mood === "horror" ||
-        rawText.includes("#story") ||
-        rawText.includes("#kahani") ||
-        rawText.includes("#moralstories") ||
-        rawText.includes("#storytime") ||
-        rawText.includes("#hindikahani")
-      ) {
-        targetChannelKey = "storiyum";
-      } else {
-        targetChannelKey = "codeorcap";
-      }
+      if (shouldAutoRoute) {
+        const mood = normalizeMood(context.metadata?.mood);
+        const rawText = `${context.captionMetadata?.title || ""} ${context.captionMetadata?.description || ""} ${(context.metadata?.tags || []).join(" ")}`.toLowerCase();
 
-      const currentKey = this.profile.key.toLowerCase();
-      if (currentKey !== targetChannelKey && !context.channelPinned) {
-        const targetUploader = DirectUploader.instances.find(
-          (inst) => inst.profile.key.toLowerCase() === targetChannelKey,
-        );
+        let targetChannelKey = "codeorcap";
+        if (
+          mood === "funny" ||
+          rawText.includes("#meme") ||
+          rawText.includes("#funny") ||
+          rawText.includes("#comedy") ||
+          rawText.includes("#joke") ||
+          rawText.includes("#prank")
+        ) {
+          targetChannelKey = "prompt_gag";
+        } else if (
+          mood === "emotional" ||
+          mood === "sad" ||
+          mood === "romantic" ||
+          mood === "horror" ||
+          rawText.includes("#story") ||
+          rawText.includes("#kahani") ||
+          rawText.includes("#moralstories") ||
+          rawText.includes("#storytime") ||
+          rawText.includes("#hindikahani")
+        ) {
+          targetChannelKey = "storiyum";
+        } else if (
+          rawText.includes("#explained") ||
+          rawText.includes("#didyouknow") ||
+          rawText.includes("#facts") ||
+          rawText.includes("#knowledge") ||
+          rawText.includes("#infoshorts") ||
+          rawText.includes("#infoonspot") ||
+          rawText.includes("#sidehustle") ||
+          rawText.includes("#finance") ||
+          rawText.includes("#money") ||
+          rawText.includes("how it works") ||
+          rawText.includes("explained in 60s")
+        ) {
+          targetChannelKey = "infoonspot";
+        } else {
+          targetChannelKey = "codeorcap";
+        }
 
-        if (targetUploader) {
-          pipelineLogger.info(
-            `[Auto-Routing] Detected mood "${mood}" → Redirecting job ${id} from ${this.profile.brandName} to ${targetUploader.profile.brandName}`,
-            "DirectUploader",
+        const currentKey = this.profile.key.toLowerCase();
+        if (currentKey !== targetChannelKey) {
+          const targetUploader = DirectUploader.instances.find(
+            (inst) => inst.profile.key.toLowerCase() === targetChannelKey,
           );
+
+          if (targetUploader) {
+            pipelineLogger.info(
+              `[Auto-Routing] Detected mood "${mood}" → Redirecting job ${id} from ${this.profile.brandName} to ${targetUploader.profile.brandName}`,
+              "DirectUploader",
+            );
 
           const adminChatId =
             context.telegramMeta?.chatId || this.profile.watch.adminChatId || 0;
@@ -2661,22 +2714,58 @@ ${this.theme.analysisRules}`;
           return;
         }
       }
+    }
 
       // ── PRE-PROCESSING SETTINGS REVIEW GATE ──────────────────────────────
       // AI has analyzed the media; let the user confirm/override the processing
       // settings (or let the 60s timer proceed with the AI recommendation).
       const isPromptGag = this.profile.key.toLowerCase() === "prompt_gag";
 
+      // ── Audio Copyright Check (Shazam) ──────────────────────────────────
+      // If the video has an audio stream, identify commercial copyright tracks.
+      // If copyrighted audio is detected, automatically switch off originalAudio and replace with background music.
+      if (isVideo && context.originalVideoPath && context.hasOriginalAudio) {
+        try {
+          const shazamRes = await identifyAudio(context.originalVideoPath);
+          context.originalAudioCopyright = shazamRes;
+          if (shazamRes.matched) {
+            pipelineLogger.warn(
+              `[DirectUploader] Shazam detected copyrighted audio: "${shazamRes.title}" by ${shazamRes.artist || "Unknown"}. Automatically replacing original audio with royalty-free background music to avoid copyright strikes!`,
+              "DirectUploader"
+            );
+            if (!context.reviewSettings) {
+              context.reviewSettings = {
+                voiceover: !isPromptGag,
+                originalAudio: false, // Force off copyrighted original audio
+                captions: true,
+                sticker: true,
+              };
+            } else {
+              context.reviewSettings.originalAudio = false; // Force off copyrighted original audio
+            }
+            if (context.aiRecommendedSettings) {
+              context.aiRecommendedSettings.originalAudio = false;
+            }
+          }
+        } catch (shazamErr) {
+          pipelineLogger.warn(
+            `[DirectUploader] Shazam check failed: ${shazamErr instanceof Error ? shazamErr.message : shazamErr}`,
+            "DirectUploader"
+          );
+        }
+      }
+
       // Apply preset overrides for PromptGag
       if (isPromptGag) {
         pipelineLogger.info(
-          "PromptGag profile detected — applying preset overrides: music off (originalAudio: true), captions off, voiceover off, sticker on",
+          "PromptGag profile detected — applying preset overrides: captions off, voiceover off, sticker on",
           "DirectUploader"
         );
+        const keepOriginalAudio = !context.originalAudioCopyright?.matched;
         if (!context.reviewSettings) {
           context.reviewSettings = {
             voiceover: false,
-            originalAudio: true,
+            originalAudio: keepOriginalAudio,
             captions: false,
             cropTopPct: 0,
             cropBottomPct: 0,
@@ -2684,14 +2773,14 @@ ${this.theme.analysisRules}`;
           };
         } else {
           context.reviewSettings.voiceover = false;
-          context.reviewSettings.originalAudio = true;
+          context.reviewSettings.originalAudio = keepOriginalAudio;
           context.reviewSettings.captions = false;
           context.reviewSettings.sticker = true;
         }
 
         if (context.aiRecommendedSettings) {
           context.aiRecommendedSettings.voiceover = false;
-          context.aiRecommendedSettings.originalAudio = true;
+          context.aiRecommendedSettings.originalAudio = keepOriginalAudio;
           context.aiRecommendedSettings.captions = false;
           context.aiRecommendedSettings.sticker = true;
         }

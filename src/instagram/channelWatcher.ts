@@ -211,9 +211,7 @@ export class ChannelWatcher {
       }
     }
 
-    if (lastError instanceof InstagramSessionDeadError) {
-      await this.alertSessionDead("hashtag search", lastError);
-    } else if (allowSessionRefresh && lastError && isSessionError(lastError)) {
+    if (allowSessionRefresh && lastError && isSessionError(lastError)) {
       pipelineLogger.info(
         `[${this.profile.brandName}] All candidates failed with session error. Auto-refreshing session ID...`,
         "ChannelWatcher",
@@ -225,7 +223,7 @@ export class ChannelWatcher {
       }
     }
 
-    // Browser-based fallback via Puppeteer (bypasses datacenter 429 rate limits)
+    // Browser-based fallback via Puppeteer (bypasses datacenter 429 rate limits & dead session cookies)
     try {
       pipelineLogger.info(
         `[${this.profile.brandName}] Private API rate-limited / failed — trying Puppeteer browser fallback for hashtags...`,
@@ -249,6 +247,10 @@ export class ChannelWatcher {
         `[${this.profile.brandName}] Puppeteer hashtag fallback failed: ${pupErr instanceof Error ? pupErr.message : pupErr}`,
         "ChannelWatcher",
       );
+    }
+
+    if (lastError instanceof InstagramSessionDeadError) {
+      await this.alertSessionDead("hashtag search", lastError);
     }
 
     throw lastError || new Error("All Instagram login candidates failed");

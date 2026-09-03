@@ -1209,6 +1209,8 @@ export class TelegramService implements ITelegramService {
       sourceCreatorUsername,
       channel: sourceCreatorUsername,
       shortcode,
+      channelPinned: true,
+      channelProfileKey: this.profile.key,
     };
 
     if (presetSettings) {
@@ -1285,10 +1287,11 @@ export class TelegramService implements ITelegramService {
     const tempGenDir = path.join(config.paths.tempDir, id);
     fs.mkdirSync(tempGenDir, { recursive: true });
 
+    const isPromptGag = this.profile.key.toLowerCase() === "prompt_gag";
     const presetSettings: ReviewSettings = {
-      voiceover: true,
-      originalAudio: false,
-      captions: true,
+      voiceover: !isPromptGag,
+      originalAudio: isPromptGag,
+      captions: !isPromptGag,
       cropTopPct: undefined,
       cropBottomPct: undefined,
       sticker: true,
