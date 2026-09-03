@@ -1288,10 +1288,12 @@ export class TelegramService implements ITelegramService {
     fs.mkdirSync(tempGenDir, { recursive: true });
 
     const isPromptGag = this.profile.key.toLowerCase() === "prompt_gag";
+    const isInfoOnSpot = this.profile.key.toLowerCase() === "infoonspot";
+    const keepOriginal = isPromptGag || isInfoOnSpot;
     const presetSettings: ReviewSettings = {
-      voiceover: !isPromptGag,
-      originalAudio: isPromptGag,
-      captions: !isPromptGag,
+      voiceover: !keepOriginal,
+      originalAudio: keepOriginal,
+      captions: !keepOriginal,
       cropTopPct: undefined,
       cropBottomPct: undefined,
       sticker: true,
