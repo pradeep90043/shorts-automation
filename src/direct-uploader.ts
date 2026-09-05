@@ -166,7 +166,7 @@ export class DirectUploader {
   private analyzer = new ImageAnalyzer();
   private pexels = new PexelsService();
   private queue = new JobQueue(1);
-  private pending = new Map<string, PendingUpload>();
+  public pending = new Map<string, PendingUpload>();
   public pendingSettingsReviews = new Map<
     string,
     {
@@ -1764,7 +1764,7 @@ ${this.theme.analysisRules}`;
 
   // ── Review button handlers ─────────────────────────────────────────────────
 
-  private onPublish(id: string): void {
+  public onPublish(id: string): void {
     const pending = this.pending.get(id);
     if (!pending) return;
     if (pending.timer) clearTimeout(pending.timer);
@@ -1773,7 +1773,7 @@ ${this.theme.analysisRules}`;
     );
   }
 
-  private onCancel(id: string): void {
+  public onCancel(id: string): void {
     const pending = this.pending.get(id);
     if (!pending) return;
     if (pending.timer) clearTimeout(pending.timer);
@@ -4297,23 +4297,35 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       musicCaptionLine,
     };
 
+    const isManualInject =
+      context.channel === "manual_inject" ||
+      context.channelPinned ||
+      context.id?.includes("inject");
+
     if (!isCompileFailure) {
-      const delayMs = chatId && chatId > 0 ? 60000 : 2000;
-      pendingUpload.timer = setTimeout(() => {
+      if (isManualInject) {
         pipelineLogger.info(
-          `Review timeout for ${id} — auto-publishing.`,
+          `[DirectUploader] Manual injected reel (${id}) — awaiting explicit user publish approval. Auto-publish timer DISABLED.`,
           "DirectUploader",
         );
-        this.onPublish(id);
-      }, delayMs);
+      } else {
+        const delayMs = chatId && chatId > 0 ? 60000 : 2000;
+        pendingUpload.timer = setTimeout(() => {
+          pipelineLogger.info(
+            `Review timeout for ${id} — auto-publishing.`,
+            "DirectUploader",
+          );
+          this.onPublish(id);
+        }, delayMs);
+      }
     }
 
     this.pending.set(id, pendingUpload);
 
     this.db.updateJob(id, {
       status: "final_review",
-      currentStep: isCompileFailure
-        ? "Auto-publish aborted. Waiting for manual publish review."
+      currentStep: isCompileFailure || isManualInject
+        ? "Waiting for manual publish approval."
         : "Waiting for manual publish review (60s timer)",
       context,
     });
