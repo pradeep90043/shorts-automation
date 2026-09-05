@@ -274,6 +274,20 @@
                 </div>
               </div>
             </div>
+            <!-- PROCESSING LOG TERMINAL: shown while video is processing before output video is ready -->
+            <div id="pipeline-live-log-card" style="flex:1;min-width:320px;background:#05080c;border:1px solid #1f2937;border-radius:8px;padding:12px;display:flex;flex-direction:column;justify-content:space-between;min-height:175px;">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                <div style="font-size:11px;font-weight:700;color:var(--primary);display:flex;align-items:center;gap:6px;">
+                  <span class="status-dot" style="background:var(--primary);width:6px;height:6px;"></span>
+                  <span>Live Pipeline Stream</span>
+                </div>
+                <span id="pipeline-stream-status" style="font-size:10px;font-family:var(--font-mono);color:var(--text-muted);">Processing...</span>
+              </div>
+              <div id="pipeline-live-log-lines" style="flex:1;overflow-y:auto;max-height:120px;font-family:var(--font-mono);font-size:10.5px;line-height:1.45;color:#94a3b8;display:flex;flex-direction:column;gap:3px;background:rgba(0,0,0,.4);padding:8px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.05);">
+                <div style="color:var(--text-dim);font-style:italic;">Initializing pipeline stream…</div>
+              </div>
+            </div>
+
             <!-- OUTPUT: video preview card + published platforms links -->
             <div id="output-preview-card" style="flex:1;min-width:320px;background:var(--card);border:1px solid var(--success);border-radius:8px;padding:12px;display:none;">
               <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
@@ -1048,7 +1062,11 @@
       if (data.success) {
         showToast(data.message || '✅ Reel approved — uploading!');
         const outCard = document.getElementById('output-preview-card');
+        const liveLogCard = document.getElementById('pipeline-live-log-card');
+        const streamStatus = document.getElementById('pipeline-stream-status');
         if (outCard) outCard.style.display = 'none';
+        if (liveLogCard) liveLogCard.style.display = 'flex';
+        if (streamStatus) streamStatus.textContent = 'Publishing to platforms...';
         setStepState(6, 'active', 'Uploading to platforms…');
         fetchDashboardData();
       } else {
@@ -1472,6 +1490,28 @@
     logTotal++;
     document.getElementById('log-count').textContent=logTotal+' entries';
     if (autoScroll && activeTab==='logs') container.scrollTop=container.scrollHeight;
+
+    // Also stream to Live Pipeline Stream card if visible
+    const pipeLogLines = document.getElementById('pipeline-live-log-lines');
+    const pipeLogCard = document.getElementById('pipeline-live-log-card');
+    if (pipeLogLines && pipeLogCard && pipeLogCard.style.display !== 'none') {
+      const isPipeRelevant = (label && (label.toLowerCase() === 'directuploader' || label.toLowerCase() === 'instagram' || label.toLowerCase() === 'pipeline' || label.toLowerCase() === 'downloader' || label.toLowerCase() === 'remotion' || label.toLowerCase() === 'metadata')) ||
+        msg.includes('reel') || msg.includes('download') || msg.includes('video') || msg.includes('audio') || msg.includes('caption') || msg.includes('publish') || msg.includes('music');
+      if (isPipeRelevant || level === 'error') {
+        const lineDiv = document.createElement('div');
+        lineDiv.style.cssText = 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:' + (level==='error'?'#f85149':level==='warn'?'#d29922':'#94a3b8');
+        lineDiv.innerHTML = '<span style="color:#64748b;">[' + esc(label || 'pipe') + ']</span> ' + esc(msg);
+        pipeLogLines.appendChild(lineDiv);
+        while (pipeLogLines.children.length > 50) {
+          pipeLogLines.removeChild(pipeLogLines.firstChild);
+        }
+        pipeLogLines.scrollTop = pipeLogLines.scrollHeight;
+        const streamStatus = document.getElementById('pipeline-stream-status');
+        if (streamStatus && msg.length > 2) {
+          streamStatus.textContent = msg.length > 35 ? msg.slice(0, 33) + '…' : msg;
+        }
+      }
+    }
   }
 
   function toggleConfigChannelFields(key, mode) {
@@ -1508,14 +1548,14 @@
       n: 3, label: 'Captions',
       estSec: 6,
       startKw: ['rendering animated text layers', 'skipping remotion rendering', 'burned timed captions', 'overlaid'],
-      doneKw:  ['burned timed captions onto video', 'skipping remotion rendering as per user request', 'detected raw video duration'],
+      doneKw:  ['burned timed captions onto video', 'skipping remotion rendering as per user request'],
       failKw:  ['remotion render failed'],
       stuckMs: 8 * 60 * 1000,
     },
     {
       n: 4, label: 'Audio',
       estSec: 6,
-      startKw: ['mixing background music', 'mixing background music + voiceover', 'mixing audio'],
+      startKw: ['compiling video and mixing audio', 'mixing background music', 'mixing background music + voiceover', 'mixing audio'],
       doneKw:  ['compilation complete', 'sending for manual review', 'manual review sent'],
       failKw:  ['audio mix failed'],
       stuckMs: 5 * 60 * 1000,
@@ -1523,9 +1563,9 @@
     {
       n: 5, label: 'Render',
       estSec: 18,
-      startKw: ['sending for manual review', 'manual review sent', 'review timeout', 'compilation complete'],
-      doneKw:  ['review timeout', 'auto-publishing', 'upload %', 'starting youtube', 'starting instagram', 'starting facebook', 'starting reel upload', 'uploading video binary'],
-      failKw:  ['upload cancelled by user'],
+      startKw: ['compiling video and mixing audio', 'overlay reaction sticker', 'append verdict sequence', 'compilation complete', 'manual review sent'],
+      doneKw:  ['manual review sent', 'waiting for manual publish approval', 'review timeout', 'auto-publishing', 'upload %', 'starting youtube', 'starting instagram', 'starting facebook', 'starting reel upload', 'uploading video binary'],
+      failKw:  ['upload cancelled by user', 'compile/auto-publish failed'],
       stuckMs: 20 * 60 * 1000,
     },
     {
@@ -1648,10 +1688,16 @@
     if (badge) { badge.className = 'status-badge status-published'; badge.textContent = 'System Ready'; }
     const src = document.getElementById('source-preview-card');
     const out = document.getElementById('output-preview-card');
+    const liveLogCard = document.getElementById('pipeline-live-log-card');
+    const liveLogLines = document.getElementById('pipeline-live-log-lines');
+    const streamStatus = document.getElementById('pipeline-stream-status');
     const pubContainer = document.getElementById('published-links-container');
     const pubRow = document.getElementById('published-links-row');
     if (src) src.style.display = 'none';
     if (out) out.style.display = 'none';
+    if (liveLogCard) liveLogCard.style.display = 'none';
+    if (liveLogLines) liveLogLines.innerHTML = '<div style="color:var(--text-dim);font-style:italic;">Initializing pipeline stream…</div>';
+    if (streamStatus) streamStatus.textContent = 'Processing...';
     if (pubContainer) pubContainer.style.display = 'none';
     if (pubRow) pubRow.innerHTML = '';
   }
@@ -1663,6 +1709,8 @@
     const linkEl = document.getElementById('source-open-link');
     const thumbImg = document.getElementById('source-thumb-img');
     const thumbFallback = document.getElementById('source-thumb-fallback');
+    const out = document.getElementById('output-preview-card');
+    const liveLogCard = document.getElementById('pipeline-live-log-card');
     if (!src) return;
     currentActiveShortcode = shortcode || '';
     if (scEl) scEl.textContent = shortcode ? '#' + shortcode : (url || '—');
@@ -1679,6 +1727,10 @@
       }
     }
     src.style.display = '';
+
+    // While processing, show live log card in output area, hide output video card
+    if (out) out.style.display = 'none';
+    if (liveLogCard) liveLogCard.style.display = 'flex';
   }
 
   function updateSourceThumbnail() {
@@ -1691,12 +1743,15 @@
   function setPipelineOutput(videoUrl) {
     const out = document.getElementById('output-preview-card');
     const vid = document.getElementById('output-video-player');
+    const liveLogCard = document.getElementById('pipeline-live-log-card');
     if (!out || !vid) return;
     const url = videoUrl || (BASE_URL + '/api/video-preview?t=' + Date.now());
     if (vid.src !== url) {
       vid.src = url;
       vid.load();
     }
+    // Switch from live log terminal to output video player
+    if (liveLogCard) liveLogCard.style.display = 'none';
     out.style.display = '';
     const badge = document.getElementById('stepper-status-badge');
     if (badge) { badge.className = 'status-badge status-published'; badge.textContent = '🎬 Preview Ready'; }
@@ -1787,7 +1842,7 @@
     }
 
     // ── Render complete / compilation complete → show output video preview ───
-    if (m.includes('compilation complete') || m.includes('video optimized successfully') || m.includes('output ready') || m.includes('waiting for manual publish review') || m.includes('manual review sent')) {
+    if (m.includes('compilation complete') || m.includes('output ready') || m.includes('waiting for manual publish review') || m.includes('waiting for manual publish approval') || m.includes('manual review sent')) {
       const jobIdMatch = msg.match(/(gen-\d+-\d+)/);
       if (jobIdMatch) currentActiveJobId = jobIdMatch[1];
       setPipelineOutput(currentActiveJobId ? `${BASE_URL}/api/video-preview?jobId=${encodeURIComponent(currentActiveJobId)}&t=${Date.now()}` : undefined);
