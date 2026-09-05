@@ -21,7 +21,12 @@
     "test:telegram": "ts-node tests/telegram.test.ts",
     "test:youtube": "ts-node tests/youtube.test.ts",
     "test:pipeline": "ts-node tests/pipeline.test.ts",
-    "verify": "node scripts/verify.js"
+    "verify": "node scripts/verify.js",
+    "dm:chat": "ts-node src/instagram/dm/cli.ts chat",
+    "dm:knowledge": "ts-node src/instagram/dm/cli.ts knowledge",
+    "dm:outbound": "ts-node src/instagram/dm/cli.ts outbound",
+    "dm:daemon": "ts-node src/instagram/dm/cli.ts daemon",
+    "dm:trigger": "ts-node scripts/trigger-dm.ts"
   },
   "dependencies": {
     "@types/pg": "^8.20.0",

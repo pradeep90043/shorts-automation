@@ -17,6 +17,7 @@ import { computeViralScore } from "./utils/viralScore";
 import { MultiSceneGenerator } from "./video/multiSceneGenerator";
 import { YouTubeService } from "./youtube";
 import { pipelineLogger } from "./utils/logger";
+import { dmStore, dmKnowledgeBase, inboundDmManager, outboundDmManager, aiDmBrain, getPersona } from "./instagram/dm";
 
 function escapeHtml(s: string): string {
   return (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -2487,6 +2488,141 @@ export function startLogServer(): void {
         });
         fs.createReadStream(filePath).pipe(res);
       } catch { res.writeHead(404); res.end(); }
+      return;
+    }
+
+    // ── AI DM SYSTEM ENDPOINTS ─────────────────────────────────────────────
+    if (req.method === "GET" && (url === "/api/dm/status" || url.startsWith("/api/dm/status?"))) {
+      const parsedUrl = new URL(url, `http://localhost:${PORT}`);
+      const profile = parsedUrl.searchParams.get("profile") || "codeorcap";
+      const persona = getPersona(profile);
+      const allTopics = dmKnowledgeBase.getAllTopics(profile);
+      const conversations = dmStore.getAllConversations();
+      const leads = dmStore.getAllLeads();
+
+      res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+      res.end(JSON.stringify({
+        profile,
+        persona: {
+          creatorName: persona.creatorName,
+          brandName: persona.brandName,
+          handle: persona.handle,
+          voiceTone: persona.voiceTone,
+        },
+        stats: {
+          indexedKnowledgeTopics: allTopics.length,
+          totalConversations: conversations.length,
+          totalLeads: leads.length,
+          pendingLeads: leads.filter(l => l.status === "pending").length,
+          repliedLeads: leads.filter(l => l.status === "replied").length,
+        },
+      }));
+      return;
+    }
+
+    if (req.method === "GET" && (url === "/api/dm/conversations" || url.startsWith("/api/dm/conversations?"))) {
+      const conversations = dmStore.getAllConversations();
+      res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+      res.end(JSON.stringify({ conversations }));
+      return;
+    }
+
+    if (req.method === "GET" && (url === "/api/dm/leads" || url.startsWith("/api/dm/leads?"))) {
+      const leads = dmStore.getAllLeads();
+      res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+      res.end(JSON.stringify({ leads }));
+      return;
+    }
+
+    if (req.method === "POST" && url === "/api/dm/lead") {
+      let body = "";
+      req.on("data", chunk => { body += chunk; });
+      req.on("end", async () => {
+        try {
+          const data = JSON.parse(body);
+          if (!data.username) {
+            res.writeHead(400, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+            res.end(JSON.stringify({ error: "username is required" }));
+            return;
+          }
+          const lead = outboundDmManager.addLead(data);
+          res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+          res.end(JSON.stringify({ success: true, lead }));
+        } catch (err: any) {
+          res.writeHead(500, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+
+    if (req.method === "POST" && url === "/api/dm/test-reply") {
+      let body = "";
+      req.on("data", chunk => { body += chunk; });
+      req.on("end", async () => {
+        try {
+          const data = JSON.parse(body);
+          const text = data.text || "";
+          const profile = data.profile || "codeorcap";
+          const result = await aiDmBrain.generateInboundReply(text, [], profile);
+          res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+          res.end(JSON.stringify({ success: true, result }));
+        } catch (err: any) {
+          res.writeHead(500, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+
+    // Instagram Webhook Verification
+    if (req.method === "GET" && (url === "/api/dm/webhook" || url.startsWith("/api/dm/webhook?"))) {
+      const parsedUrl = new URL(url, `http://localhost:${PORT}`);
+      const mode = parsedUrl.searchParams.get("hub.mode");
+      const token = parsedUrl.searchParams.get("hub.verify_token");
+      const challenge = parsedUrl.searchParams.get("hub.challenge");
+
+      if (mode === "subscribe" && token === (process.env.INSTAGRAM_WEBHOOK_VERIFY_TOKEN || "shorts_automation_dm")) {
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.end(challenge);
+      } else {
+        res.writeHead(403);
+        res.end("Forbidden");
+      }
+      return;
+    }
+
+    // Instagram Webhook Inbound Message Event
+    if (req.method === "POST" && url === "/api/dm/webhook") {
+      let body = "";
+      req.on("data", chunk => { body += chunk; });
+      req.on("end", async () => {
+        try {
+          const data = JSON.parse(body);
+          if (data.object === "instagram" && Array.isArray(data.entry)) {
+            for (const entry of data.entry) {
+              if (Array.isArray(entry.messaging)) {
+                for (const event of entry.messaging) {
+                  if (event.message && event.message.text && !event.message.is_echo) {
+                    // Trigger async handling in background
+                    inboundDmManager.handleIncomingMessage(
+                      event.sender?.id,
+                      event.message.mid || `mid-${Date.now()}`,
+                      event.message.text,
+                      "codeorcap"
+                    ).catch(e => pipelineLogger.error("[Webhook] DM handle error", e, "LogServer"));
+                  }
+                }
+              }
+            }
+          }
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ status: "ok" }));
+        } catch (err: any) {
+          res.writeHead(200);
+          res.end("ok");
+        }
+      });
       return;
     }
 
