@@ -1809,6 +1809,95 @@ export function startLogServer(): void {
       return;
     }
 
+    // ── POST /api/publish-preview ──────────────────────────────────────────
+    if (
+      req.method === "POST" &&
+      (url === "/api/publish-preview" || url.startsWith("/api/publish-preview?"))
+    ) {
+      try {
+        const body = await parseJsonBody(req);
+        const pUrl = new URL(url, `http://localhost`);
+        const jobId = body.jobId || pUrl.searchParams.get("jobId") || "";
+
+        let handled = false;
+        for (const uploader of DirectUploader.instances) {
+          if (jobId && uploader.pending.has(jobId)) {
+            uploader.onPublish(jobId);
+            handled = true;
+            break;
+          } else if (!jobId && uploader.pending.size > 0) {
+            // Pick most recent pending
+            const firstId = Array.from(uploader.pending.keys()).pop();
+            if (firstId) {
+              uploader.onPublish(firstId);
+              handled = true;
+              break;
+            }
+          }
+        }
+
+        res.writeHead(200, {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        });
+        res.end(
+          JSON.stringify({
+            success: handled,
+            message: handled
+              ? "🚀 Video approved! Uploading to connected platforms..."
+              : "No pending video found to publish.",
+          }),
+        );
+      } catch (err: any) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: false, message: err.message }));
+      }
+      return;
+    }
+
+    // ── POST /api/discard-preview ──────────────────────────────────────────
+    if (
+      req.method === "POST" &&
+      (url === "/api/discard-preview" || url.startsWith("/api/discard-preview?"))
+    ) {
+      try {
+        const body = await parseJsonBody(req);
+        const pUrl = new URL(url, `http://localhost`);
+        const jobId = body.jobId || pUrl.searchParams.get("jobId") || "";
+
+        let handled = false;
+        for (const uploader of DirectUploader.instances) {
+          if (jobId && uploader.pending.has(jobId)) {
+            uploader.onCancel(jobId);
+            handled = true;
+            break;
+          } else if (!jobId && uploader.pending.size > 0) {
+            const firstId = Array.from(uploader.pending.keys()).pop();
+            if (firstId) {
+              uploader.onCancel(firstId);
+              handled = true;
+              break;
+            }
+          }
+        }
+
+        res.writeHead(200, {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        });
+        res.end(
+          JSON.stringify({
+            success: handled,
+            message: handled ? "🗑 Video discarded." : "No pending video found to discard.",
+          }),
+        );
+      } catch (err: any) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: false, message: err.message }));
+      }
+      return;
+    }
+
     if (
       req.method === "POST" &&
       (url === "/api/remove-queue" || url.startsWith("/api/remove-queue?"))
