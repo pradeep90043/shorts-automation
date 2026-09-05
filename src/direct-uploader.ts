@@ -342,6 +342,7 @@ KEYWORDS: ${this.theme.keywordsRule}
 THUMBNAIL: Max 5 words, highly clickable, curiosity driven.
 FILENAME: SEO-friendly filename (e.g., short-video-2026.mp4).
 VOICEOVER: ${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} that describes the content. It should sound very natural, hook the viewer immediately, and explain what is happening or read the meme text in an entertaining way.
+HOW_IT_WORKS: A detailed, clear, and educational explanation (approx 2-3 sentences, 30-50 words) explaining how the code snippet, concept, or trick works step-by-step to add original educational value. NEVER return hashtags or generic labels.
 ${this.theme.niche === "infoonspot" || this.profile.key.toLowerCase() === "infoonspot" ? `
 INFOONSPOT BOTTOM HOOK: produce a punchy hook card for the opening/thumbnail of the reel:
 - coverCategory: EXACTLY ONE of AI, TECH, WEBSITES, MONEY, CAREER, TOOLS, UPDATE, EXPLAINED.
@@ -445,6 +446,9 @@ Return ONLY a raw JSON object matching this schema — no markdown, no explanati
     "factCheckScore": number,
     "verdict": string,
     "voiceoverScript": string,
+    "howItWorks": string,
+    "diagramWorkflow": string,
+    "diagramTitle": string,
     "coverCategory": string,
     "coverEmoji": string,
     "coverHeadline": string
@@ -5323,12 +5327,24 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
 
     if (!explanation) {
       // Derive explanation from transcription, caption or title
-      const textSource =
-        context.transcript?.text ||
-        context.captionMetadata?.description ||
-        context.metadata?.title ||
-        "Code execution and logic flow.";
-      const cleanText = textSource.replace(/[\n\r]+/g, " ").trim();
+      // If using caption, strip out hashtags, URLs, mentions, and emojis to prevent reading raw hashtags
+      let candidateText = context.transcript?.text || "";
+      if (!candidateText && context.captionMetadata?.description) {
+        candidateText = context.captionMetadata.description
+          .replace(/#\w+/g, "") // strip hashtags
+          .replace(/https?:\/\/\S+/g, "") // strip urls
+          .replace(/@\w+/g, "") // strip mentions
+          .replace(/[\n\r]+/g, " ")
+          .trim();
+      }
+      if (!candidateText && context.metadata?.title) {
+        candidateText = context.metadata.title;
+      }
+      if (!candidateText) {
+        candidateText = "Code execution and logic flow.";
+      }
+
+      const cleanText = candidateText.replace(/[\n\r]+/g, " ").trim();
       explanation =
         cleanText.length > 20
           ? cleanText.slice(0, 160) + (cleanText.length > 160 ? "…" : "")

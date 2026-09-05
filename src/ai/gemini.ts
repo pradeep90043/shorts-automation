@@ -3,16 +3,13 @@ import { config } from "../config";
 // Tried in order; rotating active models multiplies the effective daily budget for this
 // emergency fallback (only spent when FreeLLMAPI has already failed).
 const MODELS = [
-  "gemini-3.6-flash",
-  "gemini-3.5-flash",
-  "gemini-flash-latest",
-  "gemini-3.5-flash-lite",
-  "gemini-flash-lite-latest",
   "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
+  "gemini-flash-latest",
   "gemini-2.5-pro",
 ];
 
-const RATE_LIMIT_STATUSES = new Set([429]);
+const RATE_LIMIT_STATUSES = new Set([429, 500, 503]);
 
 export class GeminiClient {
   private apiKey: string;
