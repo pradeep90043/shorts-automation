@@ -11,6 +11,8 @@ www.instagram.com_cookies.txt
 *.txt
 *.PNG
 *.png
+!assets/templates/
+!assets/templates/**
 website-audit-reel/
 .agents/
 skills-lock.json

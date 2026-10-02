@@ -108,10 +108,13 @@ export interface VideoMetadata {
   howItWorks?: string; // explanation for the middle transition clip
   diagramWorkflow?: string; // Mermaid flowchart representing the code execution logic
   diagramTitle?: string; // Title for the Mermaid diagram card
-  // InfoOnSpot cover card (burned onto the opening ~3s of the reel)
+  // InfoOnSpot frame template fields
   coverCategory?: string; // one of: AI | TECH | MONEY | SOCIAL | TRENDING | EXPLAINED | UPDATE
   coverEmoji?: string;    // reaction emoji, e.g. 😱 🤯 👀 🚨
-  coverHeadline?: string; // 2-3 short UPPERCASE lines separated by \n; first line is the accent-coloured hook
+  coverHeadline?: string; // 2-3 short UPPERCASE lines separated by \n; hook for the top banner
+  infoKeyPoint?: string;  // Punchy key point/takeaway for bottom cyber card
+  infoLocation?: string;  // Location badge e.g. "CALIFORNIA", "WORLDWIDE"
+  infoDate?: string;      // Date badge e.g. "02 OCT 2026"
 }
 
 export interface ReviewSettings {

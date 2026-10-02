@@ -344,10 +344,12 @@ FILENAME: SEO-friendly filename (e.g., short-video-2026.mp4).
 VOICEOVER: ${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} that describes the content. It should sound very natural, hook the viewer immediately, and explain what is happening or read the meme text in an entertaining way.
 HOW_IT_WORKS: A detailed, clear, and educational explanation (approx 2-3 sentences, 30-50 words) explaining how the code snippet, concept, or trick works step-by-step to add original educational value. NEVER return hashtags or generic labels.
 ${this.theme.niche === "infoonspot" || this.profile.key.toLowerCase() === "infoonspot" ? `
-INFOONSPOT BOTTOM HOOK: produce a punchy hook card for the opening/thumbnail of the reel:
+INFOONSPOT BROADCAST TEMPLATE FIELDS:
+- coverHeadline: A punchy 1-2 line UPPERCASE hook headline (max 6-8 words total, e.g. "NEW AI CREATES FULL 3D WORLDS IN SECONDS") to fill the top [BREAKING] headline banner.
+- infoKeyPoint: A punchy key takeaway / bullet point (max 6-10 words total, e.g. "100% FREE & OPEN-SOURCE FOR CREATORS") to fill the bottom [KEY POINT] cyber box.
+- infoLocation: The location or geographical tag (e.g. "SAN FRANCISCO", "CALIFORNIA", "WORLDWIDE", "TOKYO"). Use "WORLDWIDE" if not location-specific.
 - coverCategory: EXACTLY ONE of AI, TECH, WEBSITES, MONEY, CAREER, TOOLS, UPDATE, EXPLAINED.
-- coverEmoji: one reaction emoji that fits (⚡ 💻 🤖 🤯 👀 🚨 💡 🔥).
-- coverHeadline: 2-3 SHORT UPPERCASE lines (2-4 words each), separated by \\n. The first line is the punchy hook. e.g. "GENERATE QR CODES\\nIN MS WORD\\nWITHOUT ADD-INS".` : ""}
+- coverEmoji: one reaction emoji that fits (⚡ 💻 🤖 🤯 👀 🚨 💡 🔥).` : ""}
 
 TASK 3: Verbatim Text Extraction
 Read all text written on the image exactly as it appears verbatim, without correcting spelling, punctuation, or formatting. If there is no text, return an empty string.
@@ -682,21 +684,23 @@ Use this to write a voiceover script that matches the content arc of the video. 
 
       context.metadata = this.ensureRequiredHashtags(data.metadata);
 
-      // InfoOnSpot cover fields guarantee
+      // InfoOnSpot template fields guarantee
       if (this.theme.niche === "infoonspot" || this.profile.key.toLowerCase() === "infoonspot") {
         if (!context.metadata.coverHeadline) {
-          // Derive punchy 2-3 line uppercase headline from title or OCR
           const rawTitle = (context.metadata.title || context.ocr?.text || "VIRAL TECH UPDATE")
             .replace(/[^\w\s]/g, " ")
             .replace(/\s+/g, " ")
             .trim();
-          const words = rawTitle.split(" ").filter(Boolean);
-          if (words.length <= 4) {
-            context.metadata.coverHeadline = words.join(" ").toUpperCase();
-          } else {
-            const mid = Math.ceil(words.length / 2);
-            context.metadata.coverHeadline = `${words.slice(0, mid).join(" ").toUpperCase()}\n${words.slice(mid).join(" ").toUpperCase()}`;
-          }
+          context.metadata.coverHeadline = rawTitle.toUpperCase();
+        }
+        if (!context.metadata.infoKeyPoint) {
+          context.metadata.infoKeyPoint = (context.metadata.howItWorks || context.metadata.verdict || context.metadata.title || "100% FACT CHECKED").toUpperCase();
+        }
+        if (!context.metadata.infoLocation) {
+          context.metadata.infoLocation = "WORLDWIDE";
+        }
+        if (!context.metadata.infoDate) {
+          context.metadata.infoDate = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }).toUpperCase();
         }
         if (!context.metadata.coverCategory) {
           context.metadata.coverCategory = "TECH";
@@ -1179,15 +1183,17 @@ Rules:
       prompt += `\n\nOCR TEXT EXTRACTED FROM IMAGE:\n"${context.ocr.text}"\nPlease use this text for context when generating the metadata title and description.\n`;
     }
 
-    if (this.theme.niche === "infoonspot") {
-      prompt += `\n\nINFOONSPOT COVER: also produce a cover card for the opening of the reel:
+    if (this.theme.niche === "infoonspot" || this.profile.key.toLowerCase() === "infoonspot") {
+      prompt += `\n\nINFOONSPOT BROADCAST TEMPLATE: produce the dynamic template fields based on the reel content:
+- coverHeadline: 1-2 SHORT UPPERCASE lines (max 6-8 words total). Punchy hook for the top [BREAKING] banner. e.g. "NEW AI CREATES FULL 3D WORLDS IN SECONDS".
+- infoKeyPoint: 1 SHORT UPPERCASE line (max 6-10 words total). Key takeaway/fact for bottom [KEY POINT] cyber box. e.g. "100% FREE FOR INDIE CREATORS".
+- infoLocation: Location tag (e.g. "SAN FRANCISCO", "CALIFORNIA", "WORLDWIDE"). Use "WORLDWIDE" if not location-specific.
 - coverCategory: EXACTLY ONE of AI, TECH, MONEY, SOCIAL, TRENDING, EXPLAINED, UPDATE.
-- coverEmoji: one reaction emoji that fits (😱 🤯 👀 🚨 ⚡ 🔥).
-- coverHeadline: 2-3 SHORT UPPERCASE lines (2-4 words each), separated by \\n. The first line is the punchy hook. It must match the reel and never overstate it. e.g. "AI JUST\\nCHANGED\\nCODING".`;
+- coverEmoji: one reaction emoji that fits (😱 🤯 👀 🚨 ⚡ 🔥).`;
     }
 
     prompt += `\nReturn ONLY a raw JSON object — no markdown, no explanation:
-{"title":"...","description":"...","tags":["...","..."],"mood":"funny" | "sad" | "other", "factCheckScore": 10, "verdict": "...", "voiceoverScript": "...", "howItWorks": "...", "diagramWorkflow": "...", "diagramTitle": "...", "coverCategory":"...", "coverEmoji":"...", "coverHeadline":"..."}`;
+{"title":"...","description":"...","tags":["...","..."],"mood":"funny" | "sad" | "other", "factCheckScore": 10, "verdict": "...", "voiceoverScript": "...", "howItWorks": "...", "diagramWorkflow": "...", "diagramTitle": "...", "coverCategory":"...", "coverEmoji":"...", "coverHeadline":"...", "infoKeyPoint":"...", "infoLocation":"..."}`;
 
     for (let attempt = 0; attempt < AI_MAX_ATTEMPTS; attempt++) {
       try {
@@ -1305,15 +1311,17 @@ ${this.theme.analysisRules}`;
       prompt += `\n\nOCR TEXT EXTRACTED FROM IMAGE:\n"${context.ocr.text}"\nPlease use this text for context when generating the metadata title and description.\n`;
     }
 
-    if (this.theme.niche === "infoonspot") {
-      prompt += `\n\nINFOONSPOT COVER: also produce a cover card for the opening of the reel:
+    if (this.theme.niche === "infoonspot" || this.profile.key.toLowerCase() === "infoonspot") {
+      prompt += `\n\nINFOONSPOT BROADCAST TEMPLATE: produce the dynamic template fields based on the reel content:
+- coverHeadline: 1-2 SHORT UPPERCASE lines (max 6-8 words total). Punchy hook for the top [BREAKING] banner. e.g. "NEW AI CREATES FULL 3D WORLDS IN SECONDS".
+- infoKeyPoint: 1 SHORT UPPERCASE line (max 6-10 words total). Key takeaway/fact for bottom [KEY POINT] cyber box. e.g. "100% FREE FOR INDIE CREATORS".
+- infoLocation: Location tag (e.g. "SAN FRANCISCO", "CALIFORNIA", "WORLDWIDE"). Use "WORLDWIDE" if not location-specific.
 - coverCategory: EXACTLY ONE of AI, TECH, MONEY, SOCIAL, TRENDING, EXPLAINED, UPDATE.
-- coverEmoji: one reaction emoji that fits (😱 🤯 👀 🚨 ⚡ 🔥).
-- coverHeadline: 2-3 SHORT UPPERCASE lines (2-4 words each), separated by \\n. The first line is the punchy hook. It must match the reel and never overstate it. e.g. "AI JUST\\nCHANGED\\nCODING".`;
+- coverEmoji: one reaction emoji that fits (😱 🤯 👀 🚨 ⚡ 🔥).`;
     }
 
     prompt += `\nReturn ONLY raw JSON — no markdown:
-{"title":"...","description":"...","primaryKeyword":"...","secondaryKeywords":["..."],"tags":["..."],"hashtags":["..."],"thumbnailText":"...","filename":"...","mood":"funny" | "sad" | "other","factCheckScore":10,"verdict":"...","howItWorks":"...","diagramWorkflow":"...","diagramTitle":"...","coverCategory":"...","coverEmoji":"...","coverHeadline":"..."}`;
+{"title":"...","description":"...","primaryKeyword":"...","secondaryKeywords":["..."],"tags":["..."],"hashtags":["..."],"thumbnailText":"...","filename":"...","mood":"funny" | "sad" | "other","factCheckScore":10,"verdict":"...","howItWorks":"...","diagramWorkflow":"...","diagramTitle":"...","coverCategory":"...","coverEmoji":"...","coverHeadline":"...", "infoKeyPoint":"...", "infoLocation":"..."}`;
 
     for (let attempt = 0; attempt < AI_MAX_ATTEMPTS; attempt++) {
       try {
