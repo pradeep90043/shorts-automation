@@ -328,9 +328,69 @@ export class VideoRenderer implements IVideoRenderer {
     const framePath = context.originalImagePath;
 
     pipelineLogger.info(
-      `Processing video source: ${videoPath}`,
+      `Processing video source: ${videoPath} (Brand: ${this.brandName})`,
       "VideoRenderer",
     );
+
+    const isInfoOnSpot =
+      this.brandName.toLowerCase() === "infoonspot" ||
+      this.brandHandle.toLowerCase().includes("infoonspot") ||
+      (context.telegramMeta?.username && context.telegramMeta.username.toLowerCase().includes("infoonspot")) ||
+      Boolean(context.metadata?.infoKeyPoint);
+
+    if (isInfoOnSpot) {
+      const { generateInfoOnSpotOverlay } = require("./infoonspotTemplate");
+      let infoOverlayPath = "";
+      try {
+        infoOverlayPath = await generateInfoOnSpotOverlay({
+          headline: context.metadata?.coverHeadline || context.metadata?.title || "VIRAL TECH UPDATE",
+          keyPoint: context.metadata?.infoKeyPoint || context.metadata?.howItWorks || context.metadata?.verdict || "100% FACT CHECKED",
+          location: context.metadata?.infoLocation || "WORLDWIDE",
+          date: context.metadata?.infoDate,
+          tempDir: path.dirname(outputPath),
+        });
+      } catch (e) {
+        pipelineLogger.warn(
+          `InfoOnSpot template generation failed: ${e instanceof Error ? e.message : e}`,
+          "VideoRenderer",
+        );
+      }
+
+      if (infoOverlayPath && fs.existsSync(infoOverlayPath)) {
+        const fps = options.fps;
+        const chain = `[0:v]scale=1080:1140:force_original_aspect_ratio=increase,crop=1080:1140,pad=1080:1920:0:446:black[bg]; [bg][1:v]overlay=0:0[out]`;
+        const finalCmd = `ffmpeg -y -i "${videoPath}" -i "${infoOverlayPath}" -filter_complex "${chain}" -map "[out]" -map 0:a? -c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p -r ${fps} -c:a copy -movflags +faststart "${outputPath}"`;
+
+        pipelineLogger.info(
+          `Executing InfoOnSpot broadcast template FFmpeg command: ${finalCmd}`,
+          "VideoRenderer",
+        );
+
+        return new Promise<string>((resolve, reject) => {
+          exec(
+            finalCmd,
+            { maxBuffer: 20 * 1024 * 1024 },
+            (error, _stdout, stderr) => {
+              if (error) {
+                pipelineLogger.error(
+                  `InfoOnSpot FFmpeg video processing failed: ${stderr}`,
+                  error,
+                  "VideoRenderer",
+                );
+                reject(error);
+              } else {
+                pipelineLogger.checkpoint(
+                  "InfoOnSpot video processing complete",
+                  true,
+                  `Output saved to ${outputPath}`,
+                );
+                resolve(outputPath);
+              }
+            },
+          );
+        });
+      }
+    }
 
     // 1. Extract a frame from the video at 1.0 seconds (for analysis) if it doesn't exist
     if (!fs.existsSync(framePath)) {
