@@ -19,6 +19,7 @@ services:
       - ./output:/app/output
       - ./assets/music:/app/assets/music
       - ./assets/stickers:/app/assets/stickers
+      - ./assets/templates:/app/assets/templates
       - ./logs:/app/logs
       - ./cookies.txt:/app/cookies.txt
     # Ports: 3000 (OAuth flow), 3002 (Live Logs server)

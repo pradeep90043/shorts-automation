@@ -117,8 +117,18 @@ jobs:
             mkdir -p temp output logs
             # Caddy sometimes gets its config file created as a dir on first run
             [ -d ./Caddyfile ] && rm -rf ./Caddyfile || true
-            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
-            docker compose pull bot
+            for attempt in {1..5}; do
+              echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin && break || {
+                echo "Docker login failed (attempt $attempt), retrying in 5s..."
+                sleep 5
+              }
+            done
+            for attempt in {1..5}; do
+              docker compose pull bot && break || {
+                echo "Docker compose pull failed (attempt $attempt), retrying in 10s..."
+                sleep 10
+              }
+            done
             # Clear any stale/orphaned containers left with these fixed names so
             # `up` doesn't hit "name already in use" conflicts.
             docker rm -f codeorcap-bot freellmapi duckdns caddy-proxy 2>/dev/null || true
