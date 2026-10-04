@@ -2232,6 +2232,41 @@ export function startLogServer(): void {
 
     if (
       req.method === "POST" &&
+      (url === "/api/inject-reels" || url.startsWith("/api/inject-reels?"))
+    ) {
+      const expected = process.env.INJECT_REELS_TOKEN || "";
+      const supplied = String(req.headers["x-inject-token"] || "");
+      const tokenOk =
+        expected.length > 0 &&
+        supplied.length === expected.length &&
+        require("crypto").timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));
+      if (!tokenOk) {
+        res.writeHead(401, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: false, message: "Unauthorized" }));
+        return;
+      }
+      try {
+        const body = await parseJsonBody(req);
+        const pKey = (body.profile || "codeorcap").toLowerCase();
+        const reels = Array.isArray(body.reels) ? body.reels.slice(0, 50) : [];
+        const watcher = activeWatchers.get(pKey);
+        if (!watcher) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: false, message: `Profile [${pKey}] not found` }));
+          return;
+        }
+        const count = await watcher.injectReels(reels);
+        res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+        res.end(JSON.stringify({ success: true, injectedCount: count, message: `Injected ${count} reel(s) for [${pKey.toUpperCase()}]` }));
+      } catch (err: any) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: false, message: err.message || "Error injecting reels" }));
+      }
+      return;
+    }
+
+    if (
+      req.method === "POST" &&
       (url === "/api/force-start" || url.startsWith("/api/force-start?"))
     ) {
       try {

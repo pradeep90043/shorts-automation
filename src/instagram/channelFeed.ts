@@ -46,6 +46,7 @@ export interface ScraperCallbacks {
 
 const PYTHON3  = config.binaries.python3;
 const FETCH_SCRIPT = path.resolve(__dirname, "../../scripts/fetch_reels.py");
+const SEARCH_ENGINE_SCRIPT = path.resolve(__dirname, "../../scripts/search_engine_discovery.py");
 
 /**
  * Parse the scraper's stderr sentinel lines. Returns markers the caller acts on.
@@ -341,6 +342,83 @@ export async function searchAllHashtagReels(
 
         pipelineLogger.info(
           `[ChannelFeed] Found ${results.length} reel(s) across ${tags.length} hashtag(s)`,
+          "ChannelFeed",
+        );
+        resolve(results);
+      },
+    );
+  });
+}
+
+/**
+ * Discover public Instagram Reels via Search Engine (DuckDuckGo/Bing).
+ * Solution 1: completely free, zero login/cookies required, immune to datacenter 401 blocks.
+ */
+export async function searchReelsViaSearchEngine(
+  profileKey: string,
+  limit = 10,
+): Promise<ScoredReelSummary[]> {
+  pipelineLogger.info(
+    `[SearchEngineDiscovery] Discovering reels via Search Engine (Solution 1) for [${profileKey.toUpperCase()}]...`,
+    "ChannelFeed",
+  );
+
+  return new Promise((resolve) => {
+    const args = [
+      SEARCH_ENGINE_SCRIPT,
+      "--profile",
+      profileKey.toLowerCase(),
+      "--limit",
+      String(limit),
+    ];
+
+    execFile(
+      PYTHON3,
+      args,
+      { timeout: 60000, maxBuffer: 5 * 1024 * 1024 },
+      (err, stdout, stderr) => {
+        if (err && !stdout.trim()) {
+          pipelineLogger.warn(
+            `[SearchEngineDiscovery] Script returned error (${stderr.trim() || err.message.split("\n")[0]})`,
+            "ChannelFeed",
+          );
+          return resolve([]);
+        }
+
+        const results: ScoredReelSummary[] = [];
+        const seen = new Set<string>();
+
+        for (const line of stdout.split("\n")) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          try {
+            const entry = JSON.parse(trimmed) as {
+              shortcode: string;
+              url?: string;
+              like_count?: number;
+              play_count?: number;
+              comment_count?: number;
+              owner_username?: string;
+              query?: string;
+            };
+            if (!entry.shortcode || seen.has(entry.shortcode)) continue;
+            seen.add(entry.shortcode);
+            results.push({
+              shortcode: entry.shortcode,
+              url: `https://www.instagram.com/reel/${entry.shortcode}/`,
+              playCount: entry.play_count || 1000,
+              likeCount: entry.like_count || 100,
+              commentCount: entry.comment_count || 10,
+              creatorUsername: entry.owner_username || undefined,
+              sourceHashtag: entry.query || profileKey,
+            });
+          } catch {
+            // skip non-JSON
+          }
+        }
+
+        pipelineLogger.info(
+          `[SearchEngineDiscovery] Discovered ${results.length} reel(s) via Search Engine for [${profileKey.toUpperCase()}]`,
           "ChannelFeed",
         );
         resolve(results);

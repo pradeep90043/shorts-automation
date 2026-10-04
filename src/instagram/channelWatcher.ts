@@ -7,6 +7,7 @@ import {
   listChannelReels,
   listChannelReelsViaPuppeteer,
   searchHashtagReelsViaPuppeteer,
+  searchReelsViaSearchEngine,
   InstagramSessionDeadError,
   ScraperCallbacks,
 } from "./channelFeed";
@@ -253,7 +254,42 @@ export class ChannelWatcher {
       await this.alertSessionDead("hashtag search", lastError);
     }
 
+    // Last resort: search-engine discovery (no Instagram login). Engagement is unknown,
+    // so these are unscored candidates rather than verified viral reels.
+    const seReels = await this.discoverViaSearchEngine(Math.max(limitPerTag * 2, 10));
+    if (seReels.length > 0) {
+      return seReels.map((r) => ({
+        shortcode: r.shortcode,
+        url: r.url,
+        channel: r.creatorUsername || r.sourceHashtag || this.profile.key,
+        creatorUsername: r.creatorUsername,
+        playCount: r.playCount,
+        likeCount: r.likeCount,
+        commentCount: r.commentCount,
+        viralScore: 0,
+      }));
+    }
+
     throw lastError || new Error("All Instagram login candidates failed");
+  }
+
+  /** Search-engine reel discovery, filtered against history. Never throws. */
+  private async discoverViaSearchEngine(limit: number) {
+    try {
+      const found = await searchReelsViaSearchEngine(this.profile.key, limit);
+      const fresh = found.filter((r) => !this.history.has(r.shortcode));
+      pipelineLogger.info(
+        `[${this.profile.brandName}] Search-engine discovery: ${fresh.length} fresh of ${found.length} found`,
+        "ChannelWatcher",
+      );
+      return fresh;
+    } catch (err) {
+      pipelineLogger.warn(
+        `[${this.profile.brandName}] Search-engine discovery failed: ${err instanceof Error ? err.message : err}`,
+        "ChannelWatcher",
+      );
+      return [];
+    }
   }
 
   private async listChannelReelsWithFallback(channel: string, allowSessionRefresh = true): Promise<any[]> {
@@ -305,6 +341,16 @@ export class ChannelWatcher {
         `[${this.profile.brandName}] Puppeteer channel fallback failed for @${channel}: ${pupErr instanceof Error ? pupErr.message : pupErr}`,
         "ChannelWatcher",
       );
+    }
+
+    // Last resort: search-engine discovery when scrapers/proxies are blocked.
+    const freshSe = await this.discoverViaSearchEngine(10);
+    if (freshSe.length > 0) {
+      return freshSe.map((r) => ({
+        shortcode: r.shortcode,
+        url: r.url,
+        creatorUsername: r.creatorUsername,
+      }));
     }
 
     throw lastError || new Error("All Instagram login candidates failed");
@@ -929,6 +975,52 @@ export class ChannelWatcher {
     );
 
     return jobId;
+  }
+
+  /**
+   * Injects reels from Local Discovery Worker (Solution 2) into the queue.
+   */
+  public async injectReels(
+    reels: Array<{ shortcode: string; url?: string; channel?: string; scheduledAt?: string }>,
+  ): Promise<number> {
+    await this.store.load();
+    const existingQueue = this.store.getQueue();
+    const existingCodes = new Set(existingQueue.map((q) => q.shortcode));
+    let addedCount = 0;
+    const gapMs = (this.profile.watch.gapHours || 3) * 60 * 60 * 1000;
+    const now = Date.now();
+
+    for (const r of reels) {
+      if (
+        typeof r.shortcode !== "string" ||
+        !/^[A-Za-z0-9_-]{5,20}$/.test(r.shortcode) ||
+        existingCodes.has(r.shortcode) ||
+        this.history.has(r.shortcode)
+      ) {
+        continue;
+      }
+      existingCodes.add(r.shortcode);
+      const scheduledTime = r.scheduledAt || new Date(now + addedCount * gapMs).toISOString();
+      existingQueue.push({
+        shortcode: r.shortcode,
+        url: `https://www.instagram.com/reel/${r.shortcode}/`,
+        channel: r.channel || "local-worker",
+        scheduledAt: scheduledTime,
+        fired: false,
+        addedAt: new Date().toISOString(),
+      });
+      await this.history.add(r.shortcode, r.channel || "local-worker");
+      addedCount++;
+    }
+
+    if (addedCount > 0) {
+      await this.store.setQueue(existingQueue);
+      pipelineLogger.info(
+        `[${this.profile.brandName}] Injected ${addedCount} reel(s) into watch queue via Local Discovery Worker`,
+        "ChannelWatcher",
+      );
+    }
+    return addedCount;
   }
 
   public getStatusDetails() {
