@@ -48,7 +48,7 @@ NICHE_KEYWORDS = {
         "ai innovations",
         "new technology 2026",
     ],
-    "promptgag": [
+    "prompt_gag": [
         "coding memes",
         "developer humor",
         "tech jokes",
@@ -66,6 +66,7 @@ def search_via_ddgs(keyword: str, max_results: int = 10) -> list[dict]:
         try:
             from duckduckgo_search import DDGS
         except ImportError:
+            print("WARN: neither ddgs nor duckduckgo_search is installed", file=sys.stderr)
             return []
 
     reels = []
@@ -111,6 +112,7 @@ def search_via_bing_html(keyword: str, max_results: int = 10) -> list[dict]:
         from bs4 import BeautifulSoup
         import base64
     except ImportError:
+        print("WARN: beautifulsoup4 is not installed", file=sys.stderr)
         return []
 
     reels = []
@@ -208,6 +210,11 @@ def main():
         kw_list = [k.strip() for k in args.keywords.split(",") if k.strip()]
     elif args.profile:
         p_key = args.profile.lower().strip()
+        p_key = p_key.replace("-", "_")
+        if p_key == "promptgag":
+            p_key = "prompt_gag"
+        if p_key not in NICHE_KEYWORDS:
+            print(f"WARN: unknown profile '{p_key}', using codeorcap keywords", file=sys.stderr)
         kw_list = NICHE_KEYWORDS.get(p_key, NICHE_KEYWORDS["codeorcap"])
     else:
         kw_list = NICHE_KEYWORDS["codeorcap"]
