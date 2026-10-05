@@ -127,7 +127,13 @@ export class ChannelWatcher {
   }
 
   /** Saves a freshly-obtained session ID from an in-flight Python login back to the DB and process.env. */
+  /** Call when a fresh Instagram session is saved so scrapers are tried again immediately. */
+  public resetScraperCooldown(): void {
+    this.scrapersDeadUntil = 0;
+  }
+
   private handleSessionRefresh(newSessionId: string): void {
+    this.resetScraperCooldown();
     const prefix = this.profile.key.toUpperCase().replace(/-/g, "_");
     process.env[`${prefix}_INSTAGRAM_SESSION_ID`] = newSessionId;
     process.env.INSTAGRAM_SESSION_ID = newSessionId;
@@ -193,6 +199,11 @@ export class ChannelWatcher {
     limitPerTag: number,
     allowSessionRefresh = true,
   ): Promise<ScoredReel[]> {
+    if (this.scrapersInCooldown()) {
+      const se = await this.discoverViaSearchEngine(Math.max(limitPerTag * 2, 10));
+      if (se.length > 0) return se.map((r) => this.seToScored(r));
+      throw new Error("Instagram session dead (scrapers in cooldown) and search-engine discovery found nothing");
+    }
     const candidates = this.getScraperEnvCandidates();
     let lastError: Error | null = null;
 
@@ -224,8 +235,11 @@ export class ChannelWatcher {
       }
     }
 
-    // Browser-based fallback via Puppeteer (bypasses datacenter 429 rate limits & dead session cookies)
+    this.markScrapersDead(lastError);
+
+    // Browser-based fallback via Puppeteer (bypasses datacenter 429 rate limits)
     try {
+      if (this.scrapersInCooldown()) throw new Error("skipped: Instagram session dead");
       pipelineLogger.info(
         `[${this.profile.brandName}] Private API rate-limited / failed — trying Puppeteer browser fallback for hashtags...`,
         "ChannelWatcher",
@@ -257,26 +271,55 @@ export class ChannelWatcher {
     // Last resort: search-engine discovery (no Instagram login). Engagement is unknown,
     // so these are unscored candidates rather than verified viral reels.
     const seReels = await this.discoverViaSearchEngine(Math.max(limitPerTag * 2, 10));
-    if (seReels.length > 0) {
-      return seReels.map((r) => ({
-        shortcode: r.shortcode,
-        url: r.url,
-        channel: r.creatorUsername || r.sourceHashtag || this.profile.key,
-        creatorUsername: r.creatorUsername,
-        playCount: r.playCount,
-        likeCount: r.likeCount,
-        commentCount: r.commentCount,
-        viralScore: 0,
-      }));
-    }
+    if (seReels.length > 0) return seReels.map((r) => this.seToScored(r));
 
     throw lastError || new Error("All Instagram login candidates failed");
+  }
+
+  // Once every scraper candidate has failed with a dead session, further scraper and
+  // Puppeteer attempts only burn 10-15 min per batch — skip them until this passes.
+  private scrapersDeadUntil = 0;
+  private static readonly SCRAPER_COOLDOWN_MS = 30 * 60 * 1000;
+  private seCache: { at: number; limit: number; reels: Awaited<ReturnType<typeof searchReelsViaSearchEngine>> } | null = null;
+  private static readonly SE_CACHE_TTL_MS = 20 * 60 * 1000;
+
+  private scrapersInCooldown(): boolean {
+    return Date.now() < this.scrapersDeadUntil;
+  }
+
+  private markScrapersDead(err: Error | null): void {
+    if (err && (err instanceof InstagramSessionDeadError || isSessionError(err))) {
+      this.scrapersDeadUntil = Date.now() + ChannelWatcher.SCRAPER_COOLDOWN_MS;
+      pipelineLogger.warn(
+        `[${this.profile.brandName}] Instagram session dead — skipping scrapers for ${ChannelWatcher.SCRAPER_COOLDOWN_MS / 60000} min, using search-engine discovery`,
+        "ChannelWatcher",
+      );
+    }
+  }
+
+  private seToScored(r: Awaited<ReturnType<typeof searchReelsViaSearchEngine>>[number]): ScoredReel {
+    return {
+      shortcode: r.shortcode,
+      url: r.url,
+      channel: r.creatorUsername || r.sourceHashtag || this.profile.key,
+      creatorUsername: r.creatorUsername,
+      playCount: r.playCount,
+      likeCount: r.likeCount,
+      commentCount: r.commentCount,
+      viralScore: 0,
+    };
   }
 
   /** Search-engine reel discovery, filtered against history. Never throws. */
   private async discoverViaSearchEngine(limit: number) {
     try {
-      const found = await searchReelsViaSearchEngine(this.profile.key, limit);
+      // Same results serve every channel slot in a batch; don't re-query the engine per channel.
+      const cached = this.seCache;
+      const found =
+        cached && cached.limit >= limit && Date.now() - cached.at < ChannelWatcher.SE_CACHE_TTL_MS
+          ? cached.reels
+          : await searchReelsViaSearchEngine(this.profile.key, limit);
+      if (found !== cached?.reels && found.length > 0) this.seCache = { at: Date.now(), limit, reels: found };
       const fresh = found.filter((r) => !this.history.has(r.shortcode));
       pipelineLogger.info(
         `[${this.profile.brandName}] Search-engine discovery: ${fresh.length} fresh of ${found.length} found`,
@@ -293,6 +336,11 @@ export class ChannelWatcher {
   }
 
   private async listChannelReelsWithFallback(channel: string, allowSessionRefresh = true): Promise<any[]> {
+    if (this.scrapersInCooldown()) {
+      const se = await this.discoverViaSearchEngine(10);
+      if (se.length > 0) return se.map((r) => ({ shortcode: r.shortcode, url: r.url, creatorUsername: r.creatorUsername }));
+      throw new Error(`Instagram session dead (scrapers in cooldown) and search-engine discovery found nothing for @${channel}`);
+    }
     const candidates = this.getScraperEnvCandidates();
     let lastError: Error | null = null;
 
@@ -326,8 +374,11 @@ export class ChannelWatcher {
       }
     }
 
+    this.markScrapersDead(lastError);
+
     // Browser-based fallback via Puppeteer (bypasses datacenter 429 rate limits)
     try {
+      if (this.scrapersInCooldown()) throw new Error("skipped: Instagram session dead");
       pipelineLogger.info(
         `[${this.profile.brandName}] Private API rate-limited / failed — trying Puppeteer browser fallback for @${channel}...`,
         "ChannelWatcher",
@@ -454,7 +505,7 @@ export class ChannelWatcher {
         "ChannelWatcher",
       );
       setTimeout(() => {
-        this.runDailyBatch(batchRanToday).catch((err) => {
+        this.runDailyBatchWithRetry(batchRanToday).catch((err) => {
           pipelineLogger.error(
             `[${this.profile.brandName}] Missed daily batch execution failed`,
             err,
@@ -467,7 +518,7 @@ export class ChannelWatcher {
 
   private scheduleDailyBatch(): void {
     const fire = () => {
-      this.runDailyBatch().catch((err) => {
+      this.runDailyBatchWithRetry().catch((err) => {
         pipelineLogger.error(
           `[${this.profile.brandName}] Daily batch failed`,
           err,
@@ -498,6 +549,23 @@ export class ChannelWatcher {
    *
    * `force` bypasses the once-per-calendar-day guard — used by /runwatchnow.
    */
+  /** A transient failure (e.g. DB connection drop) must not forfeit the whole day's batch. */
+  private async runDailyBatchWithRetry(force = false, attempts = 3, delayMs = 3 * 60 * 1000): Promise<void> {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await this.runDailyBatch(force);
+        return;
+      } catch (err) {
+        if (attempt >= attempts) throw err;
+        pipelineLogger.warn(
+          `[${this.profile.brandName}] Daily batch attempt ${attempt}/${attempts} failed (${err instanceof Error ? err.message : err}) — retrying in ${delayMs / 1000}s`,
+          "ChannelWatcher",
+        );
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
+    }
+  }
+
   public async runDailyBatch(force = false): Promise<QueuedReel[]> {
     const today = new Date().toISOString().slice(0, 10);
     if (!force && this.store.getLastBatchDate() === today) {
