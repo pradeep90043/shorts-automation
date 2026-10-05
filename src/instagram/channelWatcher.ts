@@ -301,7 +301,8 @@ export class ChannelWatcher {
     return {
       shortcode: r.shortcode,
       url: r.url,
-      channel: r.creatorUsername || r.sourceHashtag || this.profile.key,
+      // No creator is known from a search hit; mark the keyword so it is never mistaken for a handle.
+      channel: r.creatorUsername || `search:${r.sourceHashtag || this.profile.key}`,
       creatorUsername: r.creatorUsername,
       playCount: r.playCount,
       likeCount: r.likeCount,
