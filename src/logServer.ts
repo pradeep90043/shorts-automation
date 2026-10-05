@@ -2176,6 +2176,8 @@ export function startLogServer(): void {
           patch.sessionDeadAt = null;
         }
         await patchChannelCredentials(pKey, patch);
+        // Profiles fall back to each other's sessions, so let every watcher retry scrapers.
+        if (body.instagramSessionId) for (const w of activeWatchers.values()) w.resetScraperCooldown();
         pipelineLogger.info(`Credentials saved for profile [${pKey.toUpperCase()}]`, "ControlCenter");
         res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
         res.end(JSON.stringify({ success: true, message: `Credentials saved for [${pKey.toUpperCase()}]` }));
