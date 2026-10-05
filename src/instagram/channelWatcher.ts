@@ -493,7 +493,10 @@ export class ChannelWatcher {
     const sequenceReady = this.store.getChannelSequence().length > 0;
 
     // If batch ran today and a channel sequence is set, processQueue handles the rest.
-    if (batchRanToday && sequenceReady) {
+    // Hashtag mode never sets a sequence, so also treat a non-empty queue as "batch done":
+    // re-running here (force=true) replaced the queue on every restart/deploy, orphaning the
+    // earlier picks as "picked" in history so they were never published.
+    if (batchRanToday && (sequenceReady || this.store.getQueue().length > 0)) {
       return;
     }
 
