@@ -1060,7 +1060,7 @@
         activityDetailCell('Published', item.publishedAt ? fmtClock(item.publishedAt) : '') +
         activityDetailCell('Processing time', fmtDur(item.durationSec)) +
         activityDetailCell('Mood', esc(item.mood || '')) +
-        activityDetailCell('Music', esc(item.music || '')) +
+        activityDetailCell('Music', esc(String(item.music || '').split('/').pop())) +
         activityDetailCell('AI voiceover', yn(item.hasVoiceover)) +
         activityDetailCell('Original audio', yn(item.hasOriginalAudio)) +
         activityDetailCell('Transcript', item.transcriptWords == null ? '' : (item.transcriptWords > 0 ? item.transcriptWords + ' words' : 'none (no speech / transcription unavailable)')) +
