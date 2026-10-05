@@ -1,4 +1,5 @@
 import { spawn } from "child_process";
+import { normalizeCreatorHandle } from "../utils/creatorCredit";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -171,10 +172,9 @@ function extractCaptionFromInfoJson(destDir: string): SourceCaption | undefined 
     // "lazy_dsigner") — the same form ChannelWatcher already uses as its
     // creator key. `uploader`/`uploader_id`/`channel_id` are the display
     // name or a bare numeric ID and are last-resort only.
-    const creatorUsername =
-      [info.channel, info.uploader, info.uploader_id, info.channel_id].find(
-        (v) => typeof v === "string" && v.trim().length > 0,
-      ) || undefined;
+    const creatorUsername = [info.channel, info.uploader, info.uploader_id, info.channel_id]
+      .map((v) => normalizeCreatorHandle(typeof v === "string" ? v : undefined))
+      .find(Boolean);
     if (!title && !description && !creatorUsername) return undefined;
     return {
       title: title || undefined,

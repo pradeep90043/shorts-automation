@@ -1,4 +1,5 @@
 import { Telegraf } from "telegraf";
+import { normalizeCreatorHandle } from "../utils/creatorCredit";
 import fs from "fs";
 import path from "path";
 import { pipeline } from "stream";
@@ -1161,8 +1162,11 @@ export class TelegramService implements ITelegramService {
       videoPath = result.videoPath;
       sourceCaptionText =
         result.sourceCaption?.description || result.sourceCaption?.title;
+      // knownCreatorUsername can be a search keyword (search-engine discovery has no creator);
+      // only a verified handle counts, otherwise fall back to what the downloader found.
       sourceCreatorUsername =
-        knownCreatorUsername || result.sourceCaption?.creatorUsername;
+        normalizeCreatorHandle(knownCreatorUsername) ||
+        normalizeCreatorHandle(result.sourceCaption?.creatorUsername);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       pipelineLogger.error("Instagram download failed", err, "Instagram");
@@ -1207,7 +1211,9 @@ export class TelegramService implements ITelegramService {
       assetKind: AssetKind.Reel,
       captionMetadata: this.parseCaptionMetadata(sourceCaptionText),
       sourceCreatorUsername,
-      channel: sourceCreatorUsername,
+      // "manual_inject" marks a dashboard injection (waits for publish approval); keep it explicit
+      // since sourceCreatorUsername now only ever holds a verified handle.
+      channel: knownCreatorUsername === "manual_inject" ? "manual_inject" : sourceCreatorUsername,
       shortcode,
       channelPinned: true,
       channelProfileKey: this.profile.key,

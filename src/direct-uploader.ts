@@ -1,4 +1,5 @@
 import fs from "fs";
+import { applyCreditLine, normalizeCreatorHandle } from "./utils/creatorCredit";
 import path from "path";
 import sharp from "sharp";
 import { exec, execSync } from "child_process";
@@ -1465,6 +1466,12 @@ ${this.theme.analysisRules}`;
       metadata,
       finalVideoPath,
     } = pending;
+
+    // Source-creator credit: verified handle (or a neutral line), never an AI guess/placeholder.
+    metadata.description = applyCreditLine(
+      metadata.description,
+      normalizeCreatorHandle(pending.context.sourceCreatorUsername),
+    );
 
     // CC-BY tracks (Kevin MacLeod / incompetech) legally require attribution
     const musicFile =
