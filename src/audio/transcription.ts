@@ -1,10 +1,12 @@
-import { exec, execSync } from "child_process";
+import { exec, execFile, execSync } from "child_process";
 import fs from "fs";
 import path from "path";
 import { OpenAI } from "openai";
 import { config } from "../config";
 import { PipelineContext } from "../types";
 import { pipelineLogger } from "../utils/logger";
+
+const WHISPER_SCRIPT = path.resolve(__dirname, "../../scripts/transcribe_whisper.py");
 
 export class TranscriptionService {
   /**
@@ -86,22 +88,26 @@ export class TranscriptionService {
 
     // Local Whisper Fallback
     try {
-      pipelineLogger.info(`Running local Whisper CLI transcription on ${audioWavPath}...`, "TranscriptionService");
+      pipelineLogger.info(`Running local Whisper (faster-whisper) transcription on ${audioWavPath}...`, "TranscriptionService");
       
       const audioDir = path.dirname(audioWavPath);
       const audioStem = path.basename(audioWavPath, path.extname(audioWavPath));
       const outputJsonPath = path.join(audioDir, `${audioStem}.json`);
 
-      // Run local whisper CLI command
-      const whisperCmd = `whisper "${audioWavPath}" --model base --output_format json --output_dir "${audioDir}" --word_timestamps True`;
+      // faster-whisper via scripts/transcribe_whisper.py (CPU, int8); writes the same JSON shape as the whisper CLI.
       await new Promise<void>((resolve, reject) => {
-        exec(whisperCmd, (err, stdout, stderr) => {
-          if (err) {
-            reject(new Error(`Whisper CLI failed: ${err.message}\nStdout: ${stdout}\nStderr: ${stderr}`));
-          } else {
-            resolve();
-          }
-        });
+        execFile(
+          config.binaries.python3 || "python3",
+          [WHISPER_SCRIPT, audioWavPath, outputJsonPath],
+          { timeout: 10 * 60 * 1000, maxBuffer: 5 * 1024 * 1024 },
+          (err, _stdout, stderr) => {
+            if (err) {
+              reject(new Error(`Local Whisper failed: ${stderr.trim().split("\n").slice(-3).join(" | ") || err.message}`));
+            } else {
+              resolve();
+            }
+          },
+        );
       });
 
       if (fs.existsSync(outputJsonPath)) {
@@ -136,7 +142,7 @@ export class TranscriptionService {
 
         return { text, words };
       } else {
-        throw new Error("Whisper CLI did not generate a JSON output file.");
+        throw new Error("Local Whisper did not generate a JSON output file.");
       }
     } catch (localErr) {
       pipelineLogger.warn(
