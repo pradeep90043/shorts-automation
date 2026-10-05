@@ -763,7 +763,9 @@ export class ChannelWatcher {
         const parts = inFlight.jobId!.split("-");
         const firedAt = parts.length > 1 ? parseInt(parts[1], 10) : 0;
         const elapsedMs = now - firedAt;
-        if (firedAt > 0 && elapsedMs > 5 * 60 * 1000) {
+        // Download + OCR can legitimately take 6+ min on the CPU-starved prod VM before the
+        // job record exists; a 5 min cutoff marked healthy jobs failed while they were still running.
+        if (firedAt > 0 && elapsedMs > 15 * 60 * 1000) {
           pipelineLogger.warn(
             `[${this.profile.brandName}] Job ${inFlight.jobId} was never initialized in the database (failed to download/init) and has timed out after ${Math.round(elapsedMs / 1000)}s. Marking as failed.`,
             "ChannelWatcher",
