@@ -19,14 +19,13 @@ export interface ScoredReel {
 // niche key → mood key → hashtag list
 // "default" is used when the requested mood has no specific entry.
 const HASHTAG_MAP: Record<string, Record<string, string[]>> = {
+  // CodeOrCap — tech/AI info + claim verification (fact-check, myth-busting, explainers)
   tech: {
     default: [
-      // Programming
-      "programming", "coding", "developer", "techshorts", "javascript",
-      "python", "learntocode", "devlife", "softwareengineering", "webdevelopment",
-      // AI / ML
-      "artificialintelligence", "ai", "machinelearning", "deeplearning",
-      "chatgpt", "aitools", "aitechnology", "llm", "generativeai", "aishorts",
+      "techfacts", "factcheck", "mythbusted", "didyouknow", "techexplained",
+      "techtips", "aifacts", "artificialintelligence", "aitools", "chatgpt",
+      "machinelearning", "programming", "coding", "softwareengineering", "cybersecurity",
+      "techshorts", "learnai", "developer", "techtrivia", "aiexplained",
     ],
     funny: [
       "programminghumor", "developerhumor", "codingjokes", "techmemes", "techhumor",
@@ -47,7 +46,13 @@ const HASHTAG_MAP: Record<string, Record<string, string[]>> = {
     ],
   },
   stories: {
-    default: ["shortfilm", "viralshorts", "storytelling", "motivational", "inspiration"],
+    // Storiyum — any story: movies, series, cartoons, anime, short films, moral/emotional stories
+    default: [
+      "storytime", "storytelling", "shortfilm", "animatedstory", "animation",
+      "cartoon", "anime", "animereels", "animeedit", "movieclips",
+      "moviescenes", "movierecap", "webseries", "seriesrecap", "tvshows",
+      "netflix", "bingewatch", "moralstories", "cinema", "filmreels",
+    ],
     funny: ["funnyshorts", "comedy", "trending", "funnyvideo", "comedyshorts"],
     emotional: ["emotionalstory", "motivational", "inspiration", "heartfelt", "feelgood"],
     sad: ["emotionalstory", "sadvideo", "heartfelt", "inspiration", "relatable"],
@@ -55,11 +60,22 @@ const HASHTAG_MAP: Record<string, Record<string, string[]>> = {
     horror: ["horrorstories", "scarystories", "horror", "scary", "creepy", "ghoststories", "spooky"],
     romantic: ["romanticstory", "loveletters", "romance", "lovestory", "love", "feelgood", "romantic"],
   },
+  // PromptGag — funny / satire / sarcasm. (This niche key was missing, so "humor" fell back to "tech".)
+  humor: {
+    default: [
+      "sarcasm", "sarcastic", "satire", "sarcasmhumor", "dryhumor",
+      "deadpan", "funnyreels", "comedyreels", "comedyshorts", "funnyvideos",
+      "memes", "viralmemes", "relatablememes", "trendingmemes", "officehumor",
+      "adulting", "savage", "roast", "programmerhumor", "techhumor",
+    ],
+  },
+  // InfoOnSpot — news / what's happening right now / updates
   infoonspot: {
     default: [
-      "tech", "technology", "artificialintelligence", "ai", "aitools",
-      "innovation", "futuretech", "techupdate", "technews", "trendingtech",
-      "explained", "money", "sidehustle", "digitaltools", "lifehack", "infoonspot",
+      "breakingnews", "newsupdate", "latestnews", "dailynews", "newsflash",
+      "trendingnow", "currentaffairs", "worldnews", "indianews", "todaynews",
+      "technews", "techupdate", "ainews", "aiupdate", "businessnews",
+      "viralnews", "newsreels", "headlines", "whatshappening", "newsalert",
     ],
     ai: [
       "artificialintelligence", "ai", "aitools", "aitechnology", "chatgpt",
