@@ -26,6 +26,32 @@ pool.on("error", (err) => {
   pipelineLogger.warn(`Postgres pool client error: ${err.message}`, "Supabase");
 });
 
+// Transient connection failures (CPU-starved VM, pooler dropping idle sockets) are
+// retried a few times instead of surfacing and losing e.g. a whole daily batch.
+const TRANSIENT_PG_ERROR = /Connection terminated|timeout exceeded when trying to connect|ECONNRESET|EPIPE|ETIMEDOUT|EAUTHTIMEOUT/i;
+const PG_RETRY_ATTEMPTS = 4;
+
+/** A plain INSERT could double-apply if the connection dropped after it committed. */
+function isSafeToRetry(sql: string): boolean {
+  return !/\binsert\b/i.test(sql) || /\bon\s+conflict\b/i.test(sql);
+}
+
+const rawQuery = pool.query.bind(pool) as (...args: any[]) => Promise<any>;
+(pool as any).query = async (...args: any[]) => {
+  const first = args[0];
+  const sql = typeof first === "string" ? first : first?.text || "";
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await rawQuery(...args);
+    } catch (err: any) {
+      const msg = String(err?.message || err);
+      if (attempt >= PG_RETRY_ATTEMPTS || !TRANSIENT_PG_ERROR.test(msg) || !isSafeToRetry(sql)) throw err;
+      pipelineLogger.warn(`Postgres query retry ${attempt}/${PG_RETRY_ATTEMPTS - 1} after: ${msg}`, "Supabase");
+      await new Promise((r) => setTimeout(r, 750 * attempt));
+    }
+  }
+};
+
 export async function getPool(): Promise<Pool> {
   return pool;
 }
