@@ -951,7 +951,7 @@
     renderHeaderAudienceCards(globalDashboardData ? globalDashboardData.channels : null);
     if (globalDashboardData) {
       renderQueueTable(globalDashboardData.queue);
-      renderActivityTable(globalDashboardData.recentHistory);
+      renderActivityTable(globalDashboardData.recentActivity || globalDashboardData.recentHistory);
       renderConfigTab(globalDashboardData.channels);
       // Re-render viral analytics filtered to focused channel
       if (globalDashboardData.viralAnalytics) {
@@ -1022,7 +1022,7 @@
       setElText('nav-badge-queued', qPending);
       renderHeaderAudienceCards(data.channels);
       renderChannelsList(data.channels);
-      renderActivityTable(data.recentHistory);
+      renderActivityTable(data.recentActivity || data.recentHistory);
       renderQueueTable(data.queue);
       // Config is a settings screen — only (re)build it while it's on screen, and
       // never on the polling tick (it would wipe half-typed inputs + refire the
@@ -1198,37 +1198,158 @@
   }
  
   /* ─── ACTIVITY TABLE ─── */
+  const activityExpanded = new Set();
+
+  function safeUrl(u) { return /^https?:\/\//i.test(u || '') ? u : ''; }
+
+  function fmtDur(sec) {
+    if (sec == null) return '';
+    if (sec < 60) return sec + 's';
+    const m = Math.floor(sec / 60), s = sec % 60;
+    return m < 60 ? m + 'm ' + s + 's' : Math.floor(m / 60) + 'h ' + (m % 60) + 'm';
+  }
+
+  function fmtClock(dStr) {
+    if (!dStr) return '—';
+    const d = new Date(dStr);
+    return isNaN(d.getTime()) ? '—' : fmtDate(dStr);
+  }
+
+  const ACTIVITY_BADGE = {
+    published: 'status-published', failed: 'status-failed', in_review: 'status-queued',
+    in_progress: 'status-processing', queued: 'status-queued', picked: 'status-queued'
+  };
+
+  function activityLink(url, label, color) {
+    const u = safeUrl(url);
+    return u ? '<a href="' + esc(u) + '" target="_blank" rel="noopener" class="btn-icon" style="padding:2px 6px;font-size:10px;color:' + color + ';">' + label + '</a>' : '';
+  }
+
+  function activityDetailCell(label, value) {
+    if (value === '' || value == null) return '';
+    return '<div style="min-width:0;"><div style="font-size:9px;font-weight:800;letter-spacing:.5px;color:var(--text-muted);text-transform:uppercase;">' + label + '</div>' +
+           '<div style="font-size:12px;color:#fff;word-break:break-word;">' + value + '</div></div>';
+  }
+
+  // Server-built rows (recentActivity). Falls back to raw reel_history rows from an older server.
+  function normalizeActivity(history) {
+    if (history && history.length && history[0].statusLabel) return history;
+    return (history || []).map(i => ({
+      shortcode: i.shortcode, profileKey: i.profile_key || '', channelKey: i.profile_key || i.channel || '', brandName: i.profile_key || i.channel || '',
+      sourceUrl: i.originalUrl || ('https://www.instagram.com/reel/' + i.shortcode + '/'), creator: i.channel || '',
+      status: i.failed ? 'failed' : (i.published_at ? 'published' : 'picked'), statusLabel: i.failed ? 'FAILED' : (i.published_at ? 'PUBLISHED' : 'PICKED'),
+      step: '', jobId: '', pickedAt: i.picked_at, scheduledAt: null, startedAt: null, updatedAt: null, publishedAt: i.published_at, durationSec: null,
+      activityAt: i.published_at || i.picked_at, youtubeUrl: i.youtube_url || '', instagramUrl: i.instagram_url || '', facebookUrl: i.facebook_url || '',
+      title: '', description: '', hashtags: [], mood: '', music: '', hasVoiceover: null, hasOriginalAudio: null, transcriptWords: null, audioCopyright: '',
+      failedReason: i.failed ? (i.failed_reason || 'No reason recorded') : ''
+    }));
+  }
+
   function renderActivityTable(history) {
     const body = document.getElementById('activity-table-body');
     if (!body) return;
-    if (!history || history.length === 0) {
+    const items = normalizeActivity(history);
+    if (items.length === 0) {
       body.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--text-muted);padding:20px;">No activity records yet.</td></tr>';
       return;
     }
-    const filtered = history.filter(i => focusedChannel === 'all' || (i.profile_key || i.channel || '') === focusedChannel);
+    const filtered = items.filter(i => focusedChannel === 'all' || i.channelKey === focusedChannel || i.profileKey === focusedChannel);
     if (!filtered.length) {
       body.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--text-muted);padding:20px;">No activity for this channel yet.</td></tr>';
       return;
     }
     body.innerHTML = '';
     filtered.forEach(item => {
-      const origUrl = item.originalUrl || ('https://www.instagram.com/reel/' + item.shortcode + '/');
+      const key = item.profileKey + '/' + item.shortcode;
+      const open = activityExpanded.has(key);
+      const when = item.publishedAt ? 'Published ' + fmtClock(item.publishedAt)
+        : item.status === 'queued' ? 'Scheduled ' + fmtClock(item.scheduledAt)
+        : item.updatedAt ? 'Updated ' + fmtClock(item.updatedAt)
+        : 'Picked ' + fmtClock(item.pickedAt);
+      const dur = item.durationSec != null ? ' · took ' + fmtDur(item.durationSec) : '';
+      const creator = item.creator && item.creator !== 'manual_inject' ? '@' + esc(item.creator) : (item.creator === 'manual_inject' ? 'manual inject' : '');
+
+      const links = activityLink(item.youtubeUrl, '▶ YouTube', '#ff4e4e') +
+                    activityLink(item.instagramUrl, '📷 Instagram', '#e1306c') +
+                    activityLink(item.facebookUrl, '📘 Facebook', '#1877f2');
+
       const tr = document.createElement('tr');
-      let links = '';
-      if (item.instagramUrl || origUrl) links += '<a href="' + (item.instagramUrl || origUrl) + '" target="_blank" class="btn-icon" style="padding:2px 6px;font-size:10px;color:#e1306c;">📷 Insta</a>';
-      if (item.youtubeUrl) links += '<a href="' + item.youtubeUrl + '" target="_blank" class="btn-icon" style="padding:2px 6px;font-size:10px;color:#ff4e4e;">▶ YouTube</a>';
-      if (item.facebookUrl) links += '<a href="' + item.facebookUrl + '" target="_blank" class="btn-icon" style="padding:2px 6px;font-size:10px;color:#1877f2;">📘 FB</a>';
-      tr.innerHTML = '<td><a href="' + origUrl + '" target="_blank" style="color:var(--primary);font-weight:600;text-decoration:none;">📷 Source Reel</a><div style="color:var(--text-muted);font-size:11px;margin-top:2px;">' + fmtDate(item.published_at || item.picked_at) + '</div></td>' +
-        '<td style="font-weight:600;color:#fff;">' + esc(item.profile_key || item.channel || '—') + '</td>' +
-        '<td><span class="status-badge ' + (item.failed ? 'status-failed' : 'status-published') + '">' + (item.failed ? 'FAILED' : 'PUBLISHED') + '</span><div style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap;">' + links + '</div></td>';
+      tr.className = 'activity-row';
+      tr.dataset.key = key;
+      tr.style.cursor = 'pointer';
+      tr.innerHTML =
+        '<td><div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">' +
+          '<a href="' + esc(safeUrl(item.sourceUrl)) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="color:var(--primary);font-weight:600;text-decoration:none;">📷 Source Reel</a>' +
+          '<span class="code-badge" title="Instagram shortcode">' + esc(item.shortcode) + '</span>' +
+          (creator ? '<span style="color:var(--text-muted);font-size:11px;">' + creator + '</span>' : '') +
+        '</div>' +
+        (item.title ? '<div style="color:#fff;font-size:12px;font-weight:600;margin-top:3px;">' + esc(item.title) + '</div>' : '') +
+        '<div style="color:var(--text-muted);font-size:11px;margin-top:2px;">' + when + dur + '</div></td>' +
+        '<td style="font-weight:600;color:#fff;">' + esc(item.brandName || item.profileKey || '—') + '</td>' +
+        '<td><span class="status-badge ' + (ACTIVITY_BADGE[item.status] || 'status-queued') + '" style="text-transform:none;">' + esc(item.statusLabel) + '</span>' +
+          (item.step && item.status !== 'published' ? '<div style="color:var(--text-muted);font-size:11px;margin-top:3px;">' + esc(item.step) + '</div>' : '') +
+          (item.status === 'failed' && item.failedReason ? '<div style="color:var(--danger);font-size:11px;margin-top:3px;">' + esc(item.failedReason) + '</div>' : '') +
+          '<div style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap;align-items:center;">' + links +
+            '<span style="font-size:10px;color:var(--text-muted);margin-left:2px;">' + (open ? '▾ Hide details' : '▸ Details') + '</span></div></td>';
+      tr.onclick = () => toggleActivityDetail(key);
+
+      const det = document.createElement('tr');
+      det.className = 'activity-detail';
+      det.dataset.key = key;
+      det.style.display = open ? 'table-row' : 'none';
+      const yn = v => v === true ? 'Yes' : v === false ? 'No' : '';
+      const tagHtml = (item.hashtags || []).map(t => '<span class="code-badge" style="margin:1px;display:inline-block;">' + esc(String(t).startsWith('#') ? t : '#' + t) + '</span>').join(' ');
+      det.innerHTML = '<td colspan="3" style="background:var(--bg);"><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px 16px;padding:6px 4px;">' +
+        activityDetailCell('Status', esc(item.statusLabel) + (item.step ? ' — ' + esc(item.step) : '')) +
+        activityDetailCell('Channel', esc(item.brandName || '')) +
+        activityDetailCell('Source creator', creator) +
+        activityDetailCell('Picked', item.pickedAt ? fmtClock(item.pickedAt) : '') +
+        activityDetailCell('Scheduled slot', item.scheduledAt ? fmtClock(item.scheduledAt) : '') +
+        activityDetailCell('Processing started', item.startedAt ? fmtClock(item.startedAt) : '') +
+        activityDetailCell('Last update', item.updatedAt ? fmtClock(item.updatedAt) : '') +
+        activityDetailCell('Published', item.publishedAt ? fmtClock(item.publishedAt) : '') +
+        activityDetailCell('Processing time', fmtDur(item.durationSec)) +
+        activityDetailCell('Mood', esc(item.mood || '')) +
+        activityDetailCell('Music', esc(String(item.music || '').split('/').pop())) +
+        activityDetailCell('AI voiceover', yn(item.hasVoiceover)) +
+        activityDetailCell('Original audio', yn(item.hasOriginalAudio)) +
+        activityDetailCell('Transcript', item.transcriptWords == null ? '' : (item.transcriptWords > 0 ? item.transcriptWords + ' words' : 'none (no speech / transcription unavailable)')) +
+        activityDetailCell('Copyrighted audio', esc(item.audioCopyright || '')) +
+        activityDetailCell('Job ID', item.jobId ? '<span style="font-family:var(--font-mono);font-size:11px;">' + esc(item.jobId) + '</span>' : '') +
+        (item.failedReason ? activityDetailCell('Failure reason', '<span style="color:var(--danger);">' + esc(item.failedReason) + '</span>') : '') +
+        '</div>' +
+        (item.description ? '<div style="margin:6px 4px 2px;"><div style="font-size:9px;font-weight:800;letter-spacing:.5px;color:var(--text-muted);">DESCRIPTION</div><div style="font-size:12px;color:#c9d1d9;white-space:pre-wrap;">' + esc(item.description) + '</div></div>' : '') +
+        (tagHtml ? '<div style="margin:6px 4px 2px;"><div style="font-size:9px;font-weight:800;letter-spacing:.5px;color:var(--text-muted);">HASHTAGS</div>' + tagHtml + '</div>' : '') +
+        '</td>';
       body.appendChild(tr);
+      body.appendChild(det);
+    });
+    filterActivityTable();
+  }
+
+  function toggleActivityDetail(key) {
+    if (activityExpanded.has(key)) activityExpanded.delete(key); else activityExpanded.add(key);
+    document.querySelectorAll('#activity-table-body tr.activity-detail').forEach(r => {
+      if (r.dataset.key === key) r.style.display = activityExpanded.has(key) ? 'table-row' : 'none';
+    });
+    document.querySelectorAll('#activity-table-body tr.activity-row').forEach(r => {
+      if (r.dataset.key === key) {
+        const hint = r.querySelector('td:last-child span:last-child');
+        if (hint) hint.textContent = activityExpanded.has(key) ? '▾ Hide details' : '▸ Details';
+      }
     });
   }
 
   function filterActivityTable() {
-    const q = (document.getElementById('activity-search').value || '').toLowerCase();
-    document.querySelectorAll('#activity-table-body tr').forEach(r => {
-      r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
+    const q = ((document.getElementById('activity-search') || {}).value || '').toLowerCase();
+    const details = {};
+    document.querySelectorAll('#activity-table-body tr.activity-detail').forEach(r => { details[r.dataset.key] = r; });
+    document.querySelectorAll('#activity-table-body tr.activity-row').forEach(r => {
+      const d = details[r.dataset.key];
+      // search covers the collapsed detail text too (title, hashtags, music, job id, ...)
+      const match = !q || (r.textContent + ' ' + (d ? d.textContent : '')).toLowerCase().includes(q);
+      r.style.display = match ? '' : 'none';
+      if (d) d.style.display = match && activityExpanded.has(r.dataset.key) ? 'table-row' : 'none';
     });
   }
 
