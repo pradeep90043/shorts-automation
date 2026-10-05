@@ -17,6 +17,7 @@ import { computeViralScore } from "./utils/viralScore";
 import { MultiSceneGenerator } from "./video/multiSceneGenerator";
 import { YouTubeService } from "./youtube";
 import { pipelineLogger } from "./utils/logger";
+import { buildActivityFeed, loadJobSummaries, jobsFileFor } from "./utils/activityFeed";
 import { dmStore, dmKnowledgeBase, inboundDmManager, outboundDmManager, aiDmBrain, getPersona } from "./instagram/dm";
 
 function escapeHtml(s: string): string {
@@ -393,6 +394,23 @@ function generateTimeSeriesData(
   });
 
   return { labels, series };
+}
+
+function buildRecentActivity(reelHistory: any[], watchStates: any[]) {
+  try {
+    const logDir = config.paths.logDir || path.resolve(__dirname, "../logs");
+    const queues: Record<string, any[]> = {};
+    for (const w of watchStates) queues[String(w.profile_key).toLowerCase()] = Array.isArray(w.queue) ? w.queue : [];
+    return buildActivityFeed({
+      history: reelHistory,
+      queues,
+      profiles: config.profiles.map((p) => ({ key: p.key || p.brandName, brandName: p.brandName, isDefault: p.isDefault })),
+      jobsFor: (p) => loadJobSummaries(jobsFileFor(logDir, p)),
+    });
+  } catch (err) {
+    pipelineLogger.warn(`Activity feed build failed: ${err instanceof Error ? err.message : err}`, "LogServer");
+    return [];
+  }
 }
 
 async function getDashboardData() {
@@ -924,6 +942,7 @@ async function getDashboardData() {
     channels,
     queue: compiledQueue,
     recentHistory: reelHistory.slice(0, 15),
+    recentActivity: buildRecentActivity(reelHistory, watchStates),
     topInsights: reelInsights.slice(0, 15),
     viralAnalytics,
   };
