@@ -1472,6 +1472,9 @@ ${this.theme.analysisRules}`;
       metadata.description,
       normalizeCreatorHandle(pending.context.sourceCreatorUsername),
     );
+    // Persist what is actually published so the dashboard doesn't keep showing the AI draft.
+    pending.context.metadata = metadata;
+    this.db.updateJob(id, { metadata });
 
     // CC-BY tracks (Kevin MacLeod / incompetech) legally require attribution
     const musicFile =
