@@ -117,6 +117,16 @@ interface PendingUpload {
   musicCaptionLine?: string;
 }
 
+/**
+ * True only for reels a person injected from the dashboard, which wait for explicit
+ * publish approval. Must NOT key off channelPinned: the Telegram ingestion path sets
+ * that on every Instagram reel, including the channel watcher's auto-publish ones,
+ * which silently disabled their auto-publish timer.
+ */
+export function isManualInjectContext(context: { channel?: string; id?: string }): boolean {
+  return context.channel === "manual_inject" || !!context.id?.includes("inject");
+}
+
 export class DirectUploader {
   public static instances: DirectUploader[] = [];
   private freellmapi: FreeLlmApiClient | null = null;
@@ -4305,10 +4315,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       musicCaptionLine,
     };
 
-    const isManualInject =
-      context.channel === "manual_inject" ||
-      context.channelPinned ||
-      context.id?.includes("inject");
+    const isManualInject = isManualInjectContext(context);
 
     if (!isCompileFailure) {
       if (isManualInject) {
