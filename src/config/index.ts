@@ -129,6 +129,12 @@ export interface AppConfig {
      * admin instead of thrashing. Set INSTAGRAM_LOGIN_MODE=full to re-enable
      * password fallback (only safe behind a residential IP / proxy).
      */
+    /**
+     * When true (or LOGIN_FREE_MODE=true / INSTAGRAM_LOGIN_MODE=login_free),
+     * bypasses Instagram login/sessions entirely and uses public search-engine
+     * discovery to find viral reels. Zero cookies/credentials required.
+     */
+    loginFreeMode: boolean;
     sessionOnly: boolean;
     /** Delay between polling consecutive channels during batch selection (ms). */
     interChannelDelayMs: number;
@@ -520,6 +526,10 @@ export const config: AppConfig = {
     acoustidApiKey: process.env.ACOUSTID_API_KEY || "",
   },
   instagramScraper: {
+    loginFreeMode:
+      process.env.LOGIN_FREE_MODE === "true" ||
+      (process.env.INSTAGRAM_LOGIN_MODE || "").trim().toLowerCase() === "none" ||
+      (process.env.INSTAGRAM_LOGIN_MODE || "").trim().toLowerCase() === "login_free",
     sessionOnly:
       (process.env.INSTAGRAM_LOGIN_MODE || "session_only").trim().toLowerCase() !==
       "full",
