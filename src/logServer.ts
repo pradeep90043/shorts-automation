@@ -1,7 +1,7 @@
 import http from "http";
 import fs from "fs";
 import path from "path";
-import { execFile } from "child_process";
+import { execFile, spawn } from "child_process";
 import { google } from "googleapis";
 import { addLogClient, removeLogClient } from "./utils/logBroadcast";
 import { config, ChannelProfile, resolveTheme } from "./config";
@@ -1675,6 +1675,26 @@ export function startLogServer(): void {
             channelKey: body.channelKey ? String(body.channelKey) : undefined,
           });
           return json(200, { success: true, job: getStickmanJob(job.id) });
+        }
+        if (req.method === "GET" && route.startsWith("/api/longvideo/bundle/")) {
+          const slug = route.replace("/api/longvideo/bundle/", "").trim();
+          let myDir = "";
+          try {
+            myDir = resolveMyVideoDir();
+          } catch (e) {
+            return json(503, { success: false, message: "my-video not installed" });
+          }
+          const contentDir = path.join(myDir, "public", "content", slug);
+          if (!fs.existsSync(contentDir) || !fs.existsSync(path.join(contentDir, "video.json"))) {
+            return json(404, { success: false, message: `Project bundle not found for slug: ${slug}` });
+          }
+          res.writeHead(200, {
+            "Content-Type": "application/gzip",
+            "Content-Disposition": `attachment; filename="${slug}.tar.gz"`,
+          });
+          const tarProc = spawn("tar", ["-czf", "-", "-C", contentDir, "."]);
+          tarProc.stdout.pipe(res);
+          return;
         }
         if (req.method === "GET" && route === "/api/longvideo/job") {
           const id = new URL(url, "http://localhost").searchParams.get("id") || "";
