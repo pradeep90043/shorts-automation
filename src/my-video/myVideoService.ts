@@ -312,23 +312,28 @@ const doRender = async (spec: StickmanVideoSpec, onProgress?: ProgressCallback):
     const sceneCount = spec.scenes.length;
     const emit = (p: RenderProgress) => onProgress?.(p);
 
-    emit({ stage: "audio", fraction: 0 });
-    await run(dir, ["run", "longform:audio", "--", ...project], (t) => {
-      // "  -> Scene 3: id (...)" is logged as each scene starts
-      const m = [...t.matchAll(/-> Scene (\d+):/g)].pop();
-      if (m) emit({ stage: "audio", fraction: Number(m[1]) / sceneCount, detail: `Scene ${Number(m[1]) + 1}/${sceneCount}` });
-    });
-    emit({ stage: "audio", fraction: 1 });
-
-    emit({ stage: "merge", fraction: 0 });
-    await run(dir, ["run", "longform:merge", "--", ...project]);
-    emit({ stage: "merge", fraction: 1 });
-
     const ghToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
     const forceLocal = process.env.RENDER_LOCAL === "true";
     let totalFrames: number | undefined;
+    const useCloud = Boolean(ghToken) && !forceLocal;
 
-    if (ghToken && !forceLocal) {
+    // Cloud runner generates TTS + merge itself (free edge-tts, no secrets), so the VM skips them.
+    if (!useCloud) {
+      emit({ stage: "audio", fraction: 0 });
+      await run(dir, ["run", "longform:audio", "--", ...project], (t) => {
+        // "  -> Scene 3: id (...)" is logged as each scene starts
+        const m = [...t.matchAll(/-> Scene (\d+):/g)].pop();
+        if (m) emit({ stage: "audio", fraction: Number(m[1]) / sceneCount, detail: `Scene ${Number(m[1]) + 1}/${sceneCount}` });
+      });
+      emit({ stage: "audio", fraction: 1 });
+
+      emit({ stage: "merge", fraction: 0 });
+      await run(dir, ["run", "longform:merge", "--", ...project]);
+      emit({ stage: "merge", fraction: 1 });
+
+    }
+
+    if (useCloud) {
       logger.info(`[my-video] Dispatching Remotion render to GitHub Cloud Runner (7GB RAM)...`);
       await renderViaGithubActions(dir, spec, renderedPath, emit);
     } else {
