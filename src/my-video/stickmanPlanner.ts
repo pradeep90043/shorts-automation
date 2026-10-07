@@ -89,6 +89,117 @@ const str = (x: unknown, max: number): string => (typeof x === "string" ? x.trim
 const strList = (x: unknown, max: number, itemMax: number): string[] =>
   Array.isArray(x) ? x.map((i) => str(i, itemMax)).filter(Boolean).slice(0, max) : [];
 
+
+// ── Free-form diagram ("svg" panel): a validated shape language, never raw SVG ──
+const SHAPE_COLOR = /^(ink|accent|red|green|blue|gold|faint|bg|white|#[0-9a-fA-F]{6})$/;
+const SVG_W = 1300, SVG_H = 700;
+
+const clampNum = (x: unknown, min: number, max: number): number | null =>
+  typeof x === "number" && Number.isFinite(x) ? Math.min(max, Math.max(min, x)) : null;
+
+function sanitizeShape(raw: any): Record<string, unknown> | null {
+  if (!raw || typeof raw !== "object") return null;
+  const base: Record<string, unknown> = {};
+  if (Number.isInteger(raw.step)) base.step = Math.min(40, Math.max(0, raw.step));
+  for (const k of ["fill", "stroke"] as const) if (typeof raw[k] === "string" && SHAPE_COLOR.test(raw[k])) base[k] = raw[k];
+  const sw = clampNum(raw.sw, 1, 16);
+  if (sw !== null) base.sw = sw;
+  const X = (v: unknown) => clampNum(v, -100, 1400), Y = (v: unknown) => clampNum(v, -100, 800);
+  switch (raw.t) {
+    case "rect": {
+      const x = X(raw.x), y = Y(raw.y), w = clampNum(raw.w, 1, 1400), h = clampNum(raw.h, 1, 800);
+      if (x === null || y === null || w === null || h === null) return null;
+      const rx = clampNum(raw.rx, 0, 200);
+      return { t: "rect", x, y, w, h, ...(rx !== null ? { rx } : {}), ...base };
+    }
+    case "circle": {
+      const cx = X(raw.cx), cy = Y(raw.cy), r = clampNum(raw.r, 1, 500);
+      return cx === null || cy === null || r === null ? null : { t: "circle", cx, cy, r, ...base };
+    }
+    case "line": {
+      const x1 = X(raw.x1), y1 = Y(raw.y1), x2 = X(raw.x2), y2 = Y(raw.y2);
+      if (x1 === null || y1 === null || x2 === null || y2 === null) return null;
+      return { t: "line", x1, y1, x2, y2, ...(raw.arrow === true ? { arrow: true } : {}), ...(raw.dash === true ? { dash: true } : {}), ...base };
+    }
+    case "path":
+      return typeof raw.d === "string" && raw.d.length <= 400 && /^[MLHVCSQTAZmlhvcsqtaz0-9 ,.\-]+$/.test(raw.d) ? { t: "path", d: raw.d, ...base } : null;
+    case "text": {
+      const x = X(raw.x), y = Y(raw.y), text = str(raw.text, 40);
+      if (x === null || y === null || !text) return null;
+      return { t: "text", x, y, text, size: clampNum(raw.size, 24, 96) ?? 40, anchor: ["start", "middle", "end"].includes(raw.anchor) ? raw.anchor : "middle", ...base };
+    }
+    default:
+      return null;
+  }
+}
+
+/** Text boxes (approximate) of an svg panel, used to reject unreadable layouts. */
+function textBoxes(shapes: any[]): { x0: number; x1: number; y0: number; y1: number }[] {
+  return shapes.filter((s) => s.t === "text").map((s) => {
+    const w = s.text.length * s.size * 0.6;
+    const x0 = s.anchor === "start" ? s.x : s.anchor === "end" ? s.x - w : s.x - w / 2;
+    return { x0, x1: x0 + w, y0: s.y - s.size * 0.85, y1: s.y + s.size * 0.25 };
+  });
+}
+
+const rectArea = (r: any) => r.w * r.h;
+const insideRect = (px: number, py: number, r: any, inset: number) =>
+  px > r.x + inset && px < r.x + r.w - inset && py > r.y + inset && py < r.y + r.h - inset;
+
+/** Why a drawing is unreadable, or null when it is fine. */
+function svgLayoutProblem(shapes: any[]): string | null {
+  const boxes = textBoxes(shapes);
+  if (boxes.some((b) => b.x0 < -10 || b.x1 > SVG_W + 10 || b.y0 < -10 || b.y1 > SVG_H + 10)) return "text off the panel";
+  for (let i = 0; i < boxes.length; i++) {
+    for (let j = i + 1; j < boxes.length; j++) {
+      const a = boxes[i], b = boxes[j];
+      const ox = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0), oy = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0);
+      if (ox > 0 && oy > 0 && (ox * oy) / Math.min((a.x1 - a.x0) * (a.y1 - a.y0), (b.x1 - b.x0) * (b.y1 - b.y0)) > 0.25) return "overlapping text";
+    }
+  }
+  // "node" rects: not a background / container (those legitimately hold other shapes)
+  const nodes = shapes.filter((s) => s.t === "rect" && rectArea(s) < SVG_W * SVG_H * 0.3);
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i + 1; j < nodes.length; j++) {
+      const a = nodes[i], b = nodes[j];
+      const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x), oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+      if (ox > 4 && oy > 4 && (ox * oy) / Math.min(rectArea(a), rectArea(b)) > 0.1) return "overlapping boxes";
+    }
+  }
+  // a line must not run through a box or a label (it may start / end on one)
+  for (const l of shapes.filter((s) => s.t === "line")) {
+    const len = Math.hypot(l.x2 - l.x1, l.y2 - l.y1);
+    for (let d = 14; d < len - 14; d += 8) {
+      const px = l.x1 + ((l.x2 - l.x1) * d) / len, py = l.y1 + ((l.y2 - l.y1) * d) / len;
+      if (nodes.some((r) => insideRect(px, py, r, 6))) return "line crosses a box";
+      if (boxes.some((b) => px > b.x0 && px < b.x1 && py > b.y0 && py < b.y1)) return "line crosses text";
+    }
+  }
+  return null;
+}
+
+/**
+ * Returns the panel, or null when the AI's drawing would be unreadable. Unreadable drawings are
+ * not thrown away: their labels become a step list (see svgFallback), so the scene keeps a visual.
+ */
+export function sanitizeSvg(raw: any): Record<string, unknown> | null {
+  if (!raw || !Array.isArray(raw.shapes)) return null;
+  const shapes = raw.shapes.slice(0, 40).map(sanitizeShape).filter((s: unknown): s is Record<string, unknown> => s !== null);
+  if (shapes.length < 2) return null;
+  if (svgLayoutProblem(shapes)) return null;
+  // the scene's own headline already names the diagram, so the panel carries no title
+  return { shapes };
+}
+
+/** Labels of a rejected drawing, top to bottom, as an ordered step list. */
+export function svgFallback(raw: any): Record<string, unknown> | null {
+  if (!raw || !Array.isArray(raw.shapes)) return null;
+  const texts = raw.shapes.map(sanitizeShape).filter((s: any) => s?.t === "text") as any[];
+  const labels: string[] = [];
+  for (const t of [...texts].sort((a, b) => a.y - b.y || a.x - b.x)) if (!labels.includes(t.text)) labels.push(t.text.slice(0, 48));
+  return labels.length >= 2 ? { steps: { items: labels.slice(0, 8), current: 0 } } : null;
+}
+
 // Panels (right side of the frame). Limits mirror my-video/src/stickman/schema.ts.
 function sanitizePanel(v: any): Record<string, unknown> {
   const code = v?.code;
@@ -112,6 +223,63 @@ function sanitizePanel(v: any): Record<string, unknown> {
   const options = strList(q?.options, 4, 60);
   if (str(q?.question, 90) && options.length >= 2 && Number.isInteger(q.answer) && q.answer >= 0 && q.answer < options.length) {
     return { quiz: { question: str(q.question, 90), options, answer: q.answer } };
+  }
+  const num = (x: unknown): number | null => (typeof x === "number" && Number.isFinite(x) ? x : null);
+  const compare = v?.compare;
+  if (Array.isArray(compare?.cards) && compare.cards.length >= 2) {
+    const cards = compare.cards.slice(0, 3).filter((c: any) => str(c?.title, 28)).map((c: any) => ({
+      title: str(c.title, 28), points: strList(c.points, 4, 40), winner: c.winner === true,
+    }));
+    if (cards.length >= 2) return { compare: { mode: compare.mode === "beforeAfter" ? "beforeAfter" : "versus", cards } };
+  }
+  const nodes = strList(v?.flow?.nodes, 5, 24);
+  if (nodes.length >= 2) {
+    const active = Number.isInteger(v.flow.active) && v.flow.active >= 0 && v.flow.active < nodes.length ? v.flow.active : undefined;
+    return { flow: { nodes, active, packet: str(v.flow.packet, 20) || undefined } };
+  }
+  const tLines = (Array.isArray(v?.terminal?.lines) ? v.terminal.lines : []).map((l: unknown) => String(l ?? "").slice(0, 64)).filter((l: string) => l.trim()).slice(0, 10);
+  if (tLines.length) return { terminal: { title: str(v.terminal.title, 30) || undefined, lines: tLines } };
+  const b = v?.browser;
+  const bLines = (Array.isArray(b?.lines) ? b.lines : []).map((l: unknown) => String(l ?? "").replace(/\s+$/, "").slice(0, 44)).filter((l: string) => l.trim()).slice(0, 8);
+  if (str(b?.url, 48) && bLines.length) {
+    return { browser: { url: str(b.url, 48), kind: b.kind === "json" ? "json" : "page", heading: str(b.heading, 40) || undefined, lines: bLines } };
+  }
+  const cItems = (Array.isArray(v?.counter?.items) ? v.counter.items : []).slice(0, 3)
+    .filter((i: any) => num(i?.value) !== null && str(i?.label, 26))
+    .map((i: any) => ({ value: i.value, from: num(i.from) ?? 0, prefix: str(i.prefix, 4), suffix: str(i.suffix, 10), label: str(i.label, 26) }));
+  if (cItems.length) {
+    const d = Number(v.counter.decimals);
+    return { counter: { items: cItems, decimals: Number.isInteger(d) ? Math.min(Math.max(d, 0), 2) : 0 } };
+  }
+  const ch = v?.chart;
+  const labels = strList(ch?.labels, 6, 14);
+  const values = (Array.isArray(ch?.values) ? ch.values : []).map(num).filter((n: number | null): n is number => n !== null).slice(0, 6);
+  if (labels.length >= 2 && labels.length === values.length) {
+    const hl = Number.isInteger(ch.highlight) && ch.highlight >= 0 && ch.highlight < values.length ? ch.highlight : undefined;
+    return { chart: { kind: ch.kind === "line" ? "line" : "bar", title: str(ch.title, 40) || undefined, labels, values, unit: str(ch.unit, 8), highlight: hl } };
+  }
+  const pItems = (Array.isArray(v?.progress?.items) ? v.progress.items : []).slice(0, 5)
+    .filter((i: any) => str(i?.label, 28) && num(i?.value) !== null)
+    .map((i: any) => ({ label: str(i.label, 28), value: Math.min(100, Math.max(0, i.value)) }));
+  if (pItems.length) return { progress: { items: pItems } };
+  const tb = v?.table;
+  const cols = strList(tb?.columns, 5, 14);
+  const rows = (Array.isArray(tb?.rows) ? tb.rows : []).slice(0, 5)
+    .map((r: unknown) => (Array.isArray(r) ? r.map((c) => String(c ?? "").slice(0, 18)) : []))
+    .filter((r: string[]) => r.length === cols.length);
+  if (cols.length >= 2 && rows.length) {
+    const hr = Number.isInteger(tb.highlightRow) && tb.highlightRow >= 0 && tb.highlightRow < rows.length ? tb.highlightRow : undefined;
+    return { table: { name: str(tb.name, 30) || undefined, columns: cols, rows, highlightRow: hr } };
+  }
+  if (v?.svg) {
+    const svg = sanitizeSvg(v.svg);
+    if (svg) return { svg };
+    const fallback = svgFallback(v.svg);
+    if (fallback) return fallback;
+  }
+  const al = v?.alert;
+  if (["error", "success", "warning"].includes(al?.kind) && str(al?.title, 40)) {
+    return { alert: { kind: al.kind, title: str(al.title, 40), detail: str(al.detail, 90) || undefined } };
   }
   return {};
 }
@@ -142,8 +310,11 @@ export function sanitizeVisual(raw: any, index: number): Record<string, unknown>
   if (look !== "auto") visual.look = look;
   const panel = sanitizePanel(v);
   Object.assign(visual, panel);
-  // a panel owns the right side of the frame: props would sit on top of it
-  if (Object.keys(panel).length) delete visual.props;
+  // a panel owns the right side of the frame: props and callouts would sit on top of it
+  if (Object.keys(panel).length) {
+    delete visual.props;
+    delete visual.callouts;
+  }
   if (v.hideFigure === true && Object.keys(panel).length === 0) visual.hideFigure = true;
   return visual;
 }
@@ -163,6 +334,8 @@ export function diversifyVisuals(scenes: StickmanScene[]): void {
   for (let i = 1; i < scenes.length; i++) {
     const prev = scenes[i - 1].visual as any, cur = scenes[i].visual as any;
     if (cur.camera !== "none" && cur.camera === prev.camera) cur.camera = "none";
+    // hand-drawn diagrams are the riskiest visual: never two beats in a row
+    if (cur.svg && prev.svg) delete cur.svg;
   }
 }
 
@@ -265,6 +438,42 @@ async function askLlm(prompt: string): Promise<string> {
   return "";
 }
 
+
+const NUMBER_WORDS: Record<string, number> = {
+  zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
+  fifteen: 15, twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90, hundred: 100, thousand: 1000,
+};
+
+/** Every number the script itself states, as digits ("10", "3.5") or words ("three"). */
+export function scriptNumbers(script: string): Set<number> {
+  const found = new Set<number>();
+  for (const m of script.matchAll(/\d[\d,]*(?:\.\d+)?/g)) found.add(Number(m[0].replace(/,/g, "")));
+  for (const m of script.toLowerCase().matchAll(/[a-z]+/g)) if (m[0] in NUMBER_WORDS) found.add(NUMBER_WORDS[m[0]]);
+  return found;
+}
+
+/**
+ * Charts, counters and progress bars show numbers as facts. Drop the panel when it shows a figure
+ * the script never states (the model must not invent statistics).
+ */
+export function dropInventedNumbers(scenes: StickmanScene[], script: string): number {
+  const allowed = scriptNumbers(script);
+  let dropped = 0;
+  for (const sc of scenes) {
+    const v = sc.visual as any;
+    const shown: number[] = [
+      ...(v.chart?.values ?? []),
+      ...(v.counter?.items?.map((i: any) => i.value) ?? []),
+      ...(v.progress?.items?.map((i: any) => i.value) ?? []),
+    ];
+    if (shown.length && shown.some((n) => !allowed.has(n))) {
+      delete v.chart; delete v.counter; delete v.progress;
+      dropped++;
+    }
+  }
+  return dropped;
+}
+
 const BATCH = 28;
 
 const DIRECTOR_RULES = `You direct a professional tech-education explainer (CodeOrCap): modern, technical, educational, never a children's cartoon. The stickman is an ACTOR that reacts to the story; the screen panels do the real explaining. Be visual-first: every beat needs a purposeful visual, not a stickman standing and talking.
@@ -273,14 +482,26 @@ STORY: the video follows HOOK -> PROBLEM -> CONTEXT -> EXPLANATION -> EXAMPLE ->
 
 POSES (map the intent): pointing at something -> point; explaining -> present; thinking/reading/planning -> think; confused or "I don't know" -> shrug; surprised -> shocked; mistake -> facepalm; worry/risk -> worried; success -> celebrate; moving/progress -> walk; sure of himself -> smug. Pair the pose with a fitting mood. Do not use the same pose three beats in a row. Use "flip": true now and then so he points toward the other side. "look": left/right/up/down/camera only when it supports the line.
 
-PANELS (right side of the frame, at most ONE per beat, and never the same panel type twice in a row):
-- "steps": roadmaps, timelines, checklists, request flows, stages. {"items":["Core Java","Spring Boot","Database","Production"],"current":1}. items are 2-8 short labels (max 48 chars); "current" is the step being discussed now, earlier ones show as done. Reuse the SAME items list for consecutive beats of one topic and move "current" forward as the narration moves.
-- "code": only when the narration talks about code. Realistic simplified, technically correct code, 3-8 lines, each line max 50 chars, e.g. {"title":"UserController.java","lines":["@GetMapping(\"/users\")","public List<User> getUsers() {","    return userService.getUsers();","}"],"highlight":[2]}. "highlight" = 0-based lines the narration is on.
-- "container": things living inside something (beans in a Spring container): {"label":"Spring Container","beans":["UserService","UserRepo"]}.
+PANELS (right side of the frame, at most ONE per beat, never the same panel type twice in a row, and no callouts/props on a panel beat). Pick the panel that matches what is being said:
+- "steps": roadmaps, timelines, checklists, stages. {"items":["Core Java","Spring Boot","Database","Production"],"current":1}. 2-8 labels (max 48 chars); "current" = the step being discussed, earlier ones show as done. Reuse the SAME items for consecutive beats of one topic and move "current" forward.
+- "flow": architecture / request flow, animated packet travelling through the nodes. {"nodes":["Controller","Service","Repository","Database"],"packet":"GET /users"} (2-5 nodes, max 24 chars; optional "active" = node index the packet stops at).
+- "code": only when the narration talks about code. Realistic, technically correct, 3-8 lines, each max 50 chars: {"title":"UserController.java","lines":["@GetMapping(\"/users\")","public List<User> getUsers() {","    return userService.getUsers();","}"],"highlight":[2]}.
+- "terminal": commands and their output. Lines starting with "$ " are typed as commands: {"title":"zsh","lines":["$ mvn spring-boot:run","Started Application in 3.2 seconds"]}.
+- "browser": a web page or an API response. {"url":"localhost:8080/users","kind":"json","lines":["{","  \"id\": 1,","  \"name\": \"Asha\"","}"]} or kind "page" with "heading" and short row lines.
+- "compare": options side by side, or a transformation. {"mode":"versus","cards":[{"title":"Java","points":["Strong typing","Huge ecosystem"],"winner":true},{"title":"Node.js","points":["Fast to start"]}]} (2-3 cards, max 4 points of max 40 chars). Use mode "beforeAfter" with two cards for before/after.
+- "counter": big animated numbers for durations, sizes, counts: {"items":[{"value":6,"suffix":" mo","label":"FRESHER"}]} (1-3 items; label max 26 chars).
+- "chart": comparing quantities. {"kind":"bar","title":"Months to job-ready","labels":["Fresher","Frontend","Backend"],"values":[5,3,2],"unit":"mo","highlight":0} (kind "bar" or "line", 2-6 points; labels and values must have the same length). Only use numbers that appear in, or are clearly implied by, the narration.
+- "progress": skill / completion bars: {"items":[{"label":"Core Java","value":90}]} (1-5 items, value 0-100).
+- "table": database rows / query results: {"name":"users","columns":["id","name","role"],"rows":[["1","Asha","admin"]],"highlightRow":0} (2-5 columns, 1-5 rows, every row has one cell per column, cells max 18 chars).
+- "alert": an error, success or warning state: {"kind":"error","title":"NullPointerException","detail":"user is null"}.
+- "svg": LAST RESORT. A custom diagram YOU draw, only for things the panels above cannot show: a tree (inheritance, hierarchy), a 2x2 matrix, a layered stack, a cycle. A simple chain or request path is a "flow" or "steps", NOT an svg. Never use svg on two beats in a row. Canvas is 1300 wide x 700 tall. Shapes: rect{x,y,w,h,rx}, circle{cx,cy,r}, line{x1,y1,x2,y2,arrow,dash}, path{d}, text{x,y,text,size,anchor}. Colours: ink, accent, red, green, blue, gold, faint, bg, white or #rrggbb ("white" text on accent/green/blue/red boxes, "ink" text on gold/faint boxes). Shapes appear in the order given (same "step" = together): build the diagram in the order it is explained.
+  LAYOUT RULES (drawings that break them are discarded): put boxes on a grid, boxes 300x100, rows at y=60 / 250 / 440 (a 4th row at 600 only for a short chain), column centres x=250 / 650 / 1050 (so a box at centre c has x=c-150); text centred in its box with x=centre and y=box y+66 for size 44; arrows run only through the GAP between boxes (from the bottom edge of one box to the top edge of the next, e.g. y1=160 to y2=250), never through a box or a label; text size 32-48, at most 24 characters; 4-14 shapes; never overlap boxes; no title (the scene headline names it).
+  Example tree (Animal with children Dog and Cat): [{"t":"rect","x":500,"y":60,"w":300,"h":100,"rx":22,"fill":"accent","stroke":"ink","step":0},{"t":"text","x":650,"y":126,"text":"Animal","size":44,"fill":"white","step":0},{"t":"line","x1":600,"y1":160,"x2":300,"y2":250,"arrow":true,"step":1},{"t":"line","x1":700,"y1":160,"x2":1000,"y2":250,"arrow":true,"step":1},{"t":"rect","x":100,"y":250,"w":300,"h":100,"rx":22,"fill":"green","stroke":"ink","step":2},{"t":"text","x":250,"y":316,"text":"Dog","size":44,"fill":"white","step":2},{"t":"rect","x":900,"y":250,"w":300,"h":100,"rx":22,"fill":"gold","stroke":"ink","step":2},{"t":"text","x":1050,"y":316,"text":"Cat","size":44,"fill":"ink","step":2}]
 - "quiz": at most once or twice in the whole video, only where a question is asked to the viewer: {"question":"...","options":["..","..",".."],"answer":0}.
-Use a panel when it explains something; for hooks, reactions and opinions use the stickman with a prop instead of forcing a panel.
+- "container": things living inside something (beans in a Spring container): {"label":"Spring Container","beans":["UserService","UserRepo"]}.
+Use a panel when it explains something; for hooks, reactions and opinions use the stickman with a prop and callouts instead of forcing a panel. Never invent statistics: numbers in counter/chart/progress must come from the script.
 
-PROPS (0-2, only when they match what is said): ${PROPS.join(", ")}. Not allowed together with a panel.
+PROPS (0-2, only when they match what is said): ${PROPS.join(", ")}.
 
 TEXT: "title" is a short headline (max 6 words) that stays the same while the topic stays the same. "callouts" are up to 3 punchy phrases of 3-8 words in UPPERCASE typography, e.g. "LEARNING ≠ JOB READY", "YOU ALREADY KNOW THE BASICS". Never copy the whole narration onto the screen.
 
@@ -307,7 +528,7 @@ Beats:
 ${slice.map((b, i) => `${start + i}. ${b}`).join("\n")}
 
 Return ONLY raw JSON, no markdown:
-{${start === 0 ? '"title":"catchy YouTube title under 90 chars","description":"2-3 sentence description with 3-4 hashtags","tags":["8 relevant tags"],' : ""}"scenes":[{"pose":"","mood":"","accent":"","camera":"","chapter":"","title":"","flip":false,"callouts":[],"props":[{"type":""}],"steps":null,"code":null,"container":null,"quiz":null}]}
+{${start === 0 ? '"title":"catchy YouTube title under 90 chars","description":"2-3 sentence description with 3-4 hashtags","tags":["8 relevant tags"],' : ""}"scenes":[{"pose":"","mood":"","accent":"","camera":"","chapter":"","title":"","flip":false,"callouts":[],"props":[{"type":""}],"steps":null,"flow":null,"code":null,"terminal":null,"browser":null,"compare":null,"counter":null,"chart":null,"progress":null,"table":null,"alert":null,"svg":null,"container":null,"quiz":null}]}
 "scenes" must have exactly ${slice.length} entries, in the same order as the beats. Use null or omit fields you do not need.`;
   try {
     const raw = await askLlm(prompt);
@@ -346,7 +567,7 @@ export async function planStickmanVideo(script: string, titleHint?: string): Pro
       visuals.push(...res.scenes);
       const last = res.scenes[res.scenes.length - 1] ?? {};
       const chapter = [...res.scenes].reverse().find((x: any) => x?.chapter)?.chapter;
-      carry = `current chapter "${chapter ?? ""}", last pose ${last.pose ?? "?"}, last panel ${last.steps ? "steps" : last.code ? "code" : last.container ? "container" : last.quiz ? "quiz" : "none"}`;
+      carry = `current chapter "${chapter ?? ""}", last pose ${last.pose ?? "?"}, last panel ${["steps", "flow", "code", "terminal", "browser", "compare", "counter", "chart", "progress", "table", "alert", "svg", "container", "quiz"].find((k) => last[k]) ?? "none"}`;
     } else {
       visuals.push(...beats.slice(start, start + BATCH).map(() => undefined));
     }
@@ -359,6 +580,8 @@ export async function planStickmanVideo(script: string, titleHint?: string): Pro
     visual: sanitizeVisual(visuals[i], i),
   }));
   diversifyVisuals(scenes);
+  const invented = dropInventedNumbers(scenes, script);
+  if (invented) pipelineLogger.info(`Dropped ${invented} number panel(s) whose figures are not in the script`, "StickmanPlanner");
 
   const fallbackTitle = titleHint?.trim() || beats[0].slice(0, 80);
   return {

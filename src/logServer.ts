@@ -1679,7 +1679,7 @@ export function startLogServer(): void {
         if (req.method === "POST" && route === "/api/longvideo/progress") {
           // Called by the GitHub runner every few seconds with the live frame count.
           const body = await parseJsonBody(req);
-          const ok = recordCloudProgress(String(body.slug || ""), String(body.token || ""), Number(body.done), Number(body.total));
+          const ok = recordCloudProgress(String(body.slug || ""), String(body.token || ""), Number(body.done), Number(body.total), Number(body.chunk) || 0);
           return json(ok ? 200 : 403, { success: ok });
         }
         if (req.method === "POST" && route === "/api/longvideo/publish") {
