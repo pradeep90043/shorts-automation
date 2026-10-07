@@ -81,8 +81,11 @@ jobs:
         run: |
           printf '%s\n' "${PRODUCTION_ENV}" > .env
           printf '%s\n' "${PRODUCTION_COOKIES}" > cookies.txt
+          # Enables offloading long-video renders to GitHub Actions (my-video repo)
+          if [ -n "${RENDER_GITHUB_TOKEN}" ]; then printf 'GITHUB_TOKEN=%s\n' "${RENDER_GITHUB_TOKEN}" >> .env; fi
         env:
           PRODUCTION_ENV: ${{ secrets.PRODUCTION_ENV }}
+          RENDER_GITHUB_TOKEN: ${{ secrets.RENDER_GITHUB_TOKEN }}
           PRODUCTION_COOKIES: ${{ secrets.PRODUCTION_COOKIES }}
 
       - name: Rsync runtime files to VM
