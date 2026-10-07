@@ -79,11 +79,12 @@ RUN npm ci --omit=dev
 # supported setup - system Chromium isn't guaranteed to work as a Remotion browser)
 # so renders never download anything at runtime. Package files are copied first so the ~1 GB
 # `npm ci` layer is cached until my-video's dependencies actually change.
-# tsx is a devDependency there but its pipeline scripts need it at runtime.
+# tsx is a devDependency there but its pipeline scripts call it at runtime, and
+# `npm ci --omit=dev` would prune it from node_modules - so it is installed globally.
 COPY my-vide[o]/package*.json /app/my-video/
 RUN if [ -f /app/my-video/package.json ]; then \
       cd /app/my-video && npm ci --omit=dev --no-audit --no-fund && \
-      npm install --no-save --omit=dev --no-audit --no-fund tsx@4 && \
+      npm install -g --no-audit --no-fund tsx@4 && \
       npx remotion browser ensure && \
       npm cache clean --force; \
     else echo "my-video submodule not present - stickman renderer disabled"; fi
