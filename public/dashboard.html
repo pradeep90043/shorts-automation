@@ -178,6 +178,7 @@
     <div class="nav-item" data-tab="channels" onclick="switchTab('channels',this)"><span>📺</span> Channel Cards</div>
     <div class="nav-item" data-tab="queue" onclick="switchTab('queue',this)"><span>⏳</span> Queue Manager <span class="nav-badge" id="nav-badge-queued">0</span></div>
     <div class="nav-item" data-tab="inject" onclick="switchTab('inject',this)"><span>＋</span> Inject Link</div>
+    <div class="nav-item" data-tab="longvideo" onclick="switchTab('longvideo',this)"><span>🎞️</span> Long Video <span class="nav-badge" id="nav-badge-longvideo" style="display:none;">●</span></div>
     <div class="nav-item" data-tab="viral" onclick="switchTab('viral',this)"><span>🔥</span> Viral Analytics</div>
     <div class="nav-item" data-tab="config" onclick="switchTab('config',this)"><span>⚙️</span> Configuration</div>
     <div class="nav-item" data-tab="logs" onclick="switchTab('logs',this)"><span>▶</span> Console Logs</div>
@@ -497,6 +498,65 @@
     </div>
 
     <!-- TAB: VIRAL ANALYTICS -->
+    <div id="tab-longvideo" class="tab-pane">
+      <div class="table-card" style="margin-bottom:20px;border-left:4px solid var(--primary);">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:8px;">
+          <div style="font-size:17px;font-weight:800;color:#fff;">🎞️ Long Video Studio <span style="font-size:10px;background:rgba(88,166,255,0.15);color:var(--primary);padding:2px 8px;border-radius:4px;font-weight:700;border:1px solid rgba(88,166,255,0.3);margin-left:6px;">STICKMAN EXPLAINER</span></div>
+          <span style="font-size:11px;color:var(--text-muted);">Paste your script, set the length &mdash; voiceover, scenes and render are automatic</span>
+        </div>
+
+        <div style="margin:14px 0 12px;">
+          <label style="font-size:11px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Script (narration, Hindi / Hinglish / English)</label>
+          <textarea class="input-field" id="lv-script" oninput="lvScheduleEstimate()" placeholder="Paste the exact narration here. Your words are used as-is; only the visuals are picked automatically." style="width:100%;height:200px;padding:10px 12px;font-size:13px;line-height:1.5;"></textarea>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:14px;">
+          <div>
+            <label style="font-size:11px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Target length</label>
+            <div style="display:flex;gap:6px;align-items:center;">
+              <input class="input-field" id="lv-min" type="number" min="0" max="60" placeholder="min" oninput="lvScheduleEstimate()" style="width:70px;padding:8px;"> <span style="font-size:11px;color:var(--text-muted);">m</span>
+              <input class="input-field" id="lv-sec" type="number" min="0" max="59" placeholder="sec" oninput="lvScheduleEstimate()" style="width:70px;padding:8px;"> <span style="font-size:11px;color:var(--text-muted);">s</span>
+            </div>
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Format</label>
+            <select class="select-field" id="lv-orientation" onchange="lvOrientationChanged()" style="width:100%;padding:8px 12px;font-size:12px;">
+              <option value="horizontal">📺 16:9 Long video (YouTube)</option>
+              <option value="vertical">📱 9:16 Short / Reel</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Quality</label>
+            <select class="select-field" id="lv-resolution" onchange="lvScheduleEstimate()" style="width:100%;padding:8px 12px;font-size:12px;">
+              <option value="720">720p (faster)</option>
+              <option value="1080">1080p (about 2x slower)</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Title (optional)</label>
+            <input class="input-field" id="lv-title" type="text" placeholder="Auto-generated if empty" style="width:100%;padding:8px 12px;">
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Publish to channel</label>
+            <select class="input-field" id="lv-channel-select" style="width:100%;padding:8px 12px;font-weight:600;"></select>
+          </div>
+        </div>
+
+        <div id="lv-estimate" style="display:none;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:12px;color:#c9d1d9;"></div>
+
+        <div style="display:flex;justify-content:flex-end;">
+          <button class="btn-primary" id="lv-start-btn" style="padding:9px 22px;" onclick="lvStart()">🎬 Create Video</button>
+        </div>
+      </div>
+
+      <div class="table-card" id="lv-progress-card" style="display:none;margin-bottom:20px;"></div>
+
+      <div class="table-card">
+        <div style="font-size:14px;font-weight:800;color:#fff;margin-bottom:10px;">Recent videos</div>
+        <div id="lv-history" style="font-size:12px;color:var(--text-muted);">No videos yet.</div>
+      </div>
+    </div>
+
     <div id="tab-viral" class="tab-pane">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px;">
         <div>
@@ -893,10 +953,224 @@
     if (tab === 'viral' && globalDashboardData && globalDashboardData.viralAnalytics) {
       setTimeout(() => renderViralCharts(globalDashboardData.viralAnalytics), 60);
     }
+    if (tab === 'longvideo') lvOnOpen();
     if (tab === 'config') {
       renderConfigTab(globalDashboardData && globalDashboardData.channels);
     }
   }
+
+  /* ─── LONG VIDEO STUDIO (my-video stickman) ─── */
+  let lvEstTimer = null, lvPollTimer = null, lvTickTimer = null, lvJob = null, lvJobFetchedAt = 0;
+  const lvEsc = (t) => String(t == null ? '' : t).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+  const lvFmt = (sec) => {
+    sec = Math.max(0, Math.round(sec));
+    const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+    return h ? h + 'h ' + m + 'm' : m ? m + 'm ' + String(s).padStart(2, '0') + 's' : s + 's';
+  };
+  const lvTargetSec = () => {
+    const m = parseInt(document.getElementById('lv-min').value || '0', 10) || 0;
+    const s = parseInt(document.getElementById('lv-sec').value || '0', 10) || 0;
+    return m * 60 + s || undefined;
+  };
+
+  function lvOrientationChanged() {
+    document.getElementById('lv-resolution').value = document.getElementById('lv-orientation').value === 'vertical' ? '1080' : '720';
+    lvScheduleEstimate();
+  }
+
+  function lvScheduleEstimate() {
+    clearTimeout(lvEstTimer);
+    lvEstTimer = setTimeout(lvEstimate, 450);
+  }
+
+  async function lvEstimate() {
+    const box = document.getElementById('lv-estimate');
+    const script = document.getElementById('lv-script').value.trim();
+    if (!script) { box.style.display = 'none'; return; }
+    try {
+      const res = await fetch(BASE_URL + '/api/longvideo/estimate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ script, targetSec: lvTargetSec(), resolution: document.getElementById('lv-resolution').value })
+      });
+      const d = await res.json();
+      if (!d.success) { box.style.display = 'none'; return; }
+      const e = d.estimate;
+      box.style.display = 'block';
+      box.innerHTML =
+        '<div style="display:flex;gap:22px;flex-wrap:wrap;">' +
+          '<div><div style="font-size:10px;color:var(--text-muted);">SCRIPT</div><b>' + e.words + '</b> words &middot; <b>' + e.scenes + '</b> scenes</div>' +
+          '<div><div style="font-size:10px;color:var(--text-muted);">VIDEO LENGTH</div><b>~' + lvFmt(e.videoSec) + '</b>' + (e.targetSec ? ' (target ' + lvFmt(e.targetSec) + ')' : '') + '</div>' +
+          '<div><div style="font-size:10px;color:var(--text-muted);">TIME TO CREATE</div><b style="color:var(--primary);">~' + lvFmt(e.totalSec) + '</b> <span style="font-size:10px;color:var(--text-muted);">' + (e.basedOnSamples ? '(from ' + e.basedOnSamples + ' past renders)' : '(first run &mdash; rough guess)') + '</span></div>' +
+          '<div><div style="font-size:10px;color:var(--text-muted);">VOICE SPEED</div><b>' + lvEsc(e.rate) + '</b></div>' +
+        '</div>' +
+        (e.note ? '<div style="margin-top:8px;color:#d29922;">⚠️ ' + lvEsc(e.note) + '</div>' : '');
+    } catch (err) { box.style.display = 'none'; }
+  }
+
+  async function lvStart() {
+    const script = document.getElementById('lv-script').value.trim();
+    if (!script) { showToast('Paste a script first.', 'err'); return; }
+    const btn = document.getElementById('lv-start-btn');
+    btn.disabled = true;
+    try {
+      const res = await fetch(BASE_URL + '/api/longvideo/start', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          script, targetSec: lvTargetSec(),
+          title: document.getElementById('lv-title').value.trim(),
+          orientation: document.getElementById('lv-orientation').value,
+          resolution: document.getElementById('lv-resolution').value,
+          channelKey: document.getElementById('lv-channel-select').value,
+        })
+      });
+      const d = await res.json();
+      if (!d.success) { showToast(d.message || 'Could not start', 'err'); btn.disabled = false; return; }
+      showToast('Video creation started', 'ok');
+      lvTrack(d.job);
+    } catch (err) {
+      showToast('Error: ' + err.message, 'err');
+      btn.disabled = false;
+    }
+  }
+
+  function lvTrack(job) {
+    lvJob = job; lvJobFetchedAt = Date.now();
+    try { localStorage.setItem('lv-job', job.id); } catch (e) {}
+    lvRender();
+    clearInterval(lvPollTimer); clearInterval(lvTickTimer);
+    if (job.status === 'running') {
+      lvPollTimer = setInterval(lvPoll, 1500);
+      lvTickTimer = setInterval(lvRender, 500);
+    } else {
+      document.getElementById('lv-start-btn').disabled = false;
+    }
+    lvBadge(job.status === 'running');
+  }
+
+  function lvBadge(on) {
+    const b = document.getElementById('nav-badge-longvideo');
+    if (b) b.style.display = on ? 'inline-block' : 'none';
+  }
+
+  async function lvPoll() {
+    if (!lvJob) return;
+    try {
+      const res = await fetch(BASE_URL + '/api/longvideo/job?id=' + encodeURIComponent(lvJob.id));
+      const d = await res.json();
+      if (!d.success) return;
+      const wasRunning = lvJob.status === 'running';
+      lvJob = d.job; lvJobFetchedAt = Date.now();
+      lvRender();
+      if (wasRunning && d.job.status !== 'running') {
+        clearInterval(lvPollTimer); clearInterval(lvTickTimer);
+        document.getElementById('lv-start-btn').disabled = false;
+        lvBadge(false);
+        showToast(d.job.status === 'done' ? '✅ Video ready!' : '❌ Video failed: ' + (d.job.error || '').slice(0, 120), d.job.status === 'done' ? 'ok' : 'err');
+        lvLoadHistory();
+      }
+    } catch (e) { /* transient network error: next tick retries */ }
+  }
+
+  function lvRender() {
+    const card = document.getElementById('lv-progress-card');
+    const j = lvJob;
+    if (!j) { card.style.display = 'none'; return; }
+    card.style.display = 'block';
+    const running = j.status === 'running';
+    const since = running ? (Date.now() - lvJobFetchedAt) / 1000 : 0;
+    const elapsed = j.elapsedSec + since;
+    const eta = running && j.etaSec != null ? Math.max(0, j.etaSec - since) : 0;
+    const pct = Math.round(j.progress * 100);
+    const estTotal = j.stages.reduce((a, s) => a + s.estSec, 0);
+    const color = j.status === 'failed' ? 'var(--danger)' : j.status === 'done' ? 'var(--success)' : 'var(--primary)';
+
+    const stages = j.stages.map(s => {
+      const icon = s.status === 'done' ? '✅' : s.status === 'running' ? '⏳' : s.status === 'failed' ? '❌' : '⚪';
+      const live = s.status === 'running' && s.startedAt ? (Date.now() - s.startedAt) / 1000 : null;
+      const spent = s.actualSec != null ? s.actualSec : live;
+      const sp = Math.round(s.fraction * 100);
+      return '<div style="display:grid;grid-template-columns:24px 1fr auto;gap:10px;align-items:center;padding:7px 0;border-top:1px solid #21262d;' + (s.status === 'pending' ? 'opacity:.55;' : '') + '">' +
+        '<div>' + icon + '</div>' +
+        '<div><div style="font-size:12px;color:#fff;font-weight:600;">' + lvEsc(s.label) + (s.detail && s.status === 'running' ? ' <span style="color:var(--text-muted);font-weight:400;">&middot; ' + lvEsc(s.detail) + '</span>' : '') + '</div>' +
+        (s.status === 'running' ? '<div style="height:4px;background:#21262d;border-radius:2px;margin-top:5px;overflow:hidden;"><div style="height:100%;width:' + sp + '%;background:var(--primary);transition:width .4s;"></div></div>' : '') + '</div>' +
+        '<div style="font-size:11px;font-family:var(--font-mono);color:var(--text-muted);text-align:right;">' +
+          (spent != null ? '<span style="color:#fff;">' + lvFmt(spent) + '</span> / ' : '') + '~' + lvFmt(s.estSec) + '</div></div>';
+    }).join('');
+
+    let result = '';
+    if (j.status === 'done' && j.videoPath) {
+      const file = j.videoPath.split('/').pop();
+      const src = '/output/' + encodeURIComponent(file);
+      const vertical = j.input.orientation === 'vertical';
+      result = '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:14px;padding-top:14px;border-top:1px solid #21262d;">' +
+        '<div style="flex:1;min-width:240px;">' +
+          '<div style="font-size:15px;font-weight:800;color:#fff;margin-bottom:6px;">' + lvEsc(j.title) + '</div>' +
+          '<div style="font-size:11px;color:var(--text-muted);margin-bottom:12px;">' + j.scenes + ' scenes &middot; created in <b>' + lvFmt(elapsed) + '</b> (estimated ' + lvFmt(estTotal) + ')' + (j.aiVisuals === false ? ' &middot; visuals assigned by rule (AI unavailable)' : '') + '</div>' +
+          '<div style="display:flex;gap:10px;flex-wrap:wrap;">' +
+            '<a href="' + src + '" download class="btn-primary" style="padding:7px 14px;font-size:12px;text-decoration:none;">⬇️ Download MP4</a>' +
+            '<button class="btn-primary" id="lv-publish-btn" style="background:#e53e3e;border-color:#fc8181;padding:7px 14px;font-size:12px;" onclick="lvPublish()">🚀 Publish to YouTube</button>' +
+          '</div></div>' +
+        '<div style="width:' + (vertical ? '170px' : '320px') + ';background:#000;border-radius:8px;overflow:hidden;border:1px solid #30363d;">' +
+          '<video src="' + src + '" controls style="width:100%;display:block;"></video></div></div>';
+    } else if (j.status === 'failed') {
+      result = '<div style="margin-top:12px;padding:10px;background:var(--danger-bg);border:1px solid var(--danger);border-radius:6px;color:var(--danger);font-size:12px;white-space:pre-wrap;max-height:160px;overflow:auto;">' + lvEsc(j.error) + '</div>';
+    }
+
+    card.innerHTML =
+      '<div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:10px;">' +
+        '<div style="font-size:14px;font-weight:800;color:#fff;">' + (running ? '⏳ Creating video…' : j.status === 'done' ? '✅ Video ready' : '❌ Failed') + (j.title ? ' <span style="font-weight:400;color:var(--text-muted);">&middot; ' + lvEsc(j.title) + '</span>' : '') + '</div>' +
+        '<div style="font-size:12px;font-family:var(--font-mono);color:var(--text-muted);">elapsed <b style="color:#fff;">' + lvFmt(elapsed) + '</b>' + (running ? ' &middot; remaining ~<b style="color:var(--primary);">' + lvFmt(eta) + '</b>' : '') + ' &middot; estimated ' + lvFmt(estTotal) + '</div>' +
+      '</div>' +
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;"><div style="flex:1;height:10px;background:#21262d;border-radius:5px;overflow:hidden;"><div style="height:100%;width:' + pct + '%;background:' + color + ';transition:width .4s;"></div></div><div style="font-size:12px;font-family:var(--font-mono);color:#fff;width:40px;text-align:right;">' + pct + '%</div></div>' +
+      stages + result;
+  }
+
+  async function lvPublish() {
+    const j = lvJob;
+    if (!j || !j.videoPath) return;
+    const btn = document.getElementById('lv-publish-btn');
+    btn.disabled = true; btn.innerText = '⏳ Publishing…';
+    try {
+      const res = await fetch(BASE_URL + '/api/publish/youtube-video', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channelKey: document.getElementById('lv-channel-select').value || j.input.channelKey, videoPath: j.videoPath, title: j.title, description: j.description, tags: j.tags })
+      });
+      const d = await res.json();
+      if (d.success) {
+        const url = d.results && d.results[0] && d.results[0].url;
+        showToast('✅ Published to YouTube', 'ok');
+        btn.outerHTML = url ? '<a href="' + lvEsc(url) + '" target="_blank" class="btn-primary" style="background:#238636;border-color:#2ea043;padding:7px 14px;font-size:12px;text-decoration:none;">▶ View on YouTube</a>' : '<span style="color:var(--success);font-size:12px;">✅ Published</span>';
+      } else { showToast(d.message || 'Publish failed', 'err'); btn.disabled = false; btn.innerText = '🚀 Publish to YouTube'; }
+    } catch (err) { showToast('Error: ' + err.message, 'err'); btn.disabled = false; btn.innerText = '🚀 Publish to YouTube'; }
+  }
+
+  async function lvLoadHistory() {
+    try {
+      const res = await fetch(BASE_URL + '/api/longvideo/jobs');
+      const d = await res.json();
+      if (!d.success) return;
+      const el = document.getElementById('lv-history');
+      window._lvJobs = d.jobs;
+      el.innerHTML = d.jobs.length ? d.jobs.map((j, i) =>
+        '<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-top:1px solid #21262d;cursor:pointer;" onclick="lvOpenJob(' + i + ')">' +
+          '<span style="color:#fff;">' + (j.status === 'done' ? '✅' : j.status === 'failed' ? '❌' : '⏳') + ' ' + lvEsc(j.title || j.input.script.slice(0, 60)) + '</span>' +
+          '<span style="font-family:var(--font-mono);">' + new Date(j.createdAt).toLocaleString() + ' &middot; ' + lvFmt(j.elapsedSec) + '</span></div>').join('') : 'No videos yet.';
+      return d.jobs;
+    } catch (e) {}
+  }
+
+  function lvOpenJob(i) { const j = window._lvJobs && window._lvJobs[i]; if (j) lvTrack(j); }
+
+  /* Called on tab open and page load: resume a running job, or show the last one */
+  async function lvOnOpen() {
+    if (lvJob && lvJob.status === 'running') return;
+    const jobs = await lvLoadHistory();
+    if (!jobs || !jobs.length) return;
+    let saved = null; try { saved = localStorage.getItem('lv-job'); } catch (e) {}
+    const running = jobs.find(j => j.status === 'running') || jobs.find(j => j.id === saved);
+    if (running) lvTrack(running);
+  }
+  document.addEventListener('DOMContentLoaded', () => { lvOnOpen(); });
 
   /* ─── CHANNEL FOCUS ─── */
   function focusChannelProfile(key) {
@@ -1077,7 +1351,7 @@
     });
 
     /* Sync inject selects */
-    ['inject-target-channel-select','inject-tab-channel-select','ai-gen-channel-select'].forEach(selId => {
+    ['inject-target-channel-select','inject-tab-channel-select','ai-gen-channel-select','lv-channel-select'].forEach(selId => {
       const sel = document.getElementById(selId);
       if (!sel) return;
       sel.innerHTML = '';

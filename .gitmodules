@@ -1,0 +1,4 @@
+[submodule "my-video"]
+	path = my-video
+	url = https://github.com/pradeep90043/my-video
+	branch = feat/production-longform-stickman

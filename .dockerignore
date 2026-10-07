@@ -8,6 +8,16 @@ node_modules
 # Sub-project that is NOT part of the image (~650 MB, has its own node_modules)
 website-audit-reel
 
+# my-video submodule: only source is needed (deps installed in the image; projects are generated at runtime)
+my-video/.git
+my-video/out
+my-video/build
+my-video/.claude
+# Root.tsx imports each project's video.json at bundle time, so keep those; drop audio/images
+my-video/public/content/*/*
+!my-video/public/content/*/video.json
+my-video/**/*.mp4
+
 # Runtime / generated dirs
 temp
 logs
@@ -51,3 +61,6 @@ cookies.txt
 
 # Keep: src/, tsconfig.json, package*.json (builder stage); scripts/,
 #       public/dashboard.html, assets/ (watermarks/logo/verdict-clips) (runtime stage).
+
+# VM runtime data
+data
