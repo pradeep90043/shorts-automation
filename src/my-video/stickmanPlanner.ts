@@ -84,6 +84,38 @@ export function splitScriptIntoBeats(script: string): string[] {
 const pick = <T extends string>(value: unknown, allowed: readonly T[], fallback: T): T =>
   typeof value === "string" && (allowed as readonly string[]).includes(value) ? (value as T) : fallback;
 
+const LOOKS = ["auto", "camera", "left", "right", "up", "down"];
+const str = (x: unknown, max: number): string => (typeof x === "string" ? x.trim().slice(0, max) : "");
+const strList = (x: unknown, max: number, itemMax: number): string[] =>
+  Array.isArray(x) ? x.map((i) => str(i, itemMax)).filter(Boolean).slice(0, max) : [];
+
+// Panels (right side of the frame). Limits mirror my-video/src/stickman/schema.ts.
+function sanitizePanel(v: any): Record<string, unknown> {
+  const code = v?.code;
+  if (code && Array.isArray(code.lines)) {
+    const lines = code.lines.map((l: unknown) => String(l ?? "").replace(/\t/g, "  ").replace(/\s+$/, "").slice(0, 56)).slice(0, 10);
+    while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+    if (lines.some((l: string) => l.trim())) {
+      const highlight = (Array.isArray(code.highlight) ? code.highlight : [])
+        .filter((n: unknown) => Number.isInteger(n) && (n as number) >= 0 && (n as number) < lines.length).slice(0, 3);
+      return { code: { title: str(code.title, 40) || undefined, lines, highlight } };
+    }
+  }
+  const steps = strList(v?.steps?.items, 8, 48);
+  if (steps.length >= 2) {
+    const cur = Number(v.steps.current);
+    return { steps: { items: steps, current: Number.isInteger(cur) ? Math.min(Math.max(cur, 0), steps.length - 1) : 0 } };
+  }
+  const beans = strList(v?.container?.beans, 8, 24);
+  if (beans.length && str(v?.container?.label, 40)) return { container: { label: str(v.container.label, 40), beans } };
+  const q = v?.quiz;
+  const options = strList(q?.options, 4, 60);
+  if (str(q?.question, 90) && options.length >= 2 && Number.isInteger(q.answer) && q.answer >= 0 && q.answer < options.length) {
+    return { quiz: { question: str(q.question, 90), options, answer: q.answer } };
+  }
+  return {};
+}
+
 /** Keeps only values my-video's schema accepts, so a sloppy LLM answer can't fail the render. */
 export function sanitizeVisual(raw: any, index: number): Record<string, unknown> {
   const v = raw && typeof raw === "object" ? raw : {};
@@ -105,7 +137,33 @@ export function sanitizeVisual(raw: any, index: number): Record<string, unknown>
       .slice(0, 2)
       .map((p: any, i: number) => ({ type: p.type, x: i === 0 ? 0.72 : 0.88, delay: 8 + i * 8 }));
   }
+  if (v.flip === true) visual.flip = true;
+  const look = pick(v.look, LOOKS, "auto");
+  if (look !== "auto") visual.look = look;
+  const panel = sanitizePanel(v);
+  Object.assign(visual, panel);
+  // a panel owns the right side of the frame: props would sit on top of it
+  if (Object.keys(panel).length) delete visual.props;
+  if (v.hideFigure === true && Object.keys(panel).length === 0) visual.hideFigure = true;
   return visual;
+}
+
+/**
+ * Variety pass: an LLM tends to repeat itself, so never keep the same pose three
+ * scenes in a row or the same camera move twice in a row.
+ */
+export function diversifyVisuals(scenes: StickmanScene[]): void {
+  const rotation = ["point", "present", "think", "shrug", "walk", "smug", "idle"];
+  for (let i = 2; i < scenes.length; i++) {
+    const a = scenes[i - 2].visual as any, b = scenes[i - 1].visual as any, c = scenes[i].visual as any;
+    if (a?.pose === b?.pose && b?.pose === c?.pose) {
+      c.pose = rotation.find((r) => r !== c.pose && r !== b.pose) ?? "idle";
+    }
+  }
+  for (let i = 1; i < scenes.length; i++) {
+    const prev = scenes[i - 1].visual as any, cur = scenes[i].visual as any;
+    if (cur.camera !== "none" && cur.camera === prev.camera) cur.camera = "none";
+  }
 }
 
 /** Edge-TTS Hindi/Hinglish speaks about this many words per second at the default rate. */
@@ -151,6 +209,8 @@ Rules:
 - Keep the same language and tone (if it is Hinglish, stay in Hinglish with the same romanised spelling style).
 - Keep the hook at the start and the closing line/call-to-action at the end.
 - ${direction === "shorten" ? "Cut repetition and minor details, keep every key point." : "Add concrete examples, a relatable analogy and a short recap - no filler, no repetition."}
+- Write for SPEECH, not reading: natural spoken sentences, short sentences for emphasis, a question or ellipsis where a dramatic pause helps. Never open with greetings such as "Hello everyone" or "Welcome back"; the opening line must create curiosity.
+- Never change facts or technical meaning; keep estimates as estimates and avoid absolute claims.
 - Plain spoken sentences only: no markdown, no headings, no timestamps, no stage directions, no emojis, no quotation marks.
 - Output ONLY the final narration text.${feedback}
 
@@ -205,56 +265,106 @@ async function askLlm(prompt: string): Promise<string> {
   return "";
 }
 
-/**
- * Turns the user's script into stickman scenes. The narration is split
- * deterministically (the script is never rewritten); the LLM only picks the
- * visuals (pose, mood, props, on-screen title) and the YouTube metadata.
- */
-export async function planStickmanVideo(script: string, titleHint?: string): Promise<StickmanPlan> {
-  script = cleanScript(script);
-  const beats = splitScriptIntoBeats(script);
-  if (!beats.length) throw new Error("Script is empty");
+const BATCH = 28;
 
-  const prompt = `You are the director of a stickman explainer video. The narration is already split into numbered beats - do NOT change the words.
-For every beat choose how the stickman and the screen look.
+const DIRECTOR_RULES = `You direct a professional tech-education explainer (CodeOrCap): modern, technical, educational, never a children's cartoon. The stickman is an ACTOR that reacts to the story; the screen panels do the real explaining. Be visual-first: every beat needs a purposeful visual, not a stickman standing and talking.
+
+STORY: the video follows HOOK -> PROBLEM -> CONTEXT -> EXPLANATION -> EXAMPLE -> COMPARISON/INSIGHT -> TAKEAWAY -> CONCLUSION (skip parts the script does not have). Use "chapter" (max 40 chars, e.g. "2 · The fresher path") on the first beat of each new section and leave it out on the others.
+
+POSES (map the intent): pointing at something -> point; explaining -> present; thinking/reading/planning -> think; confused or "I don't know" -> shrug; surprised -> shocked; mistake -> facepalm; worry/risk -> worried; success -> celebrate; moving/progress -> walk; sure of himself -> smug. Pair the pose with a fitting mood. Do not use the same pose three beats in a row. Use "flip": true now and then so he points toward the other side. "look": left/right/up/down/camera only when it supports the line.
+
+PANELS (right side of the frame, at most ONE per beat, and never the same panel type twice in a row):
+- "steps": roadmaps, timelines, checklists, request flows, stages. {"items":["Core Java","Spring Boot","Database","Production"],"current":1}. items are 2-8 short labels (max 48 chars); "current" is the step being discussed now, earlier ones show as done. Reuse the SAME items list for consecutive beats of one topic and move "current" forward as the narration moves.
+- "code": only when the narration talks about code. Realistic simplified, technically correct code, 3-8 lines, each line max 50 chars, e.g. {"title":"UserController.java","lines":["@GetMapping(\"/users\")","public List<User> getUsers() {","    return userService.getUsers();","}"],"highlight":[2]}. "highlight" = 0-based lines the narration is on.
+- "container": things living inside something (beans in a Spring container): {"label":"Spring Container","beans":["UserService","UserRepo"]}.
+- "quiz": at most once or twice in the whole video, only where a question is asked to the viewer: {"question":"...","options":["..","..",".."],"answer":0}.
+Use a panel when it explains something; for hooks, reactions and opinions use the stickman with a prop instead of forcing a panel.
+
+PROPS (0-2, only when they match what is said): ${PROPS.join(", ")}. Not allowed together with a panel.
+
+TEXT: "title" is a short headline (max 6 words) that stays the same while the topic stays the same. "callouts" are up to 3 punchy phrases of 3-8 words in UPPERCASE typography, e.g. "LEARNING ≠ JOB READY", "YOU ALREADY KNOW THE BASICS". Never copy the whole narration onto the screen.
+
+VISUAL PACING: change something every 20-40 seconds of narration (new panel type, camera move, a reaction beat). Camera ("push" to emphasise, "pull" to reveal, pans to follow flows) only when it helps, otherwise "none". Do not bounce or overdo effects.
+
+ACCURACY: never sacrifice technical accuracy; estimates stay estimates; no absolute claims such as "Java is always faster".`;
+
+/** One LLM call for beats [start, start+count): returns the raw parsed object, or null on failure. */
+async function directBatch(
+  beats: string[], start: number, total: number, carry: string,
+): Promise<{ meta: any; scenes: any[] } | null> {
+  const slice = beats.slice(start, start + BATCH);
+  const prompt = `${DIRECTOR_RULES}
+
+The narration is already split into numbered beats - do NOT change the words. This is part of a ${total}-beat video; you are directing beats ${start}-${start + slice.length - 1}.${carry ? `\nContext from the previous part: ${carry}` : ""}
 
 Allowed values:
 - pose: ${POSES.join(", ")}
 - mood: ${MOODS.join(", ")}
 - accent: ${ACCENTS.join(", ")}
 - camera: ${CAMERAS.join(", ")}
-- props (0-2 per beat, only when they match what is said): ${PROPS.join(", ")}
-- title: short on-screen headline (max 6 words), repeat the same one while the topic stays the same
-- callouts: up to 3 short on-screen phrases (max 6 words each), optional
 
 Beats:
-${beats.map((b, i) => `${i}. ${b}`).join("\n")}
+${slice.map((b, i) => `${start + i}. ${b}`).join("\n")}
 
 Return ONLY raw JSON, no markdown:
-{"title":"catchy YouTube title under 90 chars","description":"2-3 sentence description with 3-4 hashtags","tags":["8 relevant tags"],"scenes":[{"pose":"","mood":"","accent":"","camera":"","title":"","callouts":[],"props":[{"type":""}]}]}
-"scenes" must have exactly ${beats.length} entries, in the same order as the beats.`;
-
-  let parsed: any = null;
+{${start === 0 ? '"title":"catchy YouTube title under 90 chars","description":"2-3 sentence description with 3-4 hashtags","tags":["8 relevant tags"],' : ""}"scenes":[{"pose":"","mood":"","accent":"","camera":"","chapter":"","title":"","flip":false,"callouts":[],"props":[{"type":""}],"steps":null,"code":null,"container":null,"quiz":null}]}
+"scenes" must have exactly ${slice.length} entries, in the same order as the beats. Use null or omit fields you do not need.`;
   try {
     const raw = await askLlm(prompt);
-    if (raw) parsed = parseAiJson<any>(raw);
+    if (!raw) return null;
+    const parsed = parseAiJson<any>(raw);
+    if (Array.isArray(parsed?.scenes) && parsed.scenes.length === slice.length) return { meta: parsed, scenes: parsed.scenes };
+    pipelineLogger.warn(`Stickman director returned ${parsed?.scenes?.length ?? 0} scenes for ${slice.length} beats (batch @${start})`, "StickmanPlanner");
   } catch (err: any) {
     pipelineLogger.warn(`Could not parse stickman plan from LLM: ${err.message}`, "StickmanPlanner");
   }
+  return null;
+}
 
-  const visuals: any[] = Array.isArray(parsed?.scenes) ? parsed.scenes : [];
-  const aiVisuals = visuals.length === beats.length;
+/**
+ * Turns the user's script into stickman scenes. The narration is split
+ * deterministically (the script is never rewritten); the LLM only directs the
+ * visuals (pose, mood, panels, props, on-screen text) and writes the YouTube
+ * metadata. Long scripts are directed in batches so one bad answer only
+ * costs that batch, which falls back to rule-based visuals.
+ */
+export async function planStickmanVideo(script: string, titleHint?: string): Promise<StickmanPlan> {
+  script = cleanScript(script);
+  const beats = splitScriptIntoBeats(script);
+  if (!beats.length) throw new Error("Script is empty");
+
+  const visuals: any[] = [];
+  let meta: any = null;
+  let okBatches = 0;
+  let carry = "";
+  for (let start = 0; start < beats.length; start += BATCH) {
+    let res = await directBatch(beats, start, beats.length, carry);
+    if (!res) res = await directBatch(beats, start, beats.length, carry); // one retry
+    if (res) {
+      okBatches++;
+      if (start === 0) meta = res.meta;
+      visuals.push(...res.scenes);
+      const last = res.scenes[res.scenes.length - 1] ?? {};
+      const chapter = [...res.scenes].reverse().find((x: any) => x?.chapter)?.chapter;
+      carry = `current chapter "${chapter ?? ""}", last pose ${last.pose ?? "?"}, last panel ${last.steps ? "steps" : last.code ? "code" : last.container ? "container" : last.quiz ? "quiz" : "none"}`;
+    } else {
+      visuals.push(...beats.slice(start, start + BATCH).map(() => undefined));
+    }
+  }
+
+  const aiVisuals = okBatches > 0;
   const scenes: StickmanScene[] = beats.map((text, i) => ({
     id: `s${String(i + 1).padStart(2, "0")}`,
     text,
-    visual: sanitizeVisual(aiVisuals ? visuals[i] : undefined, i),
+    visual: sanitizeVisual(visuals[i], i),
   }));
+  diversifyVisuals(scenes);
 
   const fallbackTitle = titleHint?.trim() || beats[0].slice(0, 80);
   return {
-    title: titleHint?.trim() || (typeof parsed?.title === "string" && parsed.title.trim()) || fallbackTitle,
-    description: (typeof parsed?.description === "string" && parsed.description.trim()) || beats.slice(0, 2).join(" "),
-    tags: Array.isArray(parsed?.tags) ? parsed.tags.filter((t: unknown) => typeof t === "string").slice(0, 10) : [],
+    title: titleHint?.trim() || (typeof meta?.title === "string" && meta.title.trim()) || fallbackTitle,
+    description: (typeof meta?.description === "string" && meta.description.trim()) || beats.slice(0, 2).join(" "),
+    tags: Array.isArray(meta?.tags) ? meta.tags.filter((t: unknown) => typeof t === "string").slice(0, 10) : [],
     scenes,
     aiVisuals,
   };
