@@ -17,7 +17,7 @@ import { computeViralScore } from "./utils/viralScore";
 import { MultiSceneGenerator } from "./video/multiSceneGenerator";
 import { YouTubeService } from "./youtube";
 import { estimateStickman } from "./my-video/stickmanEstimate";
-import { getStickmanJob, listStickmanJobs, startStickmanJob } from "./my-video/stickmanJobs";
+import { getStickmanJob, listStickmanJobs, resetPublish, startPublish, startStickmanJob } from "./my-video/stickmanJobs";
 import { recordCloudProgress, resolveMyVideoDir } from "./my-video/myVideoService";
 import { pipelineLogger } from "./utils/logger";
 import { buildActivityFeed, loadJobSummaries, jobsFileFor } from "./utils/activityFeed";
@@ -1681,6 +1681,42 @@ export function startLogServer(): void {
           const body = await parseJsonBody(req);
           const ok = recordCloudProgress(String(body.slug || ""), String(body.token || ""), Number(body.done), Number(body.total));
           return json(ok ? 200 : 403, { success: ok });
+        }
+        if (req.method === "POST" && route === "/api/longvideo/publish") {
+          const body = await parseJsonBody(req);
+          const job = getStickmanJob(String(body.jobId || ""));
+          if (!job) return json(404, { success: false, message: "Job not found" });
+          const channelKey = String(body.channelKey || job.input.channelKey || "codeorcap").toLowerCase().trim();
+          const storedConfig = (await getAllStoredChannelConfigs()).find((c) => c.key === channelKey);
+          const ytChannels = storedConfig?.youtubeChannels || [];
+          if (ytChannels.length === 0 && !storedConfig?.youtubeRefreshToken) {
+            return json(400, { success: false, message: `No YouTube channels connected for ${channelKey}` });
+          }
+          const ytService = new YouTubeService({
+            clientId: storedConfig?.youtubeClientId || process.env.YOUTUBE_CLIENT_ID || "",
+            clientSecret: storedConfig?.youtubeClientSecret || process.env.YOUTUBE_CLIENT_SECRET || "",
+            redirectUri: storedConfig?.youtubeRedirectUri || OAUTH_REDIRECT_URI,
+            channels: ytChannels.length > 0 ? ytChannels : [{ name: storedConfig?.brandName || channelKey, refreshToken: storedConfig?.youtubeRefreshToken || "" }],
+          });
+          try {
+            const state = startPublish(job.id, channelKey, async (j, onProgress) => {
+              const results = await ytService.uploadToAllChannels(
+                j.videoPath!,
+                { title: j.title || "Video", description: j.description || "", tags: j.tags || ["tech", "coding", "tutorial"] },
+                { onProgress, isLong: j.input.orientation !== "vertical" },
+              );
+              if (!results.length && ytService.lastErrors.length) throw new Error(ytService.lastErrors.join(" | "));
+              return results.map((r) => ({ channelName: r.channelName, url: r.url }));
+            });
+            return json(200, { success: true, publish: state });
+          } catch (e: any) {
+            return json(400, { success: false, message: e?.message || "Could not start publishing" });
+          }
+        }
+        if (req.method === "POST" && route === "/api/longvideo/publish/reset") {
+          const body = await parseJsonBody(req);
+          resetPublish(String(body.jobId || ""));
+          return json(200, { success: true });
         }
         if (req.method === "GET" && route.startsWith("/api/longvideo/bundle/")) {
           const slug = route.replace("/api/longvideo/bundle/", "").trim();

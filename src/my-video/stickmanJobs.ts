@@ -3,7 +3,7 @@ import path from "path";
 import { randomUUID } from "crypto";
 import { config } from "../config";
 import { pipelineLogger } from "../utils/logger";
-import { renderStickmanVideo, type RenderProgress } from "./myVideoService";
+import { renderStickmanVideo, resumeCloudRender, type CloudRunRef, type RenderProgress } from "./myVideoService";
 import {
   estimateStickman, recordTimings, STAGE_LABELS, STAGE_ORDER,
   type StageKey, type StickmanEstimate,
@@ -52,6 +52,23 @@ export interface StickmanJob {
   adjustNote?: string;
   error?: string;
   videoPath?: string;
+  /** GitHub run being watched; lets a restarted app re-attach instead of losing the render */
+  cloudRun?: CloudRunRef;
+  /** how many times this job was (re)started after an app restart */
+  restarts?: number;
+  publish?: PublishState;
+}
+
+export interface PublishState {
+  status: "running" | "done" | "failed";
+  startedAt: number;
+  finishedAt?: number;
+  channelKey?: string;
+  url?: string;
+  urls?: { channelName: string; url: string }[];
+  error?: string;
+  /** 0..100 upload progress */
+  pct?: number;
 }
 
 const jobs = new Map<string, StickmanJob>();
@@ -61,14 +78,26 @@ const KEEP = 20;
 function persist(): void {
   try {
     fs.mkdirSync(config.paths.dataDir, { recursive: true });
-    const finished = [...jobs.values()].filter((j) => j.status !== "running").slice(-KEEP);
-    fs.writeFileSync(jobsFile(), JSON.stringify(finished));
+    // running jobs are saved too, so a restart can resume them
+    const all = [...jobs.values()].sort((x, y) => x.createdAt - y.createdAt).slice(-KEEP);
+    const tmp = `${jobsFile()}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(all));
+    fs.renameSync(tmp, jobsFile());
   } catch {
     /* history is best-effort */
   }
 }
 
-(function loadFinishedJobs() {
+let persistTimer: NodeJS.Timeout | null = null;
+function persistSoon(): void {
+  if (persistTimer) return;
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    persist();
+  }, 3000);
+}
+
+(function loadJobs() {
   try {
     for (const j of JSON.parse(fs.readFileSync(jobsFile(), "utf8")) as StickmanJob[]) jobs.set(j.id, j);
   } catch {
@@ -92,8 +121,13 @@ function applyProgress(job: StickmanJob, p: RenderProgress): void {
   for (const s of job.stages) {
     if (STAGE_ORDER.indexOf(s.key) < idx && s.status !== "done") setStage(job, s.key, { status: "done", fraction: 1 });
   }
+  if (p.cloudRun) {
+    job.cloudRun = p.cloudRun;
+    persist();
+  }
   const done = p.fraction >= 1;
   setStage(job, p.stage, { status: done ? "done" : "running", fraction: Math.min(1, p.fraction), detail: p.detail });
+  persistSoon();
 }
 
 export function startStickmanJob(input: StickmanJobInput): StickmanJob {
@@ -113,14 +147,21 @@ export function startStickmanJob(input: StickmanJobInput): StickmanJob {
     })),
   };
   jobs.set(job.id, job);
+  persist();
   void run(job);
   return job;
 }
 
-async function run(job: StickmanJob): Promise<void> {
+async function run(job: StickmanJob, resume = false): Promise<void> {
   const { script, title, orientation, resolution } = job.input;
   const log = (msg: string) => pipelineLogger.info(`[${job.id}] ${msg}`, "StickmanJob");
   try {
+    if (resume && job.cloudRun) {
+      log(`Resuming GitHub run #${job.cloudRun.runId} after restart`);
+      const result = await resumeCloudRender(`lv-${job.id}`, job.cloudRun, (p) => applyProgress(job, p));
+      finishJob(job, result.videoPath, log);
+      return;
+    }
     setStage(job, "plan", { status: "running", fraction: 0.1, detail: "Fitting script to length" });
     const fit = await fitScriptToDuration(cleanScript(script), job.input.targetSec);
     job.finalScript = fit.script;
@@ -150,12 +191,7 @@ async function run(job: StickmanJob): Promise<void> {
       (p) => applyProgress(job, p),
     );
 
-    for (const s of job.stages) if (s.status !== "done") setStage(job, s.key, { status: "done", fraction: 1 });
-    job.videoPath = result.videoPath;
-    job.status = "done";
-    job.finishedAt = Date.now();
-    learn(job);
-    log(`Done in ${Math.round((job.finishedAt - job.createdAt) / 1000)}s -> ${result.videoPath}`);
+    finishJob(job, result.videoPath, log);
   } catch (err: any) {
     const running = job.stages.find((s) => s.status === "running");
     if (running) running.status = "failed";
@@ -166,6 +202,16 @@ async function run(job: StickmanJob): Promise<void> {
   } finally {
     persist();
   }
+}
+
+function finishJob(job: StickmanJob, videoPath: string, log: (m: string) => void): void {
+  for (const s of job.stages) if (s.status !== "done") setStage(job, s.key, { status: "done", fraction: 1 });
+  job.videoPath = videoPath;
+  job.status = "done";
+  job.finishedAt = Date.now();
+  job.cloudRun = undefined;
+  learn(job);
+  log(`Done in ${Math.round((job.finishedAt - job.createdAt) / 1000)}s -> ${videoPath}`);
 }
 
 /** Feed measured stage timings back so the next estimate is closer. */
@@ -213,3 +259,107 @@ export const getStickmanJob = (id: string): JobSnapshot | undefined => {
 
 export const listStickmanJobs = (): JobSnapshot[] =>
   [...jobs.values()].sort((a, b) => b.createdAt - a.createdAt).slice(0, KEEP).map(snapshot);
+
+// ── Durable publishing ──────────────────────────────────────────────────────
+// Upload runs in the background and its state lives on the job, so closing the
+// tab, a proxy timeout or a refresh can never leave the UI stuck on "Publishing…".
+
+const PUBLISH_MAX_MS = 90 * 60 * 1000;
+
+export type UploadFn = (
+  job: StickmanJob,
+  onProgress: (pct: number) => void,
+) => Promise<{ channelName: string; url: string }[]>;
+
+export function startPublish(jobId: string, channelKey: string, upload: UploadFn): PublishState {
+  const job = jobs.get(jobId);
+  if (!job) throw new Error("Job not found");
+  if (job.status !== "done" || !job.videoPath || !fs.existsSync(job.videoPath)) {
+    throw new Error("The video file is no longer on the server (files are cleaned after 24h) - create it again.");
+  }
+  // idempotent: never upload the same video twice by accident
+  if (job.publish && (job.publish.status === "running" || job.publish.status === "done")) return job.publish;
+
+  const state: PublishState = { status: "running", startedAt: Date.now(), channelKey, pct: 0 };
+  job.publish = state;
+  persist();
+
+  const timeout = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error("Upload took longer than 90 minutes and was stopped")), PUBLISH_MAX_MS).unref(),
+  );
+  void Promise.race([upload(job, (pct) => { state.pct = pct; }), timeout])
+    .then((results) => {
+      if (!results.length) throw new Error("YouTube upload failed on every channel");
+      state.status = "done";
+      state.pct = 100;
+      state.urls = results;
+      state.url = results[0].url;
+    })
+    .catch((err: any) => {
+      state.status = "failed";
+      state.error = err?.message || String(err);
+      pipelineLogger.error(`[${job.id}] Publish failed`, err, "StickmanJob");
+    })
+    .finally(() => {
+      state.finishedAt = Date.now();
+      persist();
+    });
+  return state;
+}
+
+/** Let the user retry after a failed publish. */
+export function resetPublish(jobId: string): void {
+  const job = jobs.get(jobId);
+  if (job?.publish?.status === "failed") {
+    job.publish = undefined;
+    persist();
+  }
+}
+
+// ── Restart recovery ────────────────────────────────────────────────────────
+// A deploy or crash must not lose a video being created.
+
+const MAX_RESTARTS = 2;
+
+function restartFromScratch(job: StickmanJob): void {
+  const estimate = job.estimate;
+  job.status = "running";
+  job.error = undefined;
+  job.finishedAt = undefined;
+  job.cloudRun = undefined;
+  job.stages = STAGE_ORDER.map((key) => ({
+    key, label: STAGE_LABELS[key], status: "pending", fraction: 0, estSec: estimate.stageSec[key],
+  }));
+  persist();
+  void run(job);
+}
+
+export function recoverInterruptedJobs(): void {
+  for (const job of jobs.values()) {
+    if (job.publish?.status === "running") {
+      job.publish = { ...job.publish, status: "failed", finishedAt: Date.now(), error: "Interrupted by an app restart - click Publish again" };
+    }
+    if (job.status !== "running") continue;
+
+    job.restarts = (job.restarts ?? 0) + 1;
+    if (job.restarts > MAX_RESTARTS) {
+      job.status = "failed";
+      job.error = "Interrupted by repeated app restarts";
+      job.finishedAt = Date.now();
+      continue;
+    }
+    if (job.cloudRun) {
+      pipelineLogger.info(`[${job.id}] Re-attaching to GitHub run #${job.cloudRun.runId}`, "StickmanJob");
+      void run(job, true).then(() => {
+        // the run was cancelled/lost: start the whole job again once rather than leave it failed
+        if (job.status === "failed" && job.restarts! <= MAX_RESTARTS) restartFromScratch(job);
+      });
+    } else {
+      pipelineLogger.info(`[${job.id}] Restarting interrupted job from scratch`, "StickmanJob");
+      restartFromScratch(job);
+    }
+  }
+  persist();
+}
+
+setTimeout(recoverInterruptedJobs, 5000).unref();
