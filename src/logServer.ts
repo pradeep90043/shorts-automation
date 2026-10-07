@@ -18,7 +18,7 @@ import { MultiSceneGenerator } from "./video/multiSceneGenerator";
 import { YouTubeService } from "./youtube";
 import { estimateStickman } from "./my-video/stickmanEstimate";
 import { getStickmanJob, listStickmanJobs, startStickmanJob } from "./my-video/stickmanJobs";
-import { resolveMyVideoDir } from "./my-video/myVideoService";
+import { recordCloudProgress, resolveMyVideoDir } from "./my-video/myVideoService";
 import { pipelineLogger } from "./utils/logger";
 import { buildActivityFeed, loadJobSummaries, jobsFileFor } from "./utils/activityFeed";
 import { dmStore, dmKnowledgeBase, inboundDmManager, outboundDmManager, aiDmBrain, getPersona } from "./instagram/dm";
@@ -1675,6 +1675,12 @@ export function startLogServer(): void {
             channelKey: body.channelKey ? String(body.channelKey) : undefined,
           });
           return json(200, { success: true, job: getStickmanJob(job.id) });
+        }
+        if (req.method === "POST" && route === "/api/longvideo/progress") {
+          // Called by the GitHub runner every few seconds with the live frame count.
+          const body = await parseJsonBody(req);
+          const ok = recordCloudProgress(String(body.slug || ""), String(body.token || ""), Number(body.done), Number(body.total));
+          return json(ok ? 200 : 403, { success: ok });
         }
         if (req.method === "GET" && route.startsWith("/api/longvideo/bundle/")) {
           const slug = route.replace("/api/longvideo/bundle/", "").trim();
