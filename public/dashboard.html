@@ -1003,6 +1003,7 @@
           '<div><div style="font-size:10px;color:var(--text-muted);">TIME TO CREATE</div><b style="color:var(--primary);">~' + lvFmt(e.totalSec) + '</b> <span style="font-size:10px;color:var(--text-muted);">' + (e.basedOnSamples ? '(from ' + e.basedOnSamples + ' past renders)' : '(first run &mdash; rough guess)') + '</span></div>' +
           '<div><div style="font-size:10px;color:var(--text-muted);">VOICE SPEED</div><b>' + lvEsc(e.rate) + '</b></div>' +
         '</div>' +
+        (e.fitToWords ? '<div style="margin-top:8px;color:var(--primary);">✍️ Your script (' + e.words + ' words) will be automatically rewritten to ~' + e.fitToWords + ' words to fit ' + lvFmt(e.targetSec) + ' before the video is made.</div>' : '') +
         (e.note ? '<div style="margin-top:8px;color:#d29922;">⚠️ ' + lvEsc(e.note) + '</div>' : '');
     } catch (err) { box.style.display = 'none'; }
   }
@@ -1121,8 +1122,10 @@
         '<div style="font-size:14px;font-weight:800;color:#fff;">' + (running ? '⏳ Creating video…' : j.status === 'done' ? '✅ Video ready' : '❌ Failed') + (j.title ? ' <span style="font-weight:400;color:var(--text-muted);">&middot; ' + lvEsc(j.title) + '</span>' : '') + '</div>' +
         '<div style="font-size:12px;font-family:var(--font-mono);color:var(--text-muted);">elapsed <b style="color:#fff;">' + lvFmt(elapsed) + '</b>' + (running ? ' &middot; remaining ~<b style="color:var(--primary);">' + lvFmt(eta) + '</b>' : '') + ' &middot; estimated ' + lvFmt(estTotal) + '</div>' +
       '</div>' +
+      (j.adjustNote ? '<div style="font-size:12px;color:var(--primary);margin-bottom:8px;">✍️ ' + lvEsc(j.adjustNote) + '</div>' : '') +
       '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;"><div style="flex:1;height:10px;background:#21262d;border-radius:5px;overflow:hidden;"><div style="height:100%;width:' + pct + '%;background:' + color + ';transition:width .4s;"></div></div><div style="font-size:12px;font-family:var(--font-mono);color:#fff;width:40px;text-align:right;">' + pct + '%</div></div>' +
-      stages + result;
+      stages + result +
+      (!running && j.finalScript ? '<details style="margin-top:12px;"><summary style="cursor:pointer;font-size:12px;color:var(--text-muted);">Final narration used (' + j.finalScript.split(/\s+/).length + ' words)</summary><div style="margin-top:8px;padding:10px;background:#161b22;border:1px solid #21262d;border-radius:6px;font-size:12px;line-height:1.6;color:#c9d1d9;white-space:pre-wrap;max-height:240px;overflow:auto;">' + lvEsc(j.finalScript) + '</div></details>' : '');
   }
 
   async function lvPublish() {

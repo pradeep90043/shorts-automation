@@ -1,10 +1,8 @@
 import fs from "fs";
 import path from "path";
 import { config } from "../config";
-import { countWords, splitScriptIntoBeats } from "./stickmanPlanner";
+import { cleanScript, countWords, splitScriptIntoBeats, targetWordsFor, WORDS_PER_SEC } from "./stickmanPlanner";
 
-/** Edge-TTS Hindi/Hinglish speaks ~2.4 words/s at the default +5% rate. */
-const WORDS_PER_SEC = 2.4;
 const FPS = 30;
 const MIN_RATE_PCT = -20;
 const MAX_RATE_PCT = 30;
@@ -84,14 +82,21 @@ export interface StickmanEstimate {
   targetSec?: number;
   /** TTS rate (e.g. "+12%") chosen so the narration lands on the requested length */
   rate: string;
-  /** set when the script can't reach the requested length within a natural speaking speed */
+  /** set when the script will be rewritten to fit the target: the word count it will be fitted to */
+  fitToWords?: number;
+  /** set when the target can't be reached even with a rewrite */
   note?: string;
   stageSec: Record<StageKey, number>;
   totalSec: number;
   basedOnSamples: number;
 }
 
-export function estimateStickman(script: string, targetSec?: number, resolution: 720 | 1080 = 720): StickmanEstimate {
+/**
+ * `fitted` = the script has already been rewritten to the target (inside a job),
+ * so don't plan another rewrite.
+ */
+export function estimateStickman(script: string, targetSec?: number, resolution: 720 | 1080 = 720, fitted = false): StickmanEstimate {
+  script = cleanScript(script);
   const beats = splitScriptIntoBeats(script);
   const words = countWords(script);
   const scenes = beats.length;
@@ -100,18 +105,21 @@ export function estimateStickman(script: string, targetSec?: number, resolution:
 
   let ratePct = DEFAULT_RATE_PCT;
   let note: string | undefined;
+  let fitToWords: number | undefined;
   let videoSec = naturalSec;
   if (targetSec && targetSec > 0 && words > 0) {
-    // speaking time scales ~1/(1+rate): solve for the rate that hits the target
-    const neededSpeed = (words / WORDS_PER_SEC) / Math.max(1, targetSec - pauseSec); // relative to the default rate
-    const wanted = Math.round((neededSpeed * (1 + DEFAULT_RATE_PCT / 100) - 1) * 100);
-    ratePct = Math.min(MAX_RATE_PCT, Math.max(MIN_RATE_PCT, wanted));
-    const speed = (1 + ratePct / 100) / (1 + DEFAULT_RATE_PCT / 100);
-    videoSec = (words / WORDS_PER_SEC) / speed + pauseSec;
-    if (Math.abs(videoSec - targetSec) > targetSec * 0.12) {
-      note = videoSec > targetSec
-        ? `Script is too long for ${fmt(targetSec)} - it will run about ${fmt(videoSec)}. Trim ~${Math.ceil((videoSec - targetSec) * WORDS_PER_SEC)} words to hit the target.`
-        : `Script is short for ${fmt(targetSec)} - it will run about ${fmt(videoSec)}. Add ~${Math.ceil((targetSec - videoSec) * WORDS_PER_SEC)} words to fill the target.`;
+    const goal = targetWordsFor(targetSec);
+    if (!fitted && Math.abs(words - goal) > goal * 0.1) {
+      // the script gets rewritten to the target before rendering: plan for that
+      fitToWords = goal;
+      videoSec = targetSec;
+    } else {
+      // fine-tune with the TTS rate so the narration lands on the target
+      const neededSpeed = (words / WORDS_PER_SEC) / Math.max(1, targetSec - pauseSec); // relative to the default rate
+      ratePct = Math.min(MAX_RATE_PCT, Math.max(MIN_RATE_PCT, Math.round((neededSpeed * (1 + DEFAULT_RATE_PCT / 100) - 1) * 100)));
+      const speed = (1 + ratePct / 100) / (1 + DEFAULT_RATE_PCT / 100);
+      videoSec = (words / WORDS_PER_SEC) / speed + pauseSec;
+      if (Math.abs(videoSec - targetSec) > targetSec * 0.12) note = `Video will run about ${fmt(videoSec)} instead of ${fmt(targetSec)}.`;
     }
   }
 
@@ -120,7 +128,7 @@ export function estimateStickman(script: string, targetSec?: number, resolution:
   // 1080 renders ~2.2x the pixels of 720
   const resFactor = resolution === 1080 ? 2.2 : 1;
   const stageSec: Record<StageKey, number> = {
-    plan: 8,
+    plan: fitToWords ? 25 : 10, // a script rewrite adds an LLM round trip
     audio: scenes * timings.secPerScene,
     merge: 3 + videoSec * 0.05,
     bundle: timings.bundleSec,
@@ -134,6 +142,7 @@ export function estimateStickman(script: string, targetSec?: number, resolution:
     videoSec,
     targetSec,
     rate: `${ratePct >= 0 ? "+" : ""}${ratePct}%`,
+    fitToWords,
     note,
     stageSec,
     totalSec,
