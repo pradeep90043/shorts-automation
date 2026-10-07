@@ -113,6 +113,22 @@ const run = (cwd: string, args: string[], onText?: (text: string) => void): Prom
     });
   });
 
+/** fetch with retries: a single transient network error must not fail a render that already succeeded in the cloud. */
+async function fetchRetry(url: string, init?: RequestInit, attempts = 6): Promise<Response> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const res = await fetch(url, init);
+      if (res.status < 500 && res.status !== 429) return res;
+      lastErr = new Error(`HTTP ${res.status}`);
+    } catch (err) {
+      lastErr = err;
+    }
+    await new Promise((r) => setTimeout(r, Math.min(30000, 2000 * 2 ** i)));
+  }
+  throw lastErr;
+}
+
 async function renderViaGithubActions(
   _dir: string,
   spec: StickmanVideoSpec,
@@ -131,7 +147,7 @@ async function renderViaGithubActions(
   logger.info(`[my-video] Dispatching Remotion render to GitHub Cloud (${repo})...`);
   emit({ stage: "bundle", fraction: 0.1, detail: "Dispatching to GitHub Cloud (7GB RAM)..." });
 
-  const dispatchRes = await fetch(`https://api.github.com/repos/${repo}/actions/workflows/render.yml/dispatches`, {
+  const dispatchRes = await fetchRetry(`https://api.github.com/repos/${repo}/actions/workflows/render.yml/dispatches`, {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${ghToken}`,
@@ -164,7 +180,7 @@ async function renderViaGithubActions(
   for (let attempt = 0; attempt < 25; attempt++) {
     await new Promise((r) => setTimeout(r, 4000));
     try {
-      const runsRes = await fetch(`https://api.github.com/repos/${repo}/actions/runs?event=workflow_dispatch&per_page=5`, {
+      const runsRes = await fetchRetry(`https://api.github.com/repos/${repo}/actions/runs?event=workflow_dispatch&per_page=5`, {
         headers: {
           "Authorization": `Bearer ${ghToken}`,
           "Accept": "application/vnd.github.v3+json",
@@ -197,13 +213,19 @@ async function renderViaGithubActions(
   while (true) {
     await new Promise((r) => setTimeout(r, 6000));
     pollCount++;
-    const statusRes = await fetch(`https://api.github.com/repos/${repo}/actions/runs/${runId}`, {
+    let statusRes: Response;
+    try {
+      statusRes = await fetchRetry(`https://api.github.com/repos/${repo}/actions/runs/${runId}`, {
       headers: {
         "Authorization": `Bearer ${ghToken}`,
         "Accept": "application/vnd.github.v3+json",
         "User-Agent": "shorts-automation",
       },
     });
+    } catch (err) {
+      logger.warn(`[my-video] GitHub status poll failed, will keep polling: ${(err as Error).message}`);
+      continue;
+    }
     if (!statusRes.ok) continue;
     const run = (await statusRes.json()) as any;
 
@@ -220,7 +242,7 @@ async function renderViaGithubActions(
 
   // Fetch artifact
   emit({ stage: "finalize", fraction: 0.7, detail: "Downloading rendered video from GitHub Cloud..." });
-  const artifactsRes = await fetch(`https://api.github.com/repos/${repo}/actions/runs/${runId}/artifacts`, {
+  const artifactsRes = await fetchRetry(`https://api.github.com/repos/${repo}/actions/runs/${runId}/artifacts`, {
     headers: {
       "Authorization": `Bearer ${ghToken}`,
       "Accept": "application/vnd.github.v3+json",
@@ -233,7 +255,7 @@ async function renderViaGithubActions(
   if (!artifact) throw new Error(`Video artifact not found in completed GitHub run #${runId}`);
 
   logger.info(`[my-video] Downloading artifact ${artifact.name} (${artifact.size_in_bytes} bytes)...`);
-  const downloadRes = await fetch(artifact.archive_download_url, {
+  const downloadRes = await fetchRetry(artifact.archive_download_url, {
     headers: { "Authorization": `Bearer ${ghToken}`, "User-Agent": "shorts-automation" },
   });
   if (!downloadRes.ok) throw new Error(`Failed to download artifact: ${downloadRes.status}`);
