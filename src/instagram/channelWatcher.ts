@@ -199,10 +199,20 @@ export class ChannelWatcher {
     limitPerTag: number,
     allowSessionRefresh = true,
   ): Promise<ScoredReel[]> {
-    if (this.scrapersInCooldown()) {
+    if (config.instagramScraper.loginFreeMode || this.scrapersInCooldown()) {
+      if (config.instagramScraper.loginFreeMode) {
+        pipelineLogger.info(
+          `[${this.profile.brandName}] Login-free mode enabled: searching viral reels via search-engine discovery...`,
+          "ChannelWatcher",
+        );
+      }
       const se = await this.discoverViaSearchEngine(Math.max(limitPerTag * 2, 10));
       if (se.length > 0) return se.map((r) => this.seToScored(r));
-      throw new Error("Instagram session dead (scrapers in cooldown) and search-engine discovery found nothing");
+      throw new Error(
+        config.instagramScraper.loginFreeMode
+          ? "Search-engine discovery found no reels"
+          : "Instagram session dead (scrapers in cooldown) and search-engine discovery found nothing",
+      );
     }
     const candidates = this.getScraperEnvCandidates();
     let lastError: Error | null = null;
@@ -337,10 +347,14 @@ export class ChannelWatcher {
   }
 
   private async listChannelReelsWithFallback(channel: string, allowSessionRefresh = true): Promise<any[]> {
-    if (this.scrapersInCooldown()) {
+    if (config.instagramScraper.loginFreeMode || this.scrapersInCooldown()) {
       const se = await this.discoverViaSearchEngine(10);
       if (se.length > 0) return se.map((r) => ({ shortcode: r.shortcode, url: r.url, creatorUsername: r.creatorUsername }));
-      throw new Error(`Instagram session dead (scrapers in cooldown) and search-engine discovery found nothing for @${channel}`);
+      throw new Error(
+        config.instagramScraper.loginFreeMode
+          ? `Search-engine discovery found no reels for channel @${channel}`
+          : `Instagram session dead (scrapers in cooldown) and search-engine discovery found nothing for @${channel}`,
+      );
     }
     const candidates = this.getScraperEnvCandidates();
     let lastError: Error | null = null;
@@ -628,32 +642,49 @@ export class ChannelWatcher {
     // ── Channel-list pool (channels | both mode, or hashtag fallback) ───────
     const pool: Array<{ shortcode: string; url: string; channel: string }> = [];
     if (activeSearchMode === "channels" || activeSearchMode === "both" || this.hashtagReelPool.length === 0) {
-      for (const channel of channels) {
-        if (excludes.has(channel.toLowerCase().trim())) {
-          continue;
+      if (config.instagramScraper.loginFreeMode) {
+        pipelineLogger.info(
+          `[${this.profile.brandName}] Login-free mode: discovering reels directly via search engine...`,
+          "ChannelWatcher",
+        );
+        const seReels = await this.discoverViaSearchEngine(Math.max(dailyCount * 3, 20));
+        for (const r of seReels) {
+          if (!this.history.has(r.shortcode)) {
+            pool.push({
+              shortcode: r.shortcode,
+              url: r.url,
+              channel: r.creatorUsername || `search:${r.sourceHashtag || this.profile.key}`,
+            });
+          }
         }
-        try {
-          const reels = await this.listChannelReelsWithFallback(channel);
-          for (const r of reels) {
-            if (!this.history.has(r.shortcode)) {
-              pool.push({ ...r, channel });
+      } else {
+        for (const channel of channels) {
+          if (excludes.has(channel.toLowerCase().trim())) {
+            continue;
+          }
+          try {
+            const reels = await this.listChannelReelsWithFallback(channel);
+            for (const r of reels) {
+              if (!this.history.has(r.shortcode)) {
+                pool.push({ ...r, channel });
+              }
             }
+          } catch (err) {
+            if (err instanceof InstagramSessionDeadError) {
+              await this.alertSessionDead(`batch selection @${channel}`, err);
+              break; // every channel shares the same dead session — stop hammering
+            }
+            pipelineLogger.error(
+              `[${this.profile.brandName}] Failed to list reels for @${channel}`,
+              err,
+              "ChannelWatcher",
+            );
           }
-        } catch (err) {
-          if (err instanceof InstagramSessionDeadError) {
-            await this.alertSessionDead(`batch selection @${channel}`, err);
-            break; // every channel shares the same dead session — stop hammering
-          }
-          pipelineLogger.error(
-            `[${this.profile.brandName}] Failed to list reels for @${channel}`,
-            err,
-            "ChannelWatcher",
-          );
+          // Space out consecutive channel polls to stay well under Instagram's
+          // per-minute limits (configurable; default 25s + up to 10s jitter).
+          const base = config.instagramScraper.interChannelDelayMs;
+          await new Promise((r) => setTimeout(r, base + Math.random() * 10000));
         }
-        // Space out consecutive channel polls to stay well under Instagram's
-        // per-minute limits (configurable; default 25s + up to 10s jitter).
-        const base = config.instagramScraper.interChannelDelayMs;
-        await new Promise((r) => setTimeout(r, base + Math.random() * 10000));
       }
 
       // Fisher-Yates shuffle

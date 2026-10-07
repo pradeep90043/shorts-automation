@@ -32,9 +32,15 @@ export const logger = winston.createLogger({
     new winston.transports.File({
       filename: path.join(config.paths.logDir, "error.log"),
       level: "error",
+      maxsize: 10 * 1024 * 1024, // 10MB per file
+      maxFiles: 7, // 7 rotated files max (7-day TTL equivalent)
+      tailable: true,
     }),
     new winston.transports.File({
       filename: path.join(config.paths.logDir, "combined.log"),
+      maxsize: 15 * 1024 * 1024, // 15MB per file
+      maxFiles: 7, // 7 rotated files max (7-day TTL equivalent)
+      tailable: true,
     }),
     new winston.transports.Console({
       format: consoleFormat,

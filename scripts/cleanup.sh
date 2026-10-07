@@ -23,10 +23,21 @@ if [ -d "$TEMP_DIR" ]; then
     find "$TEMP_DIR" -type f -mtime +3 -print -delete
 fi
 
-# Clean logs folder (log files) - 14 days retention
+# Clean logs folder (log files) - 7 days TTL retention
 if [ -d "$LOGS_DIR" ]; then
-    echo "Cleaning log files older than 14 days..."
-    find "$LOGS_DIR" -type f -name "*.log" -mtime +14 -print -delete
+    echo "Cleaning log files older than 7 days..."
+    find "$LOGS_DIR" -type f \( -name "*.log*" -o -name "*.tmp" \) -mtime +7 -print -delete
+
+    # Active safety trimming for active logs if they ever exceed 15MB
+    for logfile in "$LOGS_DIR/combined.log" "$LOGS_DIR/error.log"; do
+        if [ -f "$logfile" ]; then
+            fsize=$(wc -c < "$logfile" 2>/dev/null || stat -c%s "$logfile" 2>/dev/null || echo 0)
+            if [ "$fsize" -gt 15728640 ]; then
+                echo "Trimming oversized $(basename "$logfile") ($fsize bytes)..."
+                tail -n 25000 "$logfile" > "${logfile}.prune.tmp" && mv "${logfile}.prune.tmp" "$logfile"
+            fi
+        fi
+    done
 fi
 
 echo "==> Cleanup complete."

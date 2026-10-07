@@ -375,7 +375,7 @@ export async function searchReelsViaSearchEngine(
     execFile(
       PYTHON3,
       args,
-      { timeout: 60000, maxBuffer: 5 * 1024 * 1024 },
+      { timeout: 180000, maxBuffer: 5 * 1024 * 1024 },
       (err, stdout, stderr) => {
         if (err && !stdout.trim()) {
           pipelineLogger.warn(
