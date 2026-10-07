@@ -1,6 +1,6 @@
 // tests/stickman.test.ts - pure logic of the my-video long video planner/estimator
 import assert from "assert";
-import { countWords, sanitizeVisual, splitScriptIntoBeats } from "../src/my-video/stickmanPlanner";
+import { cleanScript, countWords, sanitizeVisual, splitScriptIntoBeats } from "../src/my-video/stickmanPlanner";
 import { estimateStickman } from "../src/my-video/stickmanEstimate";
 
 const script =
@@ -20,11 +20,18 @@ assert.strictEqual(v.mood, "happy");
 assert.strictEqual((v.props as unknown[]).length, 1);
 assert.strictEqual((v.title as string).length, 60);
 
-// a target length picks a TTS rate that lands near it, and flags impossible targets
-const e = estimateStickman(script, 30);
-assert.ok(Math.abs(e.videoSec - 30) < 6, `video length ${e.videoSec} should be near 30s`);
-assert.ok(e.totalSec > e.videoSec * 0.5 && Object.keys(e.stageSec).length === 6);
-assert.ok(estimateStickman(script, 3).note, "unreachable target gets a warning");
-assert.ok(estimateStickman(script, 30, 1080).stageSec.render > estimateStickman(script, 30, 720).stageSec.render, "1080p renders slower");
+// timing labels / markdown pasted from script docs are never spoken
+const messy = "**Hook — 0–5 sec**\n\n“Java vs Node.js vs Python… kya choose karein?”\n\n**5–12 sec — Java**\n\nJava enterprise ka heavyweight hai.";
+const cleaned = cleanScript(messy);
+assert.ok(!/sec|\*|“/.test(cleaned), `labels stripped: ${cleaned}`);
+assert.ok(cleaned.includes("Java vs Node.js vs Python"));
+
+// a script far from the target is planned for an automatic rewrite; a near one only tunes the voice rate
+const fit = estimateStickman(script, 120);
+assert.ok(fit.fitToWords && fit.fitToWords > countWords(script), "short script gets expanded");
+assert.strictEqual(fit.videoSec, 120);
+const near = estimateStickman(script, Math.round(countWords(script) / 2.4 / 0.93));
+assert.strictEqual(near.fitToWords, undefined);
+assert.ok(estimateStickman(script, 120, 1080).stageSec.render > estimateStickman(script, 120, 720).stageSec.render, "1080p renders slower");
 
 console.log("✓ stickman planner/estimator");

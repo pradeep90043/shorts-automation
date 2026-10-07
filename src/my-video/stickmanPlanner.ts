@@ -18,6 +18,28 @@ const MIN_WORDS_PER_SCENE = 5;
 
 export const countWords = (text: string): number => text.trim().split(/\s+/).filter(Boolean).length;
 
+/**
+ * Strips what must never be spoken: markdown, quote marks and timing/section
+ * labels such as "**Hook — 0–5 sec**" that script writers paste in.
+ */
+export function cleanScript(script: string): string {
+  return script
+    .replace(/\r/g, "")
+    .split("\n")
+    .filter((line) => {
+      const t = line.replace(/[*#_`>]/g, "").trim();
+      if (!t) return true;
+      const isTimeLabel = /\b\d+(?:[:.]\d+)?\s*[–—-]\s*\d+(?:[:.]\d+)?\s*(?:sec|secs|seconds|s|min)\b/i.test(t);
+      return !(isTimeLabel && countWords(t) <= 8);
+    })
+    .join("\n")
+    .replace(/[*#_`]+/g, "")
+    .replace(/[“”"]/g, "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 /** Splits a script into narration beats without rewriting a single word. */
 export function splitScriptIntoBeats(script: string): string[] {
   const sentences = script
@@ -86,6 +108,76 @@ export function sanitizeVisual(raw: any, index: number): Record<string, unknown>
   return visual;
 }
 
+/** Edge-TTS Hindi/Hinglish speaks about this many words per second at the default rate. */
+export const WORDS_PER_SEC = 2.4;
+/** Share of the target length left for narration (the rest is pauses between scenes). */
+const SPEECH_SHARE = 0.93;
+const FIT_TOLERANCE = 0.1;
+
+export const targetWordsFor = (targetSec: number): number => Math.round(targetSec * WORDS_PER_SEC * SPEECH_SHARE);
+
+export interface FitResult {
+  script: string;
+  adjusted: boolean;
+  fromWords: number;
+  toWords: number;
+  /** why nothing changed, or how it was adjusted */
+  note: string;
+}
+
+/**
+ * Rewrites the script so its narration fits the requested length: expands a
+ * short script, condenses a long one. Falls back to the original (the TTS rate
+ * is then tuned instead) if the LLM is unavailable or misses the target.
+ */
+export async function fitScriptToDuration(script: string, targetSec?: number): Promise<FitResult> {
+  const fromWords = countWords(script);
+  if (!targetSec || targetSec <= 0 || !fromWords) {
+    return { script, adjusted: false, fromWords, toWords: fromWords, note: "No target length" };
+  }
+  const goal = targetWordsFor(targetSec);
+  if (Math.abs(fromWords - goal) <= goal * FIT_TOLERANCE) {
+    return { script, adjusted: false, fromWords, toWords: fromWords, note: "Script already fits the target length" };
+  }
+
+  const direction = fromWords > goal ? "shorten" : "expand";
+  let best: { text: string; words: number } | null = null;
+  let feedback = "";
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const prompt = `You are a script editor for a spoken stickman explainer video.
+Rewrite the narration below to ${direction} it to about ${goal} words (it must be spoken in about ${Math.round(targetSec)} seconds).
+
+Rules:
+- Keep the same language and tone (if it is Hinglish, stay in Hinglish with the same romanised spelling style).
+- Keep the hook at the start and the closing line/call-to-action at the end.
+- ${direction === "shorten" ? "Cut repetition and minor details, keep every key point." : "Add concrete examples, a relatable analogy and a short recap - no filler, no repetition."}
+- Plain spoken sentences only: no markdown, no headings, no timestamps, no stage directions, no emojis, no quotation marks.
+- Output ONLY the final narration text.${feedback}
+
+Narration:
+${script}`;
+
+    let raw = "";
+    try {
+      raw = await askLlm(prompt);
+    } catch {
+      break;
+    }
+    const text = cleanScript(raw.replace(/^```[a-z]*\n?|```$/gim, "").trim());
+    const words = countWords(text);
+    if (!words) break;
+    if (!best || Math.abs(words - goal) < Math.abs(best.words - goal)) best = { text, words };
+    if (Math.abs(words - goal) <= goal * FIT_TOLERANCE) break;
+    feedback = `\n- IMPORTANT: your last attempt had ${words} words; the target is ${goal} words (+/-10%). Count carefully.`;
+  }
+
+  const improved = best && Math.abs(best.words - goal) < Math.abs(fromWords - goal);
+  if (best && improved) {
+    return { script: best.text, adjusted: true, fromWords, toWords: best.words, note: `Script ${direction === "shorten" ? "shortened" : "expanded"} from ${fromWords} to ${best.words} words to fit ${Math.round(targetSec)}s` };
+  }
+  return { script, adjusted: false, fromWords, toWords: fromWords, note: "Could not rewrite the script (AI unavailable); voice speed is adjusted instead" };
+}
+
 export interface StickmanPlan {
   title: string;
   description: string;
@@ -119,6 +211,7 @@ async function askLlm(prompt: string): Promise<string> {
  * visuals (pose, mood, props, on-screen title) and the YouTube metadata.
  */
 export async function planStickmanVideo(script: string, titleHint?: string): Promise<StickmanPlan> {
+  script = cleanScript(script);
   const beats = splitScriptIntoBeats(script);
   if (!beats.length) throw new Error("Script is empty");
 

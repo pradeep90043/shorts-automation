@@ -8,7 +8,7 @@ import {
   estimateStickman, recordTimings, STAGE_LABELS, STAGE_ORDER,
   type StageKey, type StickmanEstimate,
 } from "./stickmanEstimate";
-import { planStickmanVideo } from "./stickmanPlanner";
+import { cleanScript, fitScriptToDuration, planStickmanVideo } from "./stickmanPlanner";
 
 export interface StickmanJobInput {
   script: string;
@@ -46,6 +46,10 @@ export interface StickmanJob {
   tags?: string[];
   scenes?: number;
   aiVisuals?: boolean;
+  /** the narration actually used (after cleanup and, if a target length was set, rewriting) */
+  finalScript?: string;
+  /** how the script was adjusted to the target length */
+  adjustNote?: string;
   error?: string;
   videoPath?: string;
 }
@@ -109,16 +113,25 @@ export function startStickmanJob(input: StickmanJobInput): StickmanJob {
     })),
   };
   jobs.set(job.id, job);
-  void run(job, estimate);
+  void run(job);
   return job;
 }
 
-async function run(job: StickmanJob, estimate: StickmanEstimate): Promise<void> {
+async function run(job: StickmanJob): Promise<void> {
   const { script, title, orientation, resolution } = job.input;
   const log = (msg: string) => pipelineLogger.info(`[${job.id}] ${msg}`, "StickmanJob");
   try {
-    setStage(job, "plan", { status: "running", fraction: 0.1 });
-    const plan = await planStickmanVideo(script, title);
+    setStage(job, "plan", { status: "running", fraction: 0.1, detail: "Fitting script to length" });
+    const fit = await fitScriptToDuration(cleanScript(script), job.input.targetSec);
+    job.finalScript = fit.script;
+    job.adjustNote = fit.note;
+    log(fit.note);
+    // re-estimate for the final script: voice rate and stage times follow its real length
+    const fitted = estimateStickman(fit.script, job.input.targetSec, job.input.resolution ?? 720, true);
+    job.estimate = fitted;
+    for (const s of job.stages) s.estSec = fitted.stageSec[s.key];
+    setStage(job, "plan", { fraction: 0.5, detail: "Choosing visuals" });
+    const plan = await planStickmanVideo(fit.script, title);
     Object.assign(job, { title: plan.title, description: plan.description, tags: plan.tags, scenes: plan.scenes.length, aiVisuals: plan.aiVisuals });
     setStage(job, "plan", { status: "done", fraction: 1 });
     log(`Planned ${plan.scenes.length} scenes (${plan.aiVisuals ? "AI" : "rule-based"} visuals)`);
@@ -132,7 +145,7 @@ async function run(job: StickmanJob, estimate: StickmanEstimate): Promise<void> 
         scenes: plan.scenes,
         orientation: orientation ?? "horizontal",
         resolution: resolution ?? (orientation === "vertical" ? 1080 : 720),
-        rate: estimate.rate,
+        rate: job.estimate.rate,
       },
       (p) => applyProgress(job, p),
     );
