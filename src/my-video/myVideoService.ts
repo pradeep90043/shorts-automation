@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { spawn } from "child_process";
+import { spawn, execSync } from "child_process";
 import { config } from "../config";
 import { logger } from "../utils/logger";
 
@@ -113,6 +113,152 @@ const run = (cwd: string, args: string[], onText?: (text: string) => void): Prom
     });
   });
 
+async function renderViaGithubActions(
+  _dir: string,
+  spec: StickmanVideoSpec,
+  renderedPath: string,
+  emit: (p: RenderProgress) => void,
+): Promise<void> {
+  const ghToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+  if (!ghToken) throw new Error("No GITHUB_TOKEN configured for cloud rendering");
+
+  const repo = process.env.MY_VIDEO_GITHUB_REPO || "pradeep90043/my-video";
+  const publicUrl = process.env.PUBLIC_URL || "https://shorts-automation.duckdns.org";
+  const bundleUrl = `${publicUrl}/api/longvideo/bundle/${spec.slug}`;
+  const vertical = spec.orientation === "vertical";
+  const resolution = String(spec.resolution ?? (vertical ? 1080 : 720));
+
+  logger.info(`[my-video] Dispatching Remotion render to GitHub Cloud (${repo})...`);
+  emit({ stage: "bundle", fraction: 0.1, detail: "Dispatching to GitHub Cloud (7GB RAM)..." });
+
+  const dispatchRes = await fetch(`https://api.github.com/repos/${repo}/actions/workflows/render.yml/dispatches`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${ghToken}`,
+      "Accept": "application/vnd.github.v3+json",
+      "Content-Type": "application/json",
+      "User-Agent": "shorts-automation",
+    },
+    body: JSON.stringify({
+      ref: "main",
+      inputs: {
+        project: spec.slug,
+        bundle_url: bundleUrl,
+        resolution,
+        draft: "false",
+      },
+    }),
+  });
+
+  if (!dispatchRes.ok) {
+    const errText = await dispatchRes.text();
+    throw new Error(`GitHub Actions dispatch failed (${dispatchRes.status}): ${errText}`);
+  }
+
+  // Poll for newly created workflow run
+  emit({ stage: "bundle", fraction: 0.3, detail: "Waiting for GitHub Cloud runner..." });
+  let runId: number | null = null;
+  let runUrl = "";
+  const dispatchTime = Date.now() - 15000;
+
+  for (let attempt = 0; attempt < 25; attempt++) {
+    await new Promise((r) => setTimeout(r, 4000));
+    try {
+      const runsRes = await fetch(`https://api.github.com/repos/${repo}/actions/runs?event=workflow_dispatch&per_page=5`, {
+        headers: {
+          "Authorization": `Bearer ${ghToken}`,
+          "Accept": "application/vnd.github.v3+json",
+          "User-Agent": "shorts-automation",
+        },
+      });
+      if (runsRes.ok) {
+        const data = (await runsRes.json()) as any;
+        const matching = (data.workflow_runs || []).find(
+          (r: any) => new Date(r.created_at).getTime() >= dispatchTime
+        );
+        if (matching) {
+          runId = matching.id;
+          runUrl = matching.html_url;
+          logger.info(`[my-video] Found active GitHub Cloud run #${runId}: ${runUrl}`);
+          break;
+        }
+      }
+    } catch (e) {
+      // transient network poll error
+    }
+  }
+
+  if (!runId) {
+    throw new Error("Dispatched to GitHub Actions, but workflow run could not be found within 100s.");
+  }
+
+  // Poll workflow run until completed
+  let pollCount = 0;
+  while (true) {
+    await new Promise((r) => setTimeout(r, 6000));
+    pollCount++;
+    const statusRes = await fetch(`https://api.github.com/repos/${repo}/actions/runs/${runId}`, {
+      headers: {
+        "Authorization": `Bearer ${ghToken}`,
+        "Accept": "application/vnd.github.v3+json",
+        "User-Agent": "shorts-automation",
+      },
+    });
+    if (!statusRes.ok) continue;
+    const run = (await statusRes.json()) as any;
+
+    if (run.status === "in_progress") {
+      const progressFraction = Math.min(0.9, 0.35 + pollCount * 0.03);
+      emit({ stage: "render", fraction: progressFraction, detail: `Rendering in GitHub Cloud (7GB RAM)...` });
+    } else if (run.status === "completed") {
+      if (run.conclusion !== "success") {
+        throw new Error(`GitHub Cloud Render failed with status: ${run.conclusion}. Check logs: ${run.html_url}`);
+      }
+      break;
+    }
+  }
+
+  // Fetch artifact
+  emit({ stage: "finalize", fraction: 0.7, detail: "Downloading rendered video from GitHub Cloud..." });
+  const artifactsRes = await fetch(`https://api.github.com/repos/${repo}/actions/runs/${runId}/artifacts`, {
+    headers: {
+      "Authorization": `Bearer ${ghToken}`,
+      "Accept": "application/vnd.github.v3+json",
+      "User-Agent": "shorts-automation",
+    },
+  });
+  if (!artifactsRes.ok) throw new Error("Failed to list artifacts from GitHub run");
+  const artifactsData = (await artifactsRes.json()) as any;
+  const artifact = (artifactsData.artifacts || []).find((a: any) => a.name.includes(spec.slug) || a.name.startsWith("video-"));
+  if (!artifact) throw new Error(`Video artifact not found in completed GitHub run #${runId}`);
+
+  logger.info(`[my-video] Downloading artifact ${artifact.name} (${artifact.size_in_bytes} bytes)...`);
+  const downloadRes = await fetch(artifact.archive_download_url, {
+    headers: { "Authorization": `Bearer ${ghToken}`, "User-Agent": "shorts-automation" },
+  });
+  if (!downloadRes.ok) throw new Error(`Failed to download artifact: ${downloadRes.status}`);
+
+  const buffer = Buffer.from(await downloadRes.arrayBuffer());
+  const outDir = path.dirname(renderedPath);
+  fs.mkdirSync(outDir, { recursive: true });
+  const zipFile = path.join(outDir, `${spec.slug}.artifact.zip`);
+  fs.writeFileSync(zipFile, buffer);
+
+  try {
+    execSync(`python3 -m zipfile -e "${zipFile}" "${outDir}"`, { stdio: "ignore" });
+  } catch {
+    execSync(`unzip -o "${zipFile}" -d "${outDir}"`, { stdio: "ignore" });
+  }
+  fs.rmSync(zipFile, { force: true });
+
+  // Locate the extracted mp4 file
+  const extractedFiles = fs.readdirSync(outDir);
+  const mp4 = extractedFiles.find((f) => f.endsWith(".mp4") && (f.includes(spec.slug) || f.endsWith(".mp4")));
+  if (mp4 && path.join(outDir, mp4) !== renderedPath) {
+    fs.renameSync(path.join(outDir, mp4), renderedPath);
+  }
+}
+
 // Renders are CPU/RAM heavy: run one at a time, queue the rest.
 let queue: Promise<unknown> = Promise.resolve();
 
@@ -178,38 +324,48 @@ const doRender = async (spec: StickmanVideoSpec, onProgress?: ProgressCallback):
     await run(dir, ["run", "longform:merge", "--", ...project]);
     emit({ stage: "merge", fraction: 1 });
 
-    emit({ stage: "bundle", fraction: 0 });
+    const ghToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+    const forceLocal = process.env.RENDER_LOCAL === "true";
     let totalFrames: number | undefined;
-    let stage: RenderStage = "bundle";
-    await run(
-      dir,
-      [
-        "run", "longform:render", "--", ...project,
-        "--concurrency", RENDER_CONCURRENCY,
-        // vertical: resolution = frame width (1080 -> 1080x1920); horizontal: frame height (720 -> 1280x720)
-        "--resolution", String(spec.resolution ?? (vertical ? 1080 : 720)),
-      ],
-      (t) => {
-        // Remotion redraws progress with \r, so a chunk may hold several updates: use the latest.
-        const b = [...t.matchAll(/Bundling (\d+)%/g)].pop();
-        if (b && stage === "bundle") emit({ stage: "bundle", fraction: Number(b[1]) / 100 });
-        const r = [...t.matchAll(/Rendered (\d+)\/(\d+)/g)].pop();
-        if (r) {
-          if (stage === "bundle") {
-            emit({ stage: "bundle", fraction: 1 });
-            stage = "render";
+
+    if (ghToken && !forceLocal) {
+      logger.info(`[my-video] Dispatching Remotion render to GitHub Cloud Runner (7GB RAM)...`);
+      await renderViaGithubActions(dir, spec, renderedPath, emit);
+    } else {
+      logger.info(`[my-video] Running local Remotion render (concurrency=${RENDER_CONCURRENCY})...`);
+      emit({ stage: "bundle", fraction: 0 });
+      let stage: RenderStage = "bundle";
+      await run(
+        dir,
+        [
+          "run", "longform:render", "--", ...project,
+          "--concurrency", RENDER_CONCURRENCY,
+          // vertical: resolution = frame width (1080 -> 1080x1920); horizontal: frame height (720 -> 1280x720)
+          "--resolution", String(spec.resolution ?? (vertical ? 1080 : 720)),
+        ],
+        (t) => {
+          // Remotion redraws progress with \r, so a chunk may hold several updates: use the latest.
+          const b = [...t.matchAll(/Bundling (\d+)%/g)].pop();
+          if (b && stage === "bundle") emit({ stage: "bundle", fraction: Number(b[1]) / 100 });
+          const r = [...t.matchAll(/Rendered (\d+)\/(\d+)/g)].pop();
+          if (r) {
+            if (stage === "bundle") {
+              emit({ stage: "bundle", fraction: 1 });
+              stage = "render";
+            }
+            totalFrames = Number(r[2]);
+            const done = Number(r[1]);
+            emit({ stage: "render", fraction: done / totalFrames, totalFrames, detail: `Frame ${done}/${totalFrames}` });
+            if (done >= totalFrames) stage = "finalize";
           }
-          totalFrames = Number(r[2]);
-          const done = Number(r[1]);
-          emit({ stage: "render", fraction: done / totalFrames, totalFrames, detail: `Frame ${done}/${totalFrames}` });
-          if (done >= totalFrames) stage = "finalize";
-        }
-        if (/Branding added|Running QA/.test(t)) {
-          stage = "finalize";
-          emit({ stage: "finalize", fraction: 0.6, totalFrames });
-        }
-      },
-    );
+          if (/Branding added|Running QA/.test(t)) {
+            stage = "finalize";
+            emit({ stage: "finalize", fraction: 0.6, totalFrames });
+          }
+        },
+      );
+    }
+
     emit({ stage: "finalize", fraction: 1, totalFrames });
     if (!fs.existsSync(renderedPath)) throw new Error(`my-video finished but ${renderedPath} is missing`);
 
