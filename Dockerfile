@@ -40,14 +40,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libdrm2 \
     libcups2 \
     libatspi2.0-0 \
+    libdbus-1-3 \
+    libatk1.0-0 \
+    libpango-1.0-0 \
+    libcairo2 \
     ca-certificates \
     wget \
     python3 \
     python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-# Python deps (faster-whisper: local transcription, model baked in below; pyotp: unattended 2FA for Instagram auto-login; ddgs + beautifulsoup4: search-engine reel discovery)
-RUN pip3 install --break-system-packages instagrapi shazamio pyotp ddgs beautifulsoup4 faster-whisper numpy
+# Python deps (faster-whisper: local transcription, model baked in below; pyotp: unattended 2FA for Instagram auto-login; ddgs + beautifulsoup4: search-engine reel discovery; edge-tts: free TTS for the my-video stickman renderer)
+RUN pip3 install --break-system-packages instagrapi shazamio pyotp ddgs beautifulsoup4 faster-whisper numpy edge-tts
 
 # Bake the Whisper model into the image so the VM never downloads it at runtime.
 ENV WHISPER_MODEL=base \
@@ -67,6 +71,23 @@ WORKDIR /app
 # Production node_modules only
 COPY package*.json ./
 RUN npm ci --omit=dev
+
+# Optional my-video (Remotion/stickman) renderer. Only installed when the git
+# submodule is checked out - the [o] globs match nothing otherwise, so the image
+# still builds without it. Reuses the ffmpeg + python above, plus the apt libs for
+# Chromium; Remotion fetches its own chrome-headless-shell at build time (the
+# supported setup - system Chromium isn't guaranteed to work as a Remotion browser)
+# so renders never download anything at runtime. Package files are copied first so the ~1 GB
+# `npm ci` layer is cached until my-video's dependencies actually change.
+# tsx is a devDependency there but its pipeline scripts need it at runtime.
+COPY my-vide[o]/package*.json /app/my-video/
+RUN if [ -f /app/my-video/package.json ]; then \
+      cd /app/my-video && npm ci --omit=dev --no-audit --no-fund && \
+      npm install --no-save --omit=dev --no-audit --no-fund tsx@4 && \
+      npx remotion browser ensure && \
+      npm cache clean --force; \
+    else echo "my-video submodule not present - stickman renderer disabled"; fi
+COPY my-vide[o]/ /app/my-video/
 
 # App code (compiled) + static assets
 COPY --from=builder /app/dist ./dist

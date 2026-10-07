@@ -16,6 +16,9 @@ import { buildHashtagsForNiche } from "./instagram/nicheSearcher";
 import { computeViralScore } from "./utils/viralScore";
 import { MultiSceneGenerator } from "./video/multiSceneGenerator";
 import { YouTubeService } from "./youtube";
+import { estimateStickman } from "./my-video/stickmanEstimate";
+import { getStickmanJob, listStickmanJobs, startStickmanJob } from "./my-video/stickmanJobs";
+import { resolveMyVideoDir } from "./my-video/myVideoService";
 import { pipelineLogger } from "./utils/logger";
 import { buildActivityFeed, loadJobSummaries, jobsFileFor } from "./utils/activityFeed";
 import { dmStore, dmKnowledgeBase, inboundDmManager, outboundDmManager, aiDmBrain, getPersona } from "./instagram/dm";
@@ -1628,6 +1631,64 @@ export function startLogServer(): void {
         res.end(JSON.stringify({ success: false, message: err.message || "Failed to publish video to YouTube" }));
       }
       return;
+    }
+
+    // ── Long video studio (my-video stickman renderer) ─────────────────────
+    if (url.startsWith("/api/longvideo/")) {
+      const json = (code: number, data: unknown) => {
+        res.writeHead(code, {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store",
+          "Access-Control-Allow-Origin": "*",
+        });
+        res.end(JSON.stringify(data));
+      };
+      const toSec = (v: unknown) => {
+        const n = Number(v);
+        return Number.isFinite(n) && n > 0 ? Math.round(n) : undefined;
+      };
+      const route = url.split("?")[0];
+      try {
+        if (req.method === "POST" && route === "/api/longvideo/estimate") {
+          const body = await parseJsonBody(req);
+          const script = String(body.script || "").trim();
+          if (!script) return json(400, { success: false, message: "Script is empty" });
+          const resolution = Number(body.resolution) === 1080 ? 1080 : 720;
+          return json(200, { success: true, estimate: estimateStickman(script, toSec(body.targetSec), resolution) });
+        }
+        if (req.method === "POST" && route === "/api/longvideo/start") {
+          const body = await parseJsonBody(req);
+          const script = String(body.script || "").trim();
+          if (!script) return json(400, { success: false, message: "Script is empty" });
+          try {
+            resolveMyVideoDir();
+          } catch (e: any) {
+            return json(503, { success: false, message: "Video renderer (my-video) is not installed on this server." });
+          }
+          const orientation = body.orientation === "vertical" ? "vertical" : "horizontal";
+          const job = startStickmanJob({
+            script,
+            title: body.title ? String(body.title) : undefined,
+            targetSec: toSec(body.targetSec),
+            orientation,
+            resolution: Number(body.resolution) === 1080 ? 1080 : 720,
+            channelKey: body.channelKey ? String(body.channelKey) : undefined,
+          });
+          return json(200, { success: true, job: getStickmanJob(job.id) });
+        }
+        if (req.method === "GET" && route === "/api/longvideo/job") {
+          const id = new URL(url, "http://localhost").searchParams.get("id") || "";
+          const job = getStickmanJob(id);
+          return job ? json(200, { success: true, job }) : json(404, { success: false, message: "Job not found" });
+        }
+        if (req.method === "GET" && route === "/api/longvideo/jobs") {
+          return json(200, { success: true, jobs: listStickmanJobs() });
+        }
+        return json(404, { success: false, message: "Unknown long video endpoint" });
+      } catch (err: any) {
+        const busy = /already being created/.test(err?.message || "");
+        return json(busy ? 409 : 500, { success: false, message: err?.message || "Long video request failed" });
+      }
     }
 
     if (url === "/api/dashboard" || url.startsWith("/api/dashboard?")) {

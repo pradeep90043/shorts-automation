@@ -24,3 +24,6 @@ codeorcap_magazine_reader.jpg
 scratch_*.ts
 test-*.ts
 
+
+# runtime app data (mounted into the container on the VM)
+/data

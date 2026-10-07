@@ -7,6 +7,8 @@ services:
     container_name: codeorcap-bot
     restart: unless-stopped
     env_file: .env
+    # Chromium (Remotion renders) needs more than Docker's 64MB default /dev/shm; only used while rendering
+    shm_size: 1gb
     environment:
       - FREELLMAPI_URL=http://freellmapi:3001
       # The VM is always prod: forces *_TELEGRAM_BOT_TOKEN_PROD variants regardless of .env
@@ -22,6 +24,8 @@ services:
       - ./assets/templates:/app/assets/templates
       - ./logs:/app/logs
       - ./cookies.txt:/app/cookies.txt
+      # Persistent app data (stickman render timings + job history); survives redeploys
+      - ./data:/root/.shorts-automation
     # Ports: 3000 (OAuth flow), 3002 (Live Logs server)
     ports:
       - "3000:3000"
