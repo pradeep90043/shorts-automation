@@ -123,15 +123,20 @@ const run = (cwd: string, args: string[], onText?: (text: string) => void): Prom
     });
   });
 
-/** Live frame counts pushed by the GitHub runner (POST /api/longvideo/progress), keyed by slug. */
-const cloudProgress = new Map<string, { token: string; done: number; total: number }>();
+/** Live frame counts pushed by the GitHub runners (POST /api/longvideo/progress), keyed by slug, one entry per parallel chunk. */
+const cloudProgress = new Map<string, { token: string; chunks: Map<number, { done: number; total: number }> }>();
 
-export const recordCloudProgress = (slug: string, token: string, done: number, total: number): boolean => {
+export const recordCloudProgress = (slug: string, token: string, done: number, total: number, chunk = 0): boolean => {
   const entry = cloudProgress.get(slug);
   if (!entry || entry.token !== token || !Number.isFinite(done) || !Number.isFinite(total) || total <= 0) return false;
-  entry.done = Math.min(done, total);
-  entry.total = total;
+  entry.chunks.set(chunk, { done: Math.min(done, total), total });
   return true;
+};
+
+const sumProgress = (slug: string): { done: number; total: number } => {
+  let done = 0, total = 0;
+  for (const c of cloudProgress.get(slug)?.chunks.values() ?? []) { done += c.done; total += c.total; }
+  return { done, total };
 };
 
 /** fetch with retries: a single transient network error must not fail a render that already succeeded in the cloud. */
@@ -164,12 +169,13 @@ async function renderViaGithubActions(
   const publicUrl = process.env.PUBLIC_URL || "https://shorts-automation.duckdns.org";
   const bundleUrl = `${publicUrl}/api/longvideo/bundle/${spec.slug}`;
   const progressToken = resume?.token ?? randomBytes(12).toString("hex");
-  cloudProgress.set(spec.slug, { token: progressToken, done: 0, total: 0 });
+  cloudProgress.set(spec.slug, { token: progressToken, chunks: new Map() });
   const vertical = spec.orientation === "vertical";
   const resolution = String(spec.resolution ?? (vertical ? 1080 : 720));
 
   let runId: number | null = resume?.runId ?? null;
   if (resume) {
+    cloudProgress.set(spec.slug, { token: resume.token, chunks: new Map() });
     logger.info(`[my-video] Resuming watch of GitHub Cloud run #${runId}`);
     emit({ stage: "render", fraction: 0, detail: "Reconnected to GitHub Cloud run...", cloudRun: resume });
   } else {
@@ -191,6 +197,8 @@ async function renderViaGithubActions(
           bundle_url: bundleUrl,
           progress_url: `${publicUrl}/api/longvideo/progress`,
           progress_token: progressToken,
+        // parallel runners; the workflow only splits when there are enough frames per runner
+        chunks: process.env.MY_VIDEO_RENDER_CHUNKS || "2",
           resolution,
           draft: "false",
         },
@@ -261,8 +269,8 @@ async function renderViaGithubActions(
     const run = (await statusRes.json()) as any;
 
     if (run.status === "in_progress") {
-      const live = cloudProgress.get(spec.slug);
-      if (live && live.total > 0) {
+      const live = sumProgress(spec.slug);
+      if (live.total > 0) {
         emit({ stage: "render", fraction: live.done / live.total, totalFrames: live.total, detail: `Frame ${live.done}/${live.total} (GitHub Cloud)` });
       } else {
         emit({ stage: "render", fraction: 0, detail: "GitHub Cloud: voiceover, audio mix and bundling..." });
@@ -286,7 +294,7 @@ async function renderViaGithubActions(
   });
   if (!artifactsRes.ok) throw new Error("Failed to list artifacts from GitHub run");
   const artifactsData = (await artifactsRes.json()) as any;
-  const artifact = (artifactsData.artifacts || []).find((a: any) => a.name.includes(spec.slug) || a.name.startsWith("video-"));
+  const artifact = (artifactsData.artifacts || []).find((a: any) => a.name.startsWith(`video-${spec.slug}`));
   if (!artifact) throw new Error(`Video artifact not found in completed GitHub run #${runId}`);
 
   logger.info(`[my-video] Downloading artifact ${artifact.name} (${artifact.size_in_bytes} bytes)...`);
