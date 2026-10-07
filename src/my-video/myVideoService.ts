@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { randomBytes } from "crypto";
 import { spawn, execSync } from "child_process";
 import { config } from "../config";
 import { logger } from "../utils/logger";
@@ -113,6 +114,17 @@ const run = (cwd: string, args: string[], onText?: (text: string) => void): Prom
     });
   });
 
+/** Live frame counts pushed by the GitHub runner (POST /api/longvideo/progress), keyed by slug. */
+const cloudProgress = new Map<string, { token: string; done: number; total: number }>();
+
+export const recordCloudProgress = (slug: string, token: string, done: number, total: number): boolean => {
+  const entry = cloudProgress.get(slug);
+  if (!entry || entry.token !== token || !Number.isFinite(done) || !Number.isFinite(total) || total <= 0) return false;
+  entry.done = Math.min(done, total);
+  entry.total = total;
+  return true;
+};
+
 /** fetch with retries: a single transient network error must not fail a render that already succeeded in the cloud. */
 async function fetchRetry(url: string, init?: RequestInit, attempts = 6): Promise<Response> {
   let lastErr: unknown;
@@ -141,6 +153,8 @@ async function renderViaGithubActions(
   const repo = process.env.MY_VIDEO_GITHUB_REPO || "pradeep90043/my-video";
   const publicUrl = process.env.PUBLIC_URL || "https://shorts-automation.duckdns.org";
   const bundleUrl = `${publicUrl}/api/longvideo/bundle/${spec.slug}`;
+  const progressToken = randomBytes(12).toString("hex");
+  cloudProgress.set(spec.slug, { token: progressToken, done: 0, total: 0 });
   const vertical = spec.orientation === "vertical";
   const resolution = String(spec.resolution ?? (vertical ? 1080 : 720));
 
@@ -160,6 +174,8 @@ async function renderViaGithubActions(
       inputs: {
         project: spec.slug,
         bundle_url: bundleUrl,
+        progress_url: `${publicUrl}/api/longvideo/progress`,
+        progress_token: progressToken,
         resolution,
         draft: "false",
       },
@@ -209,10 +225,8 @@ async function renderViaGithubActions(
   }
 
   // Poll workflow run until completed
-  let pollCount = 0;
   while (true) {
     await new Promise((r) => setTimeout(r, 6000));
-    pollCount++;
     let statusRes: Response;
     try {
       statusRes = await fetchRetry(`https://api.github.com/repos/${repo}/actions/runs/${runId}`, {
@@ -230,8 +244,12 @@ async function renderViaGithubActions(
     const run = (await statusRes.json()) as any;
 
     if (run.status === "in_progress") {
-      const progressFraction = Math.min(0.9, 0.35 + pollCount * 0.03);
-      emit({ stage: "render", fraction: progressFraction, detail: `Rendering in GitHub Cloud (7GB RAM)...` });
+      const live = cloudProgress.get(spec.slug);
+      if (live && live.total > 0) {
+        emit({ stage: "render", fraction: live.done / live.total, totalFrames: live.total, detail: `Frame ${live.done}/${live.total} (GitHub Cloud)` });
+      } else {
+        emit({ stage: "render", fraction: 0, detail: "GitHub Cloud: voiceover, audio mix and bundling..." });
+      }
     } else if (run.status === "completed") {
       if (run.conclusion !== "success") {
         throw new Error(`GitHub Cloud Render failed with status: ${run.conclusion}. Check logs: ${run.html_url}`);
@@ -401,6 +419,7 @@ const doRender = async (spec: StickmanVideoSpec, onProgress?: ProgressCallback):
     fs.copyFileSync(renderedPath, videoPath);
     return { videoPath, slug: spec.slug };
   } finally {
+    cloudProgress.delete(spec.slug);
     fs.rmSync(projectDir, { recursive: true, force: true });
     // my-video leaves the mp4 plus a QA stamp (<slug>.mp4.qa.json) in out/
     const outDir = path.dirname(renderedPath);
