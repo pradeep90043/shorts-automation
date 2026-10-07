@@ -52,6 +52,15 @@ export interface RenderProgress {
   detail?: string;
   /** total frames of the video, once Remotion reports it */
   totalFrames?: number;
+  /** set once the GitHub run is known, so the app can resume watching it after a restart */
+  cloudRun?: CloudRunRef;
+}
+
+export interface CloudRunRef {
+  runId: number;
+  repo: string;
+  /** per-job token the runner uses for progress callbacks */
+  token: string;
 }
 
 export type ProgressCallback = (p: RenderProgress) => void;
@@ -146,6 +155,7 @@ async function renderViaGithubActions(
   spec: StickmanVideoSpec,
   renderedPath: string,
   emit: (p: RenderProgress) => void,
+  resume?: CloudRunRef,
 ): Promise<void> {
   const ghToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
   if (!ghToken) throw new Error("No GITHUB_TOKEN configured for cloud rendering");
@@ -153,75 +163,82 @@ async function renderViaGithubActions(
   const repo = process.env.MY_VIDEO_GITHUB_REPO || "pradeep90043/my-video";
   const publicUrl = process.env.PUBLIC_URL || "https://shorts-automation.duckdns.org";
   const bundleUrl = `${publicUrl}/api/longvideo/bundle/${spec.slug}`;
-  const progressToken = randomBytes(12).toString("hex");
+  const progressToken = resume?.token ?? randomBytes(12).toString("hex");
   cloudProgress.set(spec.slug, { token: progressToken, done: 0, total: 0 });
   const vertical = spec.orientation === "vertical";
   const resolution = String(spec.resolution ?? (vertical ? 1080 : 720));
 
-  logger.info(`[my-video] Dispatching Remotion render to GitHub Cloud (${repo})...`);
-  emit({ stage: "bundle", fraction: 0.1, detail: "Dispatching to GitHub Cloud (7GB RAM)..." });
+  let runId: number | null = resume?.runId ?? null;
+  if (resume) {
+    logger.info(`[my-video] Resuming watch of GitHub Cloud run #${runId}`);
+    emit({ stage: "render", fraction: 0, detail: "Reconnected to GitHub Cloud run...", cloudRun: resume });
+  } else {
+    logger.info(`[my-video] Dispatching Remotion render to GitHub Cloud (${repo})...`);
+    emit({ stage: "bundle", fraction: 0.1, detail: "Dispatching to GitHub Cloud (7GB RAM)..." });
 
-  const dispatchRes = await fetchRetry(`https://api.github.com/repos/${repo}/actions/workflows/render.yml/dispatches`, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${ghToken}`,
-      "Accept": "application/vnd.github.v3+json",
-      "Content-Type": "application/json",
-      "User-Agent": "shorts-automation",
-    },
-    body: JSON.stringify({
-      ref: "main",
-      inputs: {
-        project: spec.slug,
-        bundle_url: bundleUrl,
-        progress_url: `${publicUrl}/api/longvideo/progress`,
-        progress_token: progressToken,
-        resolution,
-        draft: "false",
+    const dispatchRes = await fetchRetry(`https://api.github.com/repos/${repo}/actions/workflows/render.yml/dispatches`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${ghToken}`,
+        "Accept": "application/vnd.github.v3+json",
+        "Content-Type": "application/json",
+        "User-Agent": "shorts-automation",
       },
-    }),
-  });
-
-  if (!dispatchRes.ok) {
-    const errText = await dispatchRes.text();
-    throw new Error(`GitHub Actions dispatch failed (${dispatchRes.status}): ${errText}`);
-  }
-
-  // Poll for newly created workflow run
-  emit({ stage: "bundle", fraction: 0.3, detail: "Waiting for GitHub Cloud runner..." });
-  let runId: number | null = null;
-  let runUrl = "";
-  const dispatchTime = Date.now() - 15000;
-
-  for (let attempt = 0; attempt < 25; attempt++) {
-    await new Promise((r) => setTimeout(r, 4000));
-    try {
-      const runsRes = await fetchRetry(`https://api.github.com/repos/${repo}/actions/runs?event=workflow_dispatch&per_page=5`, {
-        headers: {
-          "Authorization": `Bearer ${ghToken}`,
-          "Accept": "application/vnd.github.v3+json",
-          "User-Agent": "shorts-automation",
+      body: JSON.stringify({
+        ref: "main",
+        inputs: {
+          project: spec.slug,
+          bundle_url: bundleUrl,
+          progress_url: `${publicUrl}/api/longvideo/progress`,
+          progress_token: progressToken,
+          resolution,
+          draft: "false",
         },
-      });
-      if (runsRes.ok) {
-        const data = (await runsRes.json()) as any;
-        const matching = (data.workflow_runs || []).find(
-          (r: any) => new Date(r.created_at).getTime() >= dispatchTime
-        );
-        if (matching) {
-          runId = matching.id;
-          runUrl = matching.html_url;
-          logger.info(`[my-video] Found active GitHub Cloud run #${runId}: ${runUrl}`);
-          break;
-        }
-      }
-    } catch (e) {
-      // transient network poll error
-    }
-  }
+      }),
+    });
 
-  if (!runId) {
-    throw new Error("Dispatched to GitHub Actions, but workflow run could not be found within 100s.");
+    if (!dispatchRes.ok) {
+      const errText = await dispatchRes.text();
+      throw new Error(`GitHub Actions dispatch failed (${dispatchRes.status}): ${errText}`);
+    }
+
+    // Poll for newly created workflow run
+    emit({ stage: "bundle", fraction: 0.3, detail: "Waiting for GitHub Cloud runner..." });
+    let runUrl = "";
+    const dispatchTime = Date.now() - 15000;
+
+    for (let attempt = 0; attempt < 25; attempt++) {
+      await new Promise((r) => setTimeout(r, 4000));
+      try {
+        const runsRes = await fetchRetry(`https://api.github.com/repos/${repo}/actions/runs?event=workflow_dispatch&per_page=5`, {
+          headers: {
+            "Authorization": `Bearer ${ghToken}`,
+            "Accept": "application/vnd.github.v3+json",
+            "User-Agent": "shorts-automation",
+          },
+        });
+        if (runsRes.ok) {
+          const data = (await runsRes.json()) as any;
+          const matching = (data.workflow_runs || []).find(
+            (r: any) => new Date(r.created_at).getTime() >= dispatchTime
+          );
+          if (matching) {
+            runId = matching.id;
+            runUrl = matching.html_url;
+            logger.info(`[my-video] Found active GitHub Cloud run #${runId}: ${runUrl}`);
+            emit({ stage: "render", fraction: 0, detail: "GitHub Cloud run started", cloudRun: { runId: runId!, repo, token: progressToken } });
+            break;
+          }
+        }
+      } catch (e) {
+        // transient network poll error
+      }
+    }
+
+    if (!runId) {
+      throw new Error("Dispatched to GitHub Actions, but workflow run could not be found within 100s.");
+    }
+
   }
 
   // Poll workflow run until completed
@@ -293,7 +310,7 @@ async function renderViaGithubActions(
 
   // Locate the extracted mp4 file
   const extractedFiles = fs.readdirSync(outDir);
-  const mp4 = extractedFiles.find((f) => f.endsWith(".mp4") && (f.includes(spec.slug) || f.endsWith(".mp4")));
+  const mp4 = extractedFiles.find((f) => f.endsWith(".mp4") && f.includes(spec.slug)) ?? extractedFiles.find((f) => f.endsWith(".mp4"));
   if (mp4 && path.join(outDir, mp4) !== renderedPath) {
     fs.renameSync(path.join(outDir, mp4), renderedPath);
   }
@@ -312,6 +329,40 @@ export const renderStickmanVideo = (
   onProgress?: ProgressCallback,
 ): Promise<MyVideoRenderResult> => {
   const job = queue.then(() => doRender(spec, onProgress));
+  queue = job.catch(() => undefined);
+  return job;
+};
+
+/**
+ * Re-attach to a GitHub Cloud run that was in flight when the app restarted:
+ * keep polling it, download the finished video and return it like a normal render.
+ */
+export const resumeCloudRender = (
+  slug: string,
+  ref: CloudRunRef,
+  onProgress?: ProgressCallback,
+): Promise<MyVideoRenderResult> => {
+  const job = queue.then(async () => {
+    const dir = resolveMyVideoDir();
+    const renderedPath = path.join(dir, "out", `${slug}.mp4`);
+    const emit = (p: RenderProgress) => onProgress?.(p);
+    try {
+      await renderViaGithubActions(dir, { slug } as StickmanVideoSpec, renderedPath, emit, ref);
+      emit({ stage: "finalize", fraction: 1 });
+      if (!fs.existsSync(renderedPath)) throw new Error(`cloud render finished but ${renderedPath} is missing`);
+      fs.mkdirSync(config.paths.outputDir, { recursive: true });
+      const videoPath = path.join(config.paths.outputDir, `stickman-${slug}.mp4`);
+      fs.copyFileSync(renderedPath, videoPath);
+      return { videoPath, slug };
+    } finally {
+      cloudProgress.delete(slug);
+      fs.rmSync(path.join(dir, "public", "content", slug), { recursive: true, force: true });
+      const outDir = path.dirname(renderedPath);
+      for (const f of fs.existsSync(outDir) ? fs.readdirSync(outDir) : []) {
+        if (f.startsWith(`${slug}.`)) fs.rmSync(path.join(outDir, f), { force: true });
+      }
+    }
+  });
   queue = job.catch(() => undefined);
   return job;
 };

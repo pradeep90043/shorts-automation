@@ -4,6 +4,16 @@ import { VideoMetadata } from "../types";
 import { config, YoutubeChannel, YoutubeConfig } from "../config";
 import { pipelineLogger } from "../utils/logger";
 
+export interface UploadOptions {
+  /** upload progress 0..100 (best channel so far) */
+  onProgress?: (pct: number) => void;
+  /** long-form video: return a /watch URL instead of /shorts */
+  isLong?: boolean;
+}
+
+/** Abort an upload when no bytes move for this long (a stalled connection would otherwise hang forever). */
+const UPLOAD_STALL_MS = 5 * 60 * 1000;
+
 export interface UploadResult {
   channelName: string;
   url: string;
@@ -13,6 +23,8 @@ export interface UploadResult {
 export class YouTubeService {
   // Per-channel-profile YouTube credentials (defaults to the primary profile)
   private ytConfig: YoutubeConfig;
+  /** per-channel failure reasons from the last upload, so callers can report why nothing was published */
+  public lastErrors: string[] = [];
 
   constructor(ytConfig: YoutubeConfig = config.youtube) {
     this.ytConfig = ytConfig;
@@ -23,6 +35,7 @@ export class YouTubeService {
     channel: YoutubeChannel,
     videoPath: string,
     metadata: VideoMetadata,
+    opts: UploadOptions = {},
   ): Promise<UploadResult | null> {
     const { clientId, clientSecret, redirectUri } = this.ytConfig;
 
@@ -58,6 +71,12 @@ export class YouTubeService {
           );
 
           const mediaStream = fs.createReadStream(videoPath);
+          const abort = new AbortController();
+          let stallTimer = setTimeout(() => abort.abort(), UPLOAD_STALL_MS);
+          const poke = () => {
+            clearTimeout(stallTimer);
+            stallTimer = setTimeout(() => abort.abort(), UPLOAD_STALL_MS);
+          };
           // Track last logged milestone to avoid flooding logs with every progress tick
           let lastLoggedPct = -1;
 
@@ -81,8 +100,11 @@ export class YouTubeService {
             },
             {
               retry: false, // Handle retries in our loop so a fresh stream is provided
+              signal: abort.signal,
               onUploadProgress: (evt: { bytesRead: number }) => {
+                poke();
                 const pct = Math.floor((evt.bytesRead / fileSize) * 100);
+                opts.onProgress?.(Math.min(100, pct));
                 // Log only at every 10% milestone to prevent flooding the log
                 const milestone = Math.floor(pct / 10) * 10;
                 if (milestone > lastLoggedPct) {
@@ -94,12 +116,13 @@ export class YouTubeService {
                 }
               },
             },
-          );
+          ).finally(() => clearTimeout(stallTimer));
 
           const videoId = response.data.id;
           if (!videoId) throw new Error("YouTube did not return a video ID");
 
           const isLandscapeOrLong =
+            opts.isLong ||
             (metadata.description || "").includes("Produced for") ||
             (metadata.tags || []).includes("guide") ||
             (metadata.tags || []).includes("tutorial");
@@ -135,6 +158,7 @@ export class YouTubeService {
       throw lastErr;
     } catch (err: any) {
       const errMsg = err?.message || String(err);
+      this.lastErrors.push(`${channel.name}: ${errMsg.slice(0, 300)}`);
       pipelineLogger.error(
         `[${channel.name}] Upload failed: ${errMsg.slice(0, 300)}`,
         err,
@@ -148,8 +172,10 @@ export class YouTubeService {
   public async uploadToAllChannels(
     videoPath: string,
     metadata: VideoMetadata,
+    opts: UploadOptions = {},
   ): Promise<UploadResult[]> {
     const { channels } = this.ytConfig;
+    this.lastErrors = [];
 
     if (channels.length === 0) {
       pipelineLogger.warn(
@@ -172,7 +198,7 @@ export class YouTubeService {
     );
 
     const results = await Promise.all(
-      channels.map((ch) => this.uploadToChannel(ch, videoPath, metadata)),
+      channels.map((ch) => this.uploadToChannel(ch, videoPath, metadata, opts)),
     );
 
     return results.filter((r): r is UploadResult => r !== null);

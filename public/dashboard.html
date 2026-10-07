@@ -1044,8 +1044,28 @@
       lvTickTimer = setInterval(lvRender, 500);
     } else {
       document.getElementById('lv-start-btn').disabled = false;
+      if (job.publish && job.publish.status === 'running') lvWatchPublish();
     }
     lvBadge(job.status === 'running');
+  }
+
+  /* Publishing runs on the server; just watch its state (survives refresh / closing the tab) */
+  function lvWatchPublish() {
+    clearInterval(lvPollTimer);
+    lvPollTimer = setInterval(async () => {
+      try {
+        const res = await fetch(BASE_URL + '/api/longvideo/job?id=' + encodeURIComponent(lvJob.id));
+        const d = await res.json();
+        if (!d.success) return;
+        lvJob = d.job; lvJobFetchedAt = Date.now();
+        lvRender();
+        const st = d.job.publish && d.job.publish.status;
+        if (st !== 'running') {
+          clearInterval(lvPollTimer);
+          showToast(st === 'done' ? '✅ Published to YouTube' : '❌ Publish failed: ' + ((d.job.publish && d.job.publish.error) || '').slice(0, 120), st === 'done' ? 'ok' : 'err');
+        }
+      } catch (e) { /* retry next tick */ }
+    }, 3000);
   }
 
   function lvBadge(on) {
@@ -1109,7 +1129,7 @@
           '<div style="font-size:11px;color:var(--text-muted);margin-bottom:12px;">' + j.scenes + ' scenes &middot; created in <b>' + lvFmt(elapsed) + '</b> (estimated ' + lvFmt(estTotal) + ')' + (j.aiVisuals === false ? ' &middot; visuals assigned by rule (AI unavailable)' : '') + '</div>' +
           '<div style="display:flex;gap:10px;flex-wrap:wrap;">' +
             '<a href="' + src + '" download class="btn-primary" style="padding:7px 14px;font-size:12px;text-decoration:none;">⬇️ Download MP4</a>' +
-            '<button class="btn-primary" id="lv-publish-btn" style="background:#e53e3e;border-color:#fc8181;padding:7px 14px;font-size:12px;" onclick="lvPublish()">🚀 Publish to YouTube</button>' +
+            lvPublishArea(j) +
           '</div></div>' +
         '<div style="width:' + (vertical ? '170px' : '320px') + ';background:#000;border-radius:8px;overflow:hidden;border:1px solid #30363d;">' +
           '<video src="' + src + '" controls style="width:100%;display:block;"></video></div></div>';
@@ -1128,22 +1148,37 @@
       (!running && j.finalScript ? '<details style="margin-top:12px;"><summary style="cursor:pointer;font-size:12px;color:var(--text-muted);">Final narration used (' + j.finalScript.split(/\s+/).length + ' words)</summary><div style="margin-top:8px;padding:10px;background:#161b22;border:1px solid #21262d;border-radius:6px;font-size:12px;line-height:1.6;color:#c9d1d9;white-space:pre-wrap;max-height:240px;overflow:auto;">' + lvEsc(j.finalScript) + '</div></details>' : '');
   }
 
+  function lvPublishArea(j) {
+    const p = j.publish;
+    const btn = 'class="btn-primary" style="background:#e53e3e;border-color:#fc8181;padding:7px 14px;font-size:12px;"';
+    if (p && p.status === 'running') {
+      return '<span style="font-size:12px;color:var(--primary);align-self:center;">⏳ Publishing to YouTube… ' + (p.pct || 0) + '% <span style="color:var(--text-muted);">(safe to close this page)</span></span>';
+    }
+    if (p && p.status === 'done') {
+      return (p.urls || [{ url: p.url, channelName: '' }]).map(u => '<a href="' + lvEsc(u.url) + '" target="_blank" class="btn-primary" style="background:#238636;border-color:#2ea043;padding:7px 14px;font-size:12px;text-decoration:none;">▶ View on YouTube' + (u.channelName ? ' (' + lvEsc(u.channelName) + ')' : '') + '</a>').join(' ');
+    }
+    return (p && p.status === 'failed' ? '<span style="font-size:12px;color:var(--danger);align-self:center;max-width:260px;">❌ ' + lvEsc((p.error || 'Publish failed').slice(0, 160)) + '</span>' : '') +
+      '<button ' + btn + ' id="lv-publish-btn" onclick="lvPublish()">' + (p && p.status === 'failed' ? '🔁 Retry publish' : '🚀 Publish to YouTube') + '</button>';
+  }
+
   async function lvPublish() {
     const j = lvJob;
     if (!j || !j.videoPath) return;
     const btn = document.getElementById('lv-publish-btn');
-    btn.disabled = true; btn.innerText = '⏳ Publishing…';
+    btn.disabled = true; btn.innerText = '⏳ Starting…';
     try {
-      const res = await fetch(BASE_URL + '/api/publish/youtube-video', {
+      if (j.publish && j.publish.status === 'failed') {
+        await fetch(BASE_URL + '/api/longvideo/publish/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jobId: j.id }) });
+      }
+      const res = await fetch(BASE_URL + '/api/longvideo/publish', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ channelKey: document.getElementById('lv-channel-select').value || j.input.channelKey, videoPath: j.videoPath, title: j.title, description: j.description, tags: j.tags })
+        body: JSON.stringify({ jobId: j.id, channelKey: document.getElementById('lv-channel-select').value || j.input.channelKey })
       });
       const d = await res.json();
-      if (d.success) {
-        const url = d.results && d.results[0] && d.results[0].url;
-        showToast('✅ Published to YouTube', 'ok');
-        btn.outerHTML = url ? '<a href="' + lvEsc(url) + '" target="_blank" class="btn-primary" style="background:#238636;border-color:#2ea043;padding:7px 14px;font-size:12px;text-decoration:none;">▶ View on YouTube</a>' : '<span style="color:var(--success);font-size:12px;">✅ Published</span>';
-      } else { showToast(d.message || 'Publish failed', 'err'); btn.disabled = false; btn.innerText = '🚀 Publish to YouTube'; }
+      if (!d.success) { showToast(d.message || 'Publish failed', 'err'); btn.disabled = false; btn.innerText = '🚀 Publish to YouTube'; return; }
+      lvJob = Object.assign({}, lvJob, { publish: d.publish });
+      lvRender();
+      lvWatchPublish();
     } catch (err) { showToast('Error: ' + err.message, 'err'); btn.disabled = false; btn.innerText = '🚀 Publish to YouTube'; }
   }
 
