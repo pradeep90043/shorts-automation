@@ -23,7 +23,65 @@ export const countWords = (text: string): number => text.trim().split(/\s+/).fil
  * Strips what must never be spoken: markdown, quote marks and timing/section
  * labels such as "**Hook — 0–5 sec**" that script writers paste in.
  */
+/** One scene of a structured production script (### Voiceover / ### Stickman / ### Remotion Visual sections). */
+export interface StructuredScene { title: string; voiceover: string; notes: string }
+
+/**
+ * Production scripts mix what is SPOKEN with directions ("### Stickman: opens an old laptop", "### Remotion Visual: ```text ...```").
+ * Only the "Voiceover"/"Narration" sections are narration; every other section is a visual direction for the AI director.
+ * Returns null for plain scripts (no Voiceover/Narration heading).
+ */
+export function parseStructuredScript(raw: string): StructuredScene[] | null {
+  const lines = raw.replace(/\r/g, "").split("\n");
+  if (!lines.some((l) => /^#{1,6}\s*\**\s*(voice\s*-?\s*over|narration)\b/i.test(l.trim()))) return null;
+  const scenes: { title: string; vo: string[]; notes: string[] }[] = [];
+  let cur: { title: string; vo: string[]; notes: string[] } | null = null;
+  let mode: "vo" | "notes" | "skip" | null = null;
+  let inFence = false;
+  const ensure = () => { if (!cur) { cur = { title: "", vo: [], notes: [] }; scenes.push(cur); } return cur; };
+  for (const line of lines) {
+    const t = line.trim();
+    if (/^```/.test(t)) { inFence = !inFence; if (mode === "notes") ensure().notes.push(line); continue; }
+    if (inFence) { if (mode === "notes") ensure().notes.push(line); continue; } // code/diagram blocks are never narrated
+    const h = /^(#{1,6})\s*(.*)$/.exec(t);
+    if (h) {
+      const title = h[2].replace(/[*_`]/g, "").replace(/[:：]\s*$/, "").trim();
+      if (/^(voice\s*-?\s*over|narration)\b/i.test(title)) { ensure(); mode = "vo"; continue; }
+      if (/^(duration|time|timing|length)\b/i.test(title)) { mode = "skip"; continue; }
+      if (/^(stickman|remotion|visual|animation|slide|screen|on[- ]?screen|b-?roll|sfx|music|sound|diagram|graphic|show|camera)/i.test(title)) {
+        ensure().notes.push(`[${title}]`); mode = "notes"; continue;
+      }
+      // anything else with a heading starts a new scene (e.g. "# SCENE 02 — ANNOTATION VS XML")
+      cur = { title, vo: [], notes: [] }; scenes.push(cur); mode = null; continue;
+    }
+    if (!cur) continue;
+    if (mode === "vo") cur.vo.push(line);
+    else if (mode === "notes") cur.notes.push(line);
+  }
+  const out = scenes
+    .map((sc) => ({ title: sc.title, voiceover: sc.vo.join("\n").replace(/^\s*[-–—_*]{3,}\s*$/gm, "").trim(), notes: sc.notes.join("\n").replace(/\n{3,}/g, "\n\n").trim() }))
+    .filter((sc) => sc.voiceover);
+  return out.length ? out : null;
+}
+
+/** Which script section each beat belongs to, plus that section's visual directions. */
+export function sceneNotesForBeats(raw: string, beats: string[]): { beatScene: number[]; notes: string[] } | null {
+  const parsed = parseStructuredScript(raw);
+  if (!parsed) return null;
+  const norm = (x: string) => x.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const vo = parsed.map((sc) => norm(sc.voiceover));
+  let s = 0;
+  const beatScene = beats.map((b) => {
+    const key = norm(b).slice(0, 30);
+    for (let k = s; k < Math.min(vo.length, s + 3); k++) if (vo[k].includes(key)) { s = k; break; }
+    return s;
+  });
+  return { beatScene, notes: parsed.map((sc) => sc.notes.slice(0, 900)) };
+}
+
 export function cleanScript(script: string): string {
+  const structured = parseStructuredScript(script);
+  if (structured) script = structured.map((sc) => sc.voiceover).join("\n\n");
   return script
     .replace(/\r/g, "")
     .split("\n")
@@ -562,10 +620,15 @@ const isThin = (v: any): boolean =>
 
 /** One LLM call for the given beat numbers: returns the scenes it directed, keyed by beat number (possibly partial). */
 async function directBeats(
-  beats: string[], idxs: number[], total: number,
+  beats: string[], idxs: number[], total: number, notes?: { beatScene: number[]; notes: string[] } | null,
 ): Promise<{ meta: any; byIndex: Map<number, any> } | null> {
+  // the script author's own visual directions for the sections these beats belong to (never narrated)
+  const sections = notes ? [...new Set(idxs.map((i) => notes.beatScene[i]))].filter((k) => notes.notes[k]) : [];
+  const notesBlock = sections.length
+    ? `\nAUTHOR'S VISUAL DIRECTIONS (NOT narration - never put these sentences on screen verbatim; use them to choose the setting, props, panels, pose and mood):\n${sections.map((k) => `- ${notes!.notes[k]}`).join("\n")}\n`
+    : "";
   const prompt = `${DIRECTOR_RULES}
-
+${notesBlock}
 The narration is already split into numbered beats - do NOT change the words. This is part of a ${total}-beat video; you are directing the ${idxs.length} beats below.
 
 Allowed values:
@@ -623,7 +686,9 @@ async function pool<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]>
  * left bare are re-asked in smaller groups, and if it still cannot direct the
  * video the plan throws so nothing is rendered.
  */
-export async function planStickmanVideo(script: string, titleHint?: string): Promise<StickmanPlan> {
+export async function planStickmanVideo(
+  script: string, titleHint?: string, notes?: { beatScene: number[]; notes: string[] } | null,
+): Promise<StickmanPlan> {
   script = cleanScript(script);
   const beats = splitScriptIntoBeats(script);
   if (!beats.length) throw new Error("Script is empty");
@@ -644,7 +709,7 @@ export async function planStickmanVideo(script: string, titleHint?: string): Pro
     // early rounds also re-ask bare scenes; the last rounds only chase scenes the AI never directed at all
     const todo = r === 0 ? all : all.filter((i) => (r < 4 ? isThin(visuals[i]) : !visuals[i]));
     if (!todo.length) break;
-    const results = await pool(groups(todo, ROUNDS[r]).map((g) => () => directBeats(beats, g, beats.length)), 5);
+    const results = await pool(groups(todo, ROUNDS[r]).map((g) => () => directBeats(beats, g, beats.length, notes)), 5);
     results.forEach(merge);
     const left = all.filter((i) => isThin(visuals[i])).length;
     pipelineLogger.info(`Stickman director round ${r + 1}/${ROUNDS.length}: ${beats.length - left}/${beats.length} beats directed`, "StickmanPlanner");

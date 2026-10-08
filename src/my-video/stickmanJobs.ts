@@ -8,7 +8,7 @@ import {
   estimateStickman, recordTimings, STAGE_LABELS, STAGE_ORDER,
   type StageKey, type StickmanEstimate,
 } from "./stickmanEstimate";
-import { cleanScript, fitScriptToDuration, planStickmanVideo } from "./stickmanPlanner";
+import { cleanScript, fitScriptToDuration, planStickmanVideo, sceneNotesForBeats, splitScriptIntoBeats } from "./stickmanPlanner";
 
 export interface StickmanJobInput {
   script: string;
@@ -190,7 +190,10 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
     job.estimate = fitted;
     for (const s of job.stages) s.estSec = fitted.stageSec[s.key];
     setStage(job, "plan", { fraction: 0.5, detail: "Choosing visuals" });
-    const plan = await planStickmanVideo(fit.script, title);
+    // the author's Stickman/Remotion-visual sections steer the director, but only while the narration is still their script
+    const notes = fit.script === cleanScript(script) ? sceneNotesForBeats(script, splitScriptIntoBeats(fit.script)) : null;
+    if (notes) log(`Structured script: narrating only the Voiceover sections; ${notes.notes.filter(Boolean).length} section(s) of visual directions passed to the director`);
+    const plan = await planStickmanVideo(fit.script, title, notes);
     if (isCancelled(job)) return;
     Object.assign(job, { title: plan.title, description: plan.description, tags: plan.tags, scenes: plan.scenes.length, aiVisuals: plan.aiVisuals });
     setStage(job, "plan", { status: "done", fraction: 1 });
