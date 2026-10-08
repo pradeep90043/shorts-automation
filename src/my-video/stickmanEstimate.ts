@@ -128,7 +128,7 @@ export function estimateStickman(script: string, targetSec?: number, resolution:
   // 1080 renders ~2.2x the pixels of 720
   const resFactor = resolution === 1080 ? 2.2 : 1;
   const stageSec: Record<StageKey, number> = {
-    plan: (fitToWords ? 25 : 5) + Math.ceil(scenes / 28) * 40, // script rewrite = one LLM round trip; visuals are directed in batches of ~28 scenes (~40s each)
+    plan: (fitToWords ? 25 : 5) + Math.ceil(Math.ceil(scenes / 14) / 3) * 45, // script rewrite = one LLM round trip; visuals are directed in batches of 14 scenes, 3 in parallel (~45s per round)
     audio: scenes * timings.secPerScene,
     merge: 3 + videoSec * 0.05,
     bundle: timings.bundleSec,

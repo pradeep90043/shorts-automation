@@ -474,7 +474,7 @@ export function dropInventedNumbers(scenes: StickmanScene[], script: string): nu
   return dropped;
 }
 
-const BATCH = 28;
+const BATCH = 14; // small batches: shorter answers rarely get truncated or miscounted by the LLM
 
 const DIRECTOR_RULES = `You direct a professional tech-education explainer (CodeOrCap): modern, technical, educational, never a children's cartoon. The stickman is an ACTOR that reacts to the story; the screen panels do the real explaining. Be visual-first: every beat needs a purposeful visual, not a stickman standing and talking.
 
@@ -509,6 +509,26 @@ VISUAL PACING: change something every 20-40 seconds of narration (new panel type
 
 ACCURACY: never sacrifice technical accuracy; estimates stay estimates; no absolute claims such as "Java is always faster".`;
 
+/** Pulls every complete top-level {...} object out of the "scenes" array of a broken/truncated JSON answer. */
+export function salvageScenes(raw: string): any[] {
+  const at = raw.indexOf('"scenes"');
+  const open = at >= 0 ? raw.indexOf("[", at) : -1;
+  if (open < 0) return [];
+  const out: any[] = [];
+  let depth = 0, begin = -1, inStr = false, esc = false;
+  for (let i = open + 1; i < raw.length; i++) {
+    const c = raw[i];
+    if (inStr) { if (esc) esc = false; else if (c === "\\") esc = true; else if (c === '"') inStr = false; continue; }
+    if (c === '"') inStr = true;
+    else if (c === "{") { if (depth++ === 0) begin = i; }
+    else if (c === "}" && --depth === 0 && begin >= 0) {
+      try { out.push(JSON.parse(raw.slice(begin, i + 1))); } catch { out.push(undefined); }
+      begin = -1;
+    }
+  }
+  return out;
+}
+
 /** One LLM call for beats [start, start+count): returns the raw parsed object, or null on failure. */
 async function directBatch(
   beats: string[], start: number, total: number, carry: string,
@@ -528,16 +548,29 @@ Beats:
 ${slice.map((b, i) => `${start + i}. ${b}`).join("\n")}
 
 Return ONLY raw JSON, no markdown:
-{${start === 0 ? '"title":"catchy YouTube title under 90 chars","description":"2-3 sentence description with 3-4 hashtags","tags":["8 relevant tags"],' : ""}"scenes":[{"pose":"","mood":"","accent":"","camera":"","chapter":"","title":"","flip":false,"callouts":[],"props":[{"type":""}],"steps":null,"flow":null,"code":null,"terminal":null,"browser":null,"compare":null,"counter":null,"chart":null,"progress":null,"table":null,"alert":null,"svg":null,"container":null,"quiz":null}]}
-"scenes" must have exactly ${slice.length} entries, in the same order as the beats. Use null or omit fields you do not need.`;
+{${start === 0 ? '"title":"catchy YouTube title under 90 chars","description":"2-3 sentence description with 3-4 hashtags","tags":["8 relevant tags"],' : ""}"scenes":[{"i":0,"pose":"","mood":"","accent":"","camera":"","chapter":"","title":"","flip":false,"callouts":[],"props":[{"type":""}],"steps":null,"flow":null,"code":null,"terminal":null,"browser":null,"compare":null,"counter":null,"chart":null,"progress":null,"table":null,"alert":null,"svg":null,"container":null,"quiz":null}]}
+"scenes" must have exactly ${slice.length} entries, one per beat, in order; "i" is the beat number it directs (${start}..${start + slice.length - 1}). Use null or omit fields you do not need.`;
   try {
     const raw = await askLlm(prompt);
     if (!raw) return null;
-    const parsed = parseAiJson<any>(raw);
-    if (Array.isArray(parsed?.scenes) && parsed.scenes.length === slice.length) return { meta: parsed, scenes: parsed.scenes };
-    pipelineLogger.warn(`Stickman director returned ${parsed?.scenes?.length ?? 0} scenes for ${slice.length} beats (batch @${start})`, "StickmanPlanner");
+    let parsed: any = null;
+    try { parsed = parseAiJson<any>(raw); } catch (err: any) {
+      pipelineLogger.warn(`Stickman plan JSON broken (${err.message}); salvaging complete scenes`, "StickmanPlanner");
+    }
+    const got: any[] = Array.isArray(parsed?.scenes) ? parsed.scenes : salvageScenes(raw);
+    // align by the beat number the model echoes ("i"); positional when it did not
+    const aligned: any[] = new Array(slice.length).fill(undefined);
+    got.forEach((sc, pos) => {
+      const idx = Number.isInteger(sc?.i) ? sc.i - start : pos;
+      if (sc && idx >= 0 && idx < slice.length && aligned[idx] === undefined) aligned[idx] = sc;
+    });
+    const filled = aligned.filter(Boolean).length;
+    if (filled < slice.length) {
+      pipelineLogger.warn(`Stickman director gave ${filled}/${slice.length} usable scenes (batch @${start}); the rest use rule-based visuals`, "StickmanPlanner");
+    }
+    if (filled >= Math.ceil(slice.length * 0.5)) return { meta: parsed ?? {}, scenes: aligned };
   } catch (err: any) {
-    pipelineLogger.warn(`Could not parse stickman plan from LLM: ${err.message}`, "StickmanPlanner");
+    pipelineLogger.warn(`Stickman plan batch @${start} failed: ${err.message}`, "StickmanPlanner");
   }
   return null;
 }
@@ -554,24 +587,31 @@ export async function planStickmanVideo(script: string, titleHint?: string): Pro
   const beats = splitScriptIntoBeats(script);
   if (!beats.length) throw new Error("Script is empty");
 
+  const starts: number[] = [];
+  for (let st = 0; st < beats.length; st += BATCH) starts.push(st);
+  const results: ({ meta: any; scenes: any[] } | null)[] = new Array(starts.length).fill(null);
+  let next = 0;
+  // 3 batches in flight: planning no longer waits on one slow/timing-out LLM call at a time
+  const worker = async () => {
+    for (;;) {
+      const k = next++;
+      if (k >= starts.length) return;
+      let res = null;
+      for (let attempt = 0; attempt < 3 && !res; attempt++) res = await directBatch(beats, starts[k], beats.length, "");
+      results[k] = res;
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+
   const visuals: any[] = [];
   let meta: any = null;
   let okBatches = 0;
-  let carry = "";
-  for (let start = 0; start < beats.length; start += BATCH) {
-    let res = await directBatch(beats, start, beats.length, carry);
-    if (!res) res = await directBatch(beats, start, beats.length, carry); // one retry
-    if (res) {
-      okBatches++;
-      if (start === 0) meta = res.meta;
-      visuals.push(...res.scenes);
-      const last = res.scenes[res.scenes.length - 1] ?? {};
-      const chapter = [...res.scenes].reverse().find((x: any) => x?.chapter)?.chapter;
-      carry = `current chapter "${chapter ?? ""}", last pose ${last.pose ?? "?"}, last panel ${["steps", "flow", "code", "terminal", "browser", "compare", "counter", "chart", "progress", "table", "alert", "svg", "container", "quiz"].find((k) => last[k]) ?? "none"}`;
-    } else {
-      visuals.push(...beats.slice(start, start + BATCH).map(() => undefined));
-    }
-  }
+  starts.forEach((st, k) => {
+    const res = results[k];
+    if (res) { okBatches++; if (st === 0) meta = res.meta; visuals.push(...res.scenes); }
+    else visuals.push(...beats.slice(st, st + BATCH).map(() => undefined));
+  });
+  pipelineLogger.info(`Stickman director: ${okBatches}/${starts.length} batches directed by AI`, "StickmanPlanner");
 
   const aiVisuals = okBatches > 0;
   const scenes: StickmanScene[] = beats.map((text, i) => ({
