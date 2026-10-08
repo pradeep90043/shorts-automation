@@ -6,8 +6,7 @@ const MODELS = [
   "gemini-2.5-flash",
   "gemini-2.5-flash-lite",
   "gemini-flash-latest",
-  "gemini-2.5-pro",
-];
+]; // gemini-2.5-pro removed: it answers 404 "no longer available", which only wasted a call when the flash models were rate limited
 
 const RATE_LIMIT_STATUSES = new Set([429, 500, 503]);
 
@@ -25,6 +24,7 @@ export class GeminiClient {
   private async generateWithModel(
     model: string,
     parts: any[],
+    asJson = false,
   ): Promise<string> {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
     const controller = new AbortController();
@@ -37,7 +37,11 @@ export class GeminiClient {
           "Content-Type": "application/json",
           "x-goog-api-key": this.apiKey,
         },
-        body: JSON.stringify({ contents: [{ parts }] }),
+        body: JSON.stringify({
+          contents: [{ parts }],
+          // structured answers: plain JSON and no "thinking" tokens, which is what made long answers hit the 60 s timeout
+          ...(asJson ? { generationConfig: { responseMimeType: "application/json", maxOutputTokens: 8192, ...(model.includes("2.5-flash") ? { thinkingConfig: { thinkingBudget: 0 } } : {}) } } : {}),
+        }),
         signal: controller.signal,
       });
 
@@ -63,11 +67,11 @@ export class GeminiClient {
   }
 
   /** Tries each model in order; only advances to the next on a rate-limit (429). */
-  private async generateWithRotation(parts: any[]): Promise<string> {
+  private async generateWithRotation(parts: any[], json = false): Promise<string> {
     let lastErr: any;
     for (const model of MODELS) {
       try {
-        return await this.generateWithModel(model, parts);
+        return await this.generateWithModel(model, parts, json);
       } catch (err: any) {
         lastErr = err;
         if (!RATE_LIMIT_STATUSES.has(err.status)) throw err;
@@ -77,8 +81,8 @@ export class GeminiClient {
     throw lastErr;
   }
 
-  public async generateText(prompt: string): Promise<string> {
-    return this.generateWithRotation([{ text: prompt }]);
+  public async generateText(prompt: string, opts: { json?: boolean } = {}): Promise<string> {
+    return this.generateWithRotation([{ text: prompt }], !!opts.json);
   }
 
   public async generateVision(
