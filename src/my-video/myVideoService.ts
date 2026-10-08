@@ -200,7 +200,7 @@ async function renderViaGithubActions(
           progress_url: `${publicUrl}/api/longvideo/progress`,
           progress_token: progressToken,
         // parallel runners; the workflow only splits when there are enough frames per runner
-        chunks: process.env.MY_VIDEO_RENDER_CHUNKS || "4",
+        chunks: process.env.MY_VIDEO_RENDER_CHUNKS || "8",
           resolution,
           draft: "false",
         },
