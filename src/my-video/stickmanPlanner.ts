@@ -484,6 +484,7 @@ export interface StickmanPlan {
  * Asks the LLM, hedged: FreeLLMAPI first; if it has not answered within HEDGE_MS (or fails) Gemini is asked too
  * and whichever returns text first wins. One slow provider (60 s timeouts) no longer stalls a batch for minutes.
  */
+let geminiDownUntil = 0;
 const HEDGE_MS = Number(process.env.PLAN_HEDGE_MS) || 25_000;
 async function askLlm(prompt: string): Promise<string> {
   const providers: { name: string; ask: () => Promise<string> }[] = [];
@@ -491,7 +492,19 @@ async function askLlm(prompt: string): Promise<string> {
     providers.push({ name: "FreeLLMAPI", ask: () => new FreeLlmApiClient().generateText(prompt) });
   }
   if (process.env.GEMINI_API_KEY) {
-    providers.push({ name: "Gemini", ask: () => new GeminiClient().generateText(prompt) });
+    providers.push({
+      name: "Gemini",
+      ask: async () => {
+        if (Date.now() < geminiDownUntil) throw new Error("skipped (quota exhausted a moment ago)");
+        try {
+          return await new GeminiClient().generateText(prompt, { json: true });
+        } catch (err: any) {
+          // out of quota / model gone: stop spending calls (and minutes) on it for a while
+          if (/status (429|404)|RESOURCE_EXHAUSTED|quota/i.test(String(err?.message))) geminiDownUntil = Date.now() + 10 * 60_000;
+          throw err;
+        }
+      },
+    });
   }
   if (!providers.length) return "";
   return new Promise<string>((resolve) => {
@@ -556,7 +569,7 @@ export function dropInventedNumbers(scenes: StickmanScene[], script: string): nu
   return dropped;
 }
 
-const BATCH = 14; // small batches: shorter answers rarely get truncated or miscounted by the LLM
+const BATCH = 12; // small batches: shorter answers rarely get truncated or miscounted by the LLM
 
 const DIRECTOR_RULES = `You direct a professional tech-education explainer (CodeOrCap): modern, technical, educational, never a children's cartoon. The stickman is an ACTOR that reacts to the story; the screen panels do the real explaining. Be visual-first: every beat needs a purposeful visual, not a stickman standing and talking.
 
@@ -645,7 +658,8 @@ ${idxs.length <= 3 ? `Context only (do NOT direct these): previous beat: "${beat
 ${idxs.map((i) => `${i}. ${beats[i]}`).join("\n")}
 
 Return ONLY raw JSON, no markdown:
-{${idxs.includes(0) ? '"title":"catchy YouTube title under 90 chars","description":"2-3 sentence description with 3-4 hashtags","tags":["8 relevant tags"],' : ""}"scenes":[{"i":0,${echoText ? '"text":"the beat copied EXACTLY, word for word",' : ""}"pose":"","mood":"","accent":"","camera":"","setting":"","chapter":"","title":"","flip":false,"callouts":[],"props":[{"type":""}],"steps":null,"flow":null,"code":null,"terminal":null,"browser":null,"compare":null,"counter":null,"chart":null,"progress":null,"table":null,"alert":null,"svg":null,"container":null,"quiz":null}]}
+{${idxs.includes(0) ? '"title":"catchy YouTube title under 90 chars","description":"2-3 sentence description with 3-4 hashtags","tags":["8 relevant tags"],' : ""}"scenes":[{"i":0,${echoText ? '"text":"the beat copied EXACTLY, word for word",' : ""}"pose":"","mood":"","accent":"","camera":"","setting":"","title":"","callouts":["..."]}]}
+Add optional keys to a scene ONLY when needed: "chapter","flip","props":[{"type":""}] and at most one panel key ("steps","flow","code","terminal","browser","compare","counter","chart","progress","table","alert","svg","container","quiz") with the structure described above. Do NOT output keys with null values.
 "scenes" must have exactly ${idxs.length} entries, one per beat, in order; "i" is the beat number it directs. Every scene needs a setting and at least one of: callouts, props or a panel.`;
 }
 
@@ -719,12 +733,15 @@ export async function planStickmanVideo(
   const all = beats.map((_, i) => i);
   const groups = (idxs: number[], size: number) => Array.from({ length: Math.ceil(idxs.length / size) }, (_, g) => idxs.slice(g * size, g * size + size));
   const ROUNDS = [BATCH, 8, 5, 3, 2, 1, 1, 1]; // keeps shrinking: a stubborn beat is asked alone, with its neighbours as context
+  const planStart = Date.now();
+  const PLAN_BUDGET_MS = (Number(process.env.PLAN_BUDGET_MIN) || 14) * 60_000; // never sit in "planning" for an hour
   for (let r = 0; r < ROUNDS.length; r++) {
+    if (r > 0 && Date.now() - planStart > PLAN_BUDGET_MS) { pipelineLogger.warn("Stickman director: planning time budget used up", "StickmanPlanner"); break; }
     // early rounds also re-ask bare scenes; the last rounds only chase scenes the AI never directed at all
     const open = all.filter((i) => !locked.has(i));
     const todo = r === 0 ? open : open.filter((i) => (r < 4 ? isThin(visuals[i]) : !visuals[i]));
     if (!todo.length) break;
-    const results = await pool(groups(todo, ROUNDS[r]).map((g) => () => directBeats(beats, g, beats.length, notes)), 5);
+    const results = await pool(groups(todo, ROUNDS[r]).map((g) => () => directBeats(beats, g, beats.length, notes)), 4);
     results.forEach(merge);
     const left = open.filter((i) => isThin(visuals[i])).length;
     pipelineLogger.info(`Stickman director round ${r + 1}/${ROUNDS.length}: ${beats.length - left}/${beats.length} beats directed`, "StickmanPlanner");
@@ -990,8 +1007,9 @@ DELIVERY - IMPORTANT
 - Each part is ONE raw JSON object and nothing else - no markdown fence, no explanation, no comments. Valid JSON only (double quotes, no trailing commas).
 - After each part, stop. I will reply "next" and you continue with the following ${chunk} scenes. After the final scene of the video, end that part with the extra key "done": true.
 
-Each scene looks like this (use null for every panel you do not use):
-{"i":0,"text":"the spoken narration for this beat","pose":"","mood":"","accent":"","camera":"","setting":"","chapter":"","title":"","flip":false,"callouts":[],"props":[{"type":""}],"steps":null,"flow":null,"code":null,"terminal":null,"browser":null,"compare":null,"counter":null,"chart":null,"progress":null,"table":null,"alert":null,"svg":null,"container":null,"quiz":null}
+Each scene looks like this:
+{"i":0,"text":"the spoken narration for this beat","pose":"","mood":"","accent":"","camera":"","setting":"","title":"","callouts":["..."]}
+Add optional keys to a scene ONLY when needed: "chapter","flip","props":[{"type":""}] and at most one panel key ("steps","flow","code","terminal","browser","compare","counter","chart","progress","table","alert","svg","container","quiz") with the structure described above. Do NOT output keys with null values.
 
 Allowed values:
 - pose: ${POSES.join(", ")}
