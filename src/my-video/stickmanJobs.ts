@@ -8,10 +8,16 @@ import {
   estimateStickman, recordTimings, STAGE_LABELS, STAGE_ORDER,
   type StageKey, type StickmanEstimate,
 } from "./stickmanEstimate";
-import { cleanScript, fitScriptToDuration, planStickmanVideo, sceneNotesForBeats, splitScriptIntoBeats } from "./stickmanPlanner";
+import {
+  assertImportablePlan, cleanScript, fitScriptToDuration, importStickmanPlan, planStickmanVideo, sceneNotesForBeats, splitScriptIntoBeats,
+} from "./stickmanPlanner";
 
 export interface StickmanJobInput {
   script: string;
+  /** a ready-made plan (JSON object or pasted text) from an external model: skips the AI planning */
+  plan?: unknown;
+  /** with `plan`: let the AI direct the beats the plan left out (otherwise they are rejected) */
+  repairMissing?: boolean;
   title?: string;
   /** requested video length in seconds */
   targetSec?: number;
@@ -151,6 +157,9 @@ export function startStickmanJob(input: StickmanJobInput): StickmanJob {
   if (isStickmanBusy()) throw new Error("A video is already being created - wait for it to finish.");
   const script = input.script.trim();
   if (!script) throw new Error("Script is empty");
+  // an imported plan is checked against the script up front, so a mismatch is rejected before a job exists
+  if (input.plan != null && input.plan !== "") assertImportablePlan(script, input.plan, !!input.repairMissing);
+  else input = { ...input, plan: undefined, repairMissing: undefined };
 
   const estimate = estimateStickman(script, input.targetSec, input.resolution ?? 720);
   const job: StickmanJob = {
@@ -179,8 +188,12 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
       finishJob(job, result.videoPath, log);
       return;
     }
-    setStage(job, "plan", { status: "running", fraction: 0.1, detail: "Fitting script to length" });
-    const fit = await fitScriptToDuration(cleanScript(script), job.input.targetSec);
+    const imported = job.input.plan != null;
+    setStage(job, "plan", { status: "running", fraction: 0.1, detail: imported ? "Checking imported plan" : "Fitting script to length" });
+    // an imported plan lines up with the script's own beats, so the script is never rewritten to fit a length
+    const fit = imported
+      ? { script: cleanScript(script), note: "Imported plan: script kept exactly as written (no length rewrite)" }
+      : await fitScriptToDuration(cleanScript(script), job.input.targetSec);
     if (isCancelled(job)) return;
     job.finalScript = fit.script;
     job.adjustNote = fit.note;
@@ -189,11 +202,13 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
     const fitted = estimateStickman(fit.script, job.input.targetSec, job.input.resolution ?? 720, true);
     job.estimate = fitted;
     for (const s of job.stages) s.estSec = fitted.stageSec[s.key];
-    setStage(job, "plan", { fraction: 0.5, detail: "Choosing visuals" });
+    setStage(job, "plan", { fraction: 0.5, detail: imported ? "Applying imported visuals" : "Choosing visuals" });
     // the author's Stickman/Remotion-visual sections steer the director, but only while the narration is still their script
     const notes = fit.script === cleanScript(script) ? sceneNotesForBeats(script, splitScriptIntoBeats(fit.script)) : null;
     if (notes) log(`Structured script: narrating only the Voiceover sections; ${notes.notes.filter(Boolean).length} section(s) of visual directions passed to the director`);
-    const plan = await planStickmanVideo(fit.script, title, notes);
+    const plan = imported
+      ? await importStickmanPlan(fit.script, job.input.plan, { repair: job.input.repairMissing, titleHint: title, notes })
+      : await planStickmanVideo(fit.script, title, notes);
     if (isCancelled(job)) return;
     Object.assign(job, { title: plan.title, description: plan.description, tags: plan.tags, scenes: plan.scenes.length, aiVisuals: plan.aiVisuals });
     setStage(job, "plan", { status: "done", fraction: 1 });
@@ -234,6 +249,7 @@ function finishJob(job: StickmanJob, videoPath: string, log: (m: string) => void
   job.status = "done";
   job.finishedAt = Date.now();
   job.cloudRun = undefined;
+  if (job.input.plan != null) job.input.plan = "imported"; // keep the marker, free the data
   learn(job);
   log(`Done in ${Math.round((job.finishedAt - job.createdAt) / 1000)}s -> ${videoPath}`);
 }
@@ -290,7 +306,9 @@ export function snapshot(job: StickmanJob): JobSnapshot {
   } else if (job.status === "done") {
     etaSec = 0;
   }
-  return { ...job, progress, elapsedSec, etaSec };
+  // the imported plan can be hundreds of KB: the dashboard only needs to know there was one
+  const input = job.input.plan != null ? { ...job.input, plan: "imported" } : job.input;
+  return { ...job, input, progress, elapsedSec, etaSec };
 }
 
 export const getStickmanJob = (id: string): JobSnapshot | undefined => {

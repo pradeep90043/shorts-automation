@@ -17,6 +17,7 @@ import { computeViralScore } from "./utils/viralScore";
 import { MultiSceneGenerator } from "./video/multiSceneGenerator";
 import { YouTubeService } from "./youtube";
 import { estimateStickman } from "./my-video/stickmanEstimate";
+import { buildImportPrompts, checkImportedPlan, PlanImportError } from "./my-video/stickmanPlanner";
 import { cancelStickmanJob, getStickmanJob, getStickmanJobForPoll, listStickmanJobs, resetPublish, startPublish, startStickmanJob } from "./my-video/stickmanJobs";
 import { recordCloudProgress, resolveMyVideoDir } from "./my-video/myVideoService";
 import { pipelineLogger } from "./utils/logger";
@@ -1679,6 +1680,24 @@ export function startLogServer(): void {
           const resolution = Number(body.resolution) === 1080 ? 1080 : 720;
           return json(200, { success: true, estimate: estimateStickman(script, toSec(body.targetSec), resolution) });
         }
+        // Plan import: prompts to run in any external chat model, then a no-AI check of the JSON it returns
+        if (req.method === "POST" && route === "/api/longvideo/plan/prompt") {
+          const body = await parseJsonBody(req);
+          const script = String(body.script || "").trim();
+          if (!script) return json(400, { success: false, message: "Script is empty" });
+          return json(200, { success: true, ...buildImportPrompts(script, Number(body.chunkSize) || 40) });
+        }
+        if (req.method === "POST" && route === "/api/longvideo/plan/check") {
+          const body = await parseJsonBody(req);
+          const script = String(body.script || "").trim();
+          if (!script) return json(400, { success: false, message: "Script is empty" });
+          if (body.plan == null || body.plan === "") return json(400, { success: false, message: "Paste the plan JSON first" });
+          const c = checkImportedPlan(script, body.plan);
+          return json(200, {
+            success: true, ok: c.errors.length === 0, beatCount: c.beatCount, matched: c.byIndex.size,
+            missing: c.missing, errors: c.errors.slice(0, 20), moreErrors: Math.max(0, c.errors.length - 20),
+          });
+        }
         if (req.method === "POST" && route === "/api/longvideo/cancel") {
           const body = await parseJsonBody(req);
           const cancelled = await cancelStickmanJob(String(body.id || ""));
@@ -1697,6 +1716,8 @@ export function startLogServer(): void {
           const orientation = body.orientation === "vertical" ? "vertical" : "horizontal";
           const job = startStickmanJob({
             script,
+            plan: body.plan == null || body.plan === "" ? undefined : body.plan,
+            repairMissing: body.repairMissing === true,
             title: body.title ? String(body.title) : undefined,
             targetSec: toSec(body.targetSec),
             orientation,
@@ -1780,6 +1801,9 @@ export function startLogServer(): void {
         }
         return json(404, { success: false, message: "Unknown long video endpoint" });
       } catch (err: any) {
+        if (err instanceof PlanImportError) {
+          return json(400, { success: false, message: err.message, errors: err.details, missing: err.missing });
+        }
         const busy = /already being created/.test(err?.message || "");
         return json(busy ? 409 : 500, { success: false, message: err?.message || "Long video request failed" });
       }

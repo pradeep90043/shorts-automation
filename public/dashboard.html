@@ -538,6 +538,26 @@
           <textarea class="input-field" id="lv-script" oninput="lvScheduleEstimate()" placeholder="Paste the exact narration here. Your words are used as-is; only the visuals are picked automatically." style="width:100%;height:200px;padding:10px 12px;font-size:13px;line-height:1.5;"></textarea>
         </div>
 
+        <details id="lv-plan-box" style="margin-bottom:14px;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:10px 14px;">
+          <summary style="cursor:pointer;font-size:12px;font-weight:700;color:var(--primary);">🧩 Have the scene plan made by another AI? (optional &mdash; skips the built-in planning)</summary>
+          <div style="font-size:12px;color:#c9d1d9;line-height:1.6;margin:10px 0;">
+            <b>1.</b> Paste your script above, then copy a prompt below into ChatGPT / Claude / Gemini (one prompt per chat message; long scripts are split into parts).<br>
+            <b>2.</b> Paste each JSON answer into the box below (several answers can go one after another).<br>
+            <b>3.</b> Press <b>Check plan</b>. The scenes must match your script word for word and beat number for beat number, or it is rejected.
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
+            <button class="btn-primary" style="padding:6px 14px;font-size:12px;" onclick="lvLoadPrompts()">📋 Get prompts for this script</button>
+            <span id="lv-prompt-btns" style="display:flex;gap:6px;flex-wrap:wrap;"></span>
+          </div>
+          <textarea class="input-field" id="lv-plan" oninput="lvPlanChanged()" placeholder='{"title":"...","description":"...","tags":["..."],"scenes":[{"i":0,"text":"exact beat text","pose":"present","mood":"happy","accent":"blue","camera":"none","setting":"office","callouts":["..."]}, ...]}' style="width:100%;height:140px;padding:10px 12px;font-size:11px;font-family:monospace;line-height:1.4;"></textarea>
+          <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:8px;">
+            <button class="btn-primary" style="padding:6px 14px;font-size:12px;" onclick="lvCheckPlan()">✅ Check plan</button>
+            <label style="font-size:12px;color:#c9d1d9;display:flex;gap:6px;align-items:center;cursor:pointer;"><input type="checkbox" id="lv-repair"> Let the AI fill missing beats</label>
+            <button class="btn-primary" style="padding:6px 14px;font-size:12px;background:#21262d;border:1px solid #30363d;" onclick="document.getElementById('lv-plan').value='';lvPlanChanged()">Clear</button>
+          </div>
+          <div id="lv-plan-status" style="margin-top:8px;font-size:12px;"></div>
+        </details>
+
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:14px;">
           <div>
             <label style="font-size:11px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Target length</label>
@@ -1066,9 +1086,67 @@
     } catch (err) { box.style.display = 'none'; }
   }
 
+  /* ── Plan made by another AI ── */
+  let lvPrompts = [];
+  function lvPlanStatus(html) { document.getElementById('lv-plan-status').innerHTML = html; }
+  function lvPlanChanged() { lvPlanStatus(''); }
+  function lvPlanProblems(d) {
+    const list = (d.errors || []).map(e => '<li>' + lvEsc(e) + '</li>').join('');
+    const more = d.moreErrors ? '<li>...and ' + d.moreErrors + ' more</li>' : '';
+    return list ? '<ul style="margin:6px 0 0 18px;padding:0;">' + list + more + '</ul>' : '';
+  }
+  async function lvCopy(text) {
+    try { await navigator.clipboard.writeText(text); return true; } catch (e) {}
+    const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select();
+    let ok = false; try { ok = document.execCommand('copy'); } catch (e) {}
+    ta.remove(); return ok;
+  }
+  async function lvLoadPrompts() {
+    const script = document.getElementById('lv-script').value.trim();
+    if (!script) { showToast('Paste the script first.', 'err'); return; }
+    try {
+      const res = await fetch(BASE_URL + '/api/longvideo/plan/prompt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ script }) });
+      const d = await res.json();
+      if (!d.success) { showToast(d.message || 'Could not build prompts', 'err'); return; }
+      lvPrompts = d.prompts;
+      document.getElementById('lv-prompt-btns').innerHTML = lvPrompts.map((p, k) =>
+        '<button class="btn-primary" style="padding:5px 12px;font-size:11px;background:#21262d;border:1px solid #30363d;" onclick="lvCopyPrompt(' + k + ')">Copy prompt ' + (k + 1) + '/' + lvPrompts.length + ' (beats ' + p.from + '&ndash;' + p.to + ')</button>').join('');
+      lvPlanStatus('<span style="color:var(--text-muted);">' + d.beatCount + ' beats in ' + lvPrompts.length + ' prompt' + (lvPrompts.length > 1 ? 's' : '') + '. Do not change the script after copying &mdash; the plan is matched to it exactly.</span>');
+    } catch (err) { showToast('Error: ' + err.message, 'err'); }
+  }
+  async function lvCopyPrompt(k) {
+    const ok = await lvCopy(lvPrompts[k].prompt);
+    showToast(ok ? 'Prompt ' + (k + 1) + ' copied - paste it into your AI chat' : 'Copy failed', ok ? 'ok' : 'err');
+  }
+  async function lvCheckPlan() {
+    const script = document.getElementById('lv-script').value.trim();
+    const plan = document.getElementById('lv-plan').value.trim();
+    if (!script || !plan) { showToast('Paste both the script and the plan JSON.', 'err'); return false; }
+    lvPlanStatus('<span style="color:var(--text-muted);">Checking...</span>');
+    try {
+      const res = await fetch(BASE_URL + '/api/longvideo/plan/check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ script, plan }) });
+      const d = await res.json();
+      if (!d.success) { lvPlanStatus('<span style="color:#ff7b72;">❌ ' + lvEsc(d.message || 'Plan could not be read') + lvPlanProblems(d) + '</span>'); return false; }
+      const repair = document.getElementById('lv-repair').checked;
+      const miss = d.missing.length;
+      if (!d.ok) {
+        lvPlanStatus('<span style="color:#ff7b72;">❌ Rejected &mdash; the plan does not match your script:' + lvPlanProblems(d) + '</span>');
+        return false;
+      }
+      if (miss && !repair) {
+        lvPlanStatus('<span style="color:#d29922;">⚠️ ' + d.matched + ' of ' + d.beatCount + ' beats covered. Missing beats: ' + d.missing.slice(0, 40).join(', ') + (miss > 40 ? ', ...' : '') + '. Paste the rest, or tick &ldquo;Let the AI fill missing beats&rdquo;.</span>');
+        return false;
+      }
+      lvPlanStatus('<span style="color:#3fb950;">✅ Plan matches your script (' + d.matched + ' of ' + d.beatCount + ' beats)' + (miss ? '; the AI will fill the ' + miss + ' missing beat' + (miss > 1 ? 's' : '') : '') + '. Press Create Video.</span>');
+      return true;
+    } catch (err) { lvPlanStatus('<span style="color:#ff7b72;">Error: ' + lvEsc(err.message) + '</span>'); return false; }
+  }
+
   async function lvStart() {
     const script = document.getElementById('lv-script').value.trim();
     if (!script) { showToast('Paste a script first.', 'err'); return; }
+    const plan = document.getElementById('lv-plan').value.trim();
+    if (plan && !(await lvCheckPlan())) { document.getElementById('lv-plan-box').open = true; showToast('Fix the imported plan first (or clear it)', 'err'); return; }
     const btn = document.getElementById('lv-start-btn');
     btn.disabled = true;
     try {
@@ -1076,6 +1154,7 @@
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           script, targetSec: lvTargetSec(),
+          plan: plan || undefined, repairMissing: !!plan && document.getElementById('lv-repair').checked,
           title: document.getElementById('lv-title').value.trim(),
           orientation: document.getElementById('lv-orientation').value,
           resolution: document.getElementById('lv-resolution').value,
