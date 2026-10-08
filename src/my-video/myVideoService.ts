@@ -42,6 +42,8 @@ export interface StickmanVideoSpec {
   fps?: number;
   /** Output size: frame width for vertical (default 1080), frame height for horizontal (default 720) */
   resolution?: 720 | 1080;
+  /** Skip my-video's logo overlay (for clips that get spliced into a video that has its own branding) */
+  noBranding?: boolean;
 }
 
 /** Pipeline stages inside my-video, in execution order. */
@@ -217,6 +219,7 @@ async function renderViaGithubActions(
         chunks: process.env.MY_VIDEO_RENDER_CHUNKS || "16",
           resolution,
           draft: "false",
+          no_branding: spec.noBranding ? "true" : "false",
         },
       }),
     });
@@ -359,8 +362,13 @@ let queue: Promise<unknown> = Promise.resolve();
 export const renderStickmanVideo = (
   spec: StickmanVideoSpec,
   onProgress?: ProgressCallback,
+  /** Called when this render reaches the front of the queue: return true to drop it (the caller already gave up). */
+  shouldSkip?: () => boolean,
 ): Promise<MyVideoRenderResult> => {
-  const job = queue.then(() => doRender(spec, onProgress));
+  const job = queue.then(() => {
+    if (shouldSkip?.()) throw new Error("render skipped: no longer needed");
+    return doRender(spec, onProgress);
+  });
   queue = job.catch(() => undefined);
   return job;
 };
@@ -470,6 +478,7 @@ const doRender = async (spec: StickmanVideoSpec, onProgress?: ProgressCallback):
           "--concurrency", RENDER_CONCURRENCY,
           // vertical: resolution = frame width (1080 -> 1080x1920); horizontal: frame height (720 -> 1280x720)
           "--resolution", String(spec.resolution ?? (vertical ? 1080 : 720)),
+          ...(spec.noBranding ? ["--no-branding"] : []),
         ],
         (t) => {
           // Remotion redraws progress with \r, so a chunk may hold several updates: use the latest.

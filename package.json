@@ -22,6 +22,7 @@
     "test:youtube": "ts-node tests/youtube.test.ts",
     "test:pipeline": "ts-node tests/pipeline.test.ts",
     "test:plan-import": "ts-node tests/plan-import.test.ts",
+    "test:howitworks-clip": "ts-node tests/howitworks-clip.test.ts",
     "verify": "node scripts/verify.js",
     "dm:chat": "ts-node src/instagram/dm/cli.ts chat",
     "dm:knowledge": "ts-node src/instagram/dm/cli.ts knowledge",
