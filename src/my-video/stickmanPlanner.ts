@@ -658,9 +658,9 @@ ${idxs.length <= 3 ? `Context only (do NOT direct these): previous beat: "${beat
 ${idxs.map((i) => `${i}. ${beats[i]}`).join("\n")}
 
 Return ONLY raw JSON, no markdown:
-{${idxs.includes(0) ? '"title":"catchy YouTube title under 90 chars","description":"2-3 sentence description with 3-4 hashtags","tags":["8 relevant tags"],' : ""}"scenes":[{"i":0,${echoText ? '"text":"the beat copied EXACTLY, word for word",' : ""}"pose":"","mood":"","accent":"","camera":"","setting":"","title":"","callouts":["..."]}]}
+{${idxs.includes(0) ? '"title":"catchy YouTube title under 90 chars","description":"2-3 sentence description with 3-4 hashtags","tags":["8 relevant tags"],' : ""}"scenes":[{"i":${idxs[0]},${echoText ? '"text":"the beat copied EXACTLY, word for word",' : ""}"pose":"","mood":"","accent":"","camera":"","setting":"","title":"","callouts":["..."]}]}
 Add optional keys to a scene ONLY when needed: "chapter","flip","props":[{"type":""}] and at most one panel key ("steps","flow","code","terminal","browser","compare","counter","chart","progress","table","alert","svg","container","quiz") with the structure described above. Do NOT output keys with null values.
-"scenes" must have exactly ${idxs.length} entries, one per beat, in order; "i" is the beat number it directs. Every scene needs a setting and at least one of: callouts, props or a panel.`;
+"scenes" must have exactly ${idxs.length} entries, one per beat, in order; "i" is the beat number it directs (${idxs[0]} for the first beat below, counting up in the order given). Every scene needs a setting and at least one of: callouts, props or a panel.`;
 }
 
 /** One LLM call for the given beat numbers: returns the scenes it directed, keyed by beat number (possibly partial). */
@@ -677,11 +677,18 @@ async function directBeats(
     }
     const got: any[] = Array.isArray(parsed?.scenes) ? parsed.scenes : salvageScenes(raw);
     const byIndex = new Map<number, any>();
-    got.forEach((sc, pos) => {
-      if (!sc || typeof sc !== "object") return;
-      const idx = Number.isInteger(sc.i) ? sc.i : got.length === idxs.length ? idxs[pos] : -1;
-      if (idxs.includes(idx) && !byIndex.has(idx)) byIndex.set(idx, sc);
-    });
+    const valid = got.filter((sc) => sc && typeof sc === "object");
+    const inSet = new Set(idxs);
+    const absIds = valid.map((sc) => sc.i);
+    // The model echoes "i": usually the beat number, but often 0..n-1 (relative) or nothing. Trust it only when it is
+    // a unique, complete mapping onto the beats we asked for; otherwise fall back to order, which is what a model that
+    // returned the right number of scenes almost always kept.
+    const absOk = valid.length > 0 && absIds.every((v) => Number.isInteger(v) && inSet.has(v)) && new Set(absIds).size === valid.length;
+    if (absOk) {
+      valid.forEach((sc) => byIndex.set(sc.i, sc));
+    } else {
+      valid.forEach((sc, pos) => { if (pos < idxs.length && !byIndex.has(idxs[pos])) byIndex.set(idxs[pos], sc); });
+    }
     if (byIndex.size < idxs.length) {
       pipelineLogger.warn(`Stickman director gave ${byIndex.size}/${idxs.length} usable scenes`, "StickmanPlanner");
     }
