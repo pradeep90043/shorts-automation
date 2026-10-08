@@ -422,22 +422,44 @@ export interface StickmanPlan {
   aiVisuals: boolean;
 }
 
+/**
+ * Asks the LLM, hedged: FreeLLMAPI first; if it has not answered within HEDGE_MS (or fails) Gemini is asked too
+ * and whichever returns text first wins. One slow provider (60 s timeouts) no longer stalls a batch for minutes.
+ */
+const HEDGE_MS = Number(process.env.PLAN_HEDGE_MS) || 25_000;
 async function askLlm(prompt: string): Promise<string> {
+  const providers: { name: string; ask: () => Promise<string> }[] = [];
   if (config.ai.provider === "freellmapi" || process.env.FREELLMAPI_KEY) {
-    try {
-      return await new FreeLlmApiClient().generateText(prompt);
-    } catch (err: any) {
-      pipelineLogger.warn(`FreeLLMAPI failed for stickman plan: ${err.message}`, "StickmanPlanner");
-    }
+    providers.push({ name: "FreeLLMAPI", ask: () => new FreeLlmApiClient().generateText(prompt) });
   }
   if (process.env.GEMINI_API_KEY) {
-    try {
-      return await new GeminiClient().generateText(prompt);
-    } catch (err: any) {
-      pipelineLogger.warn(`Gemini failed for stickman plan: ${err.message}`, "StickmanPlanner");
-    }
+    providers.push({ name: "Gemini", ask: () => new GeminiClient().generateText(prompt) });
   }
-  return "";
+  if (!providers.length) return "";
+  return new Promise<string>((resolve) => {
+    let settled = false, launched = 0, failed = 0;
+    let hedge: NodeJS.Timeout | undefined;
+    const finish = (text: string) => { if (!settled) { settled = true; if (hedge) clearTimeout(hedge); resolve(text); } };
+    const launch = () => {
+      if (settled || launched >= providers.length) return;
+      const p = providers[launched++];
+      p.ask().then((text) => {
+        if (text && text.trim()) finish(text);
+        else onFail();
+      }).catch((err: any) => {
+        pipelineLogger.warn(`${p.name} failed for stickman plan: ${err.message}`, "StickmanPlanner");
+        onFail();
+      });
+      if (launched < providers.length) hedge = setTimeout(launch, HEDGE_MS);
+    };
+    const onFail = () => {
+      failed++;
+      if (hedge) clearTimeout(hedge);
+      if (launched < providers.length) launch();
+      else if (failed >= providers.length) finish("");
+    };
+    launch();
+  });
 }
 
 
@@ -621,7 +643,7 @@ export async function planStickmanVideo(script: string, titleHint?: string): Pro
   for (let r = 0; r < ROUNDS.length; r++) {
     const todo = r === 0 ? all : all.filter((i) => isThin(visuals[i]));
     if (!todo.length) break;
-    const results = await pool(groups(todo, ROUNDS[r]).map((g) => () => directBeats(beats, g, beats.length)), 3);
+    const results = await pool(groups(todo, ROUNDS[r]).map((g) => () => directBeats(beats, g, beats.length)), 5);
     results.forEach(merge);
     const left = all.filter((i) => isThin(visuals[i])).length;
     pipelineLogger.info(`Stickman director round ${r + 1}/${ROUNDS.length}: ${beats.length - left}/${beats.length} beats directed`, "StickmanPlanner");
