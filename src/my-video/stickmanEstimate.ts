@@ -61,7 +61,8 @@ const median = (xs: number[]) => {
 };
 
 export function currentTimings(): { timings: Timings; samples: number } {
-  const h = readHistory();
+  // only the latest 3 runs: the render pipeline keeps getting faster (more chunks, caches), so older runs mislead
+  const h = readHistory().slice(-3);
   if (!h.length) return { timings: PRIORS, samples: 0 };
   return {
     samples: h.length,
