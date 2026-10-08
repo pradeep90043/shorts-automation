@@ -40,6 +40,9 @@ export interface JobEntry {
 export class JobDatabase {
   private dbFilePath: string;
   private jobs = new Map<string, JobEntry>();
+  // mtime+size of the file as last read/written by this instance; lets loadFromFile skip
+  // re-parsing a multi-MB JSON on every call (it blocked the event loop several times a minute)
+  private lastSig = "";
 
   // dbKey namespaces the db file per channel profile (undefined = legacy jobs_db.json)
   constructor(dbKey?: string) {
@@ -54,11 +57,23 @@ export class JobDatabase {
     this.loadFromFile();
   }
 
+  private fileSig(): string {
+    try {
+      const st = fs.statSync(this.dbFilePath);
+      return `${st.mtimeMs}:${st.size}`;
+    } catch {
+      return "";
+    }
+  }
+
   private loadFromFile(): void {
     try {
       if (fs.existsSync(this.dbFilePath)) {
+        if (this.lastSig && this.lastSig === this.fileSig()) return; // unchanged since our last read/write
+        const sig = this.fileSig();
         const raw = fs.readFileSync(this.dbFilePath, "utf8");
         const parsed = JSON.parse(raw) as Record<string, JobEntry>;
+        this.lastSig = sig;
         for (const [id, job] of Object.entries(parsed)) {
           this.jobs.set(id, job);
         }
@@ -90,8 +105,9 @@ export class JobDatabase {
       // temp file — rename() itself is atomic, so this fully prevents
       // corruption even without the single-instance lock.
       const tempPath = `${this.dbFilePath}.${process.pid}.${Date.now()}.tmp`;
-      fs.writeFileSync(tempPath, JSON.stringify(records, null, 2), "utf8");
+      fs.writeFileSync(tempPath, JSON.stringify(records), "utf8");
       fs.renameSync(tempPath, this.dbFilePath);
+      this.lastSig = this.fileSig();
     } catch (err) {
       pipelineLogger.error(
         `Failed to write jobs database to file`,

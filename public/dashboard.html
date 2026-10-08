@@ -1040,8 +1040,8 @@
     lvRender();
     clearInterval(lvPollTimer); clearInterval(lvTickTimer);
     if (job.status === 'running') {
-      lvPollTimer = setInterval(lvPoll, 1500);
-      lvTickTimer = setInterval(lvRender, 500);
+      lvPollTimer = setInterval(() => { if (!document.hidden) lvPoll(); }, 3000);
+      lvTickTimer = setInterval(() => { if (!document.hidden) lvRender(); }, 1000);
     } else {
       document.getElementById('lv-start-btn').disabled = false;
       if (job.publish && job.publish.status === 'running') lvWatchPublish();
@@ -1197,7 +1197,11 @@
     } catch (e) {}
   }
 
-  function lvOpenJob(i) { const j = window._lvJobs && window._lvJobs[i]; if (j) lvTrack(j); }
+  async function lvOpenJob(i) {
+    const j = window._lvJobs && window._lvJobs[i]; if (!j) return;
+    lvTrack(j);
+    try { const r = await fetch(BASE_URL + '/api/longvideo/job?id=' + encodeURIComponent(j.id)); const d = await r.json(); if (d.success) { lvJob = d.job; lvJobFetchedAt = Date.now(); lvRender(); } } catch (e) {}
+  }
 
   /* Called on tab open and page load: resume a running job, or show the last one */
   async function lvOnOpen() {
