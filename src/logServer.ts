@@ -2772,21 +2772,39 @@ export function startLogServer(): void {
       return;
     }
 
-    // ── /output/* — serve mp4 files statically for <video> src ─────────────
-    if (req.method === "GET" && url.startsWith("/output/")) {
+    // ── /output/* — serve mp4 files for <video> src, with HTTP Range so the player can seek ──
+    if ((req.method === "GET" || req.method === "HEAD") && url.startsWith("/output/")) {
       try {
-        const filePath = path.join(process.cwd(), decodeURIComponent(url));
-        if (!fs.existsSync(filePath) || !filePath.endsWith(".mp4")) {
+        const outputRoot = path.resolve(process.cwd(), "output");
+        const filePath = path.resolve(process.cwd(), decodeURIComponent(url.split("?")[0]).replace(/^\/+/, ""));
+        if (!filePath.startsWith(outputRoot + path.sep) || !filePath.endsWith(".mp4") || !fs.existsSync(filePath)) {
           res.writeHead(404); res.end(); return;
         }
-        const stat = fs.statSync(filePath);
-        res.writeHead(200, {
+        const size = fs.statSync(filePath).size;
+        const base = {
           "Content-Type": "video/mp4",
-          "Content-Length": stat.size,
+          "Accept-Ranges": "bytes",
           "Access-Control-Allow-Origin": "*",
           "Cache-Control": "no-cache",
-        });
-        fs.createReadStream(filePath).pipe(res);
+        };
+        const m = /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range || ""));
+        let start = 0, end = size - 1, status = 200;
+        if (m && (m[1] || m[2])) {
+          if (m[1]) { start = Number(m[1]); end = m[2] ? Math.min(Number(m[2]), size - 1) : size - 1; }
+          else { start = Math.max(0, size - Number(m[2])); } // "bytes=-N": the last N bytes
+          if (start > end || start >= size) {
+            res.writeHead(416, { ...base, "Content-Range": `bytes */${size}` }); res.end(); return;
+          }
+          status = 206;
+        }
+        const headers: Record<string, string | number> = { ...base, "Content-Length": end - start + 1 };
+        if (status === 206) headers["Content-Range"] = `bytes ${start}-${end}/${size}`;
+        res.writeHead(status, headers);
+        if (req.method === "HEAD") { res.end(); return; }
+        const stream = fs.createReadStream(filePath, { start, end });
+        stream.on("error", () => res.destroy());
+        res.on("close", () => stream.destroy()); // the player aborts requests while scrubbing
+        stream.pipe(res);
       } catch { res.writeHead(404); res.end(); }
       return;
     }
