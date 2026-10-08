@@ -3,7 +3,7 @@ import path from "path";
 import { randomUUID } from "crypto";
 import { config } from "../config";
 import { pipelineLogger } from "../utils/logger";
-import { renderStickmanVideo, resumeCloudRender, type CloudRunRef, type RenderProgress } from "./myVideoService";
+import { cancelCloudRun, renderStickmanVideo, resumeCloudRender, type CloudRunRef, type RenderProgress } from "./myVideoService";
 import {
   estimateStickman, recordTimings, STAGE_LABELS, STAGE_ORDER,
   type StageKey, type StickmanEstimate,
@@ -35,7 +35,7 @@ interface StageState {
 
 export interface StickmanJob {
   id: string;
-  status: "running" | "done" | "failed";
+  status: "running" | "done" | "failed" | "cancelled";
   createdAt: number;
   finishedAt?: number;
   input: StickmanJobInput;
@@ -114,6 +114,9 @@ function persistSoon(): void {
   }
 })();
 
+/** Function (not an inline compare) so TypeScript does not narrow away a cancel that happened during an await. */
+const isCancelled = (job: StickmanJob): boolean => job.status === "cancelled";
+
 export const isStickmanBusy = (): boolean => [...jobs.values()].some((j) => j.status === "running");
 
 function setStage(job: StickmanJob, key: StageKey, patch: Partial<StageState>): void {
@@ -125,6 +128,11 @@ function setStage(job: StickmanJob, key: StageKey, patch: Partial<StageState>): 
 }
 
 function applyProgress(job: StickmanJob, p: RenderProgress): void {
+  if (job.status === "cancelled") {
+    // a run that was dispatched just before the cancel: stop it as soon as we learn its id
+    if (p.cloudRun) void cancelCloudRun(p.cloudRun);
+    return;
+  }
   const idx = STAGE_ORDER.indexOf(p.stage);
   // entering a stage completes every earlier one
   for (const s of job.stages) {
@@ -173,6 +181,7 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
     }
     setStage(job, "plan", { status: "running", fraction: 0.1, detail: "Fitting script to length" });
     const fit = await fitScriptToDuration(cleanScript(script), job.input.targetSec);
+    if (isCancelled(job)) return;
     job.finalScript = fit.script;
     job.adjustNote = fit.note;
     log(fit.note);
@@ -182,6 +191,7 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
     for (const s of job.stages) s.estSec = fitted.stageSec[s.key];
     setStage(job, "plan", { fraction: 0.5, detail: "Choosing visuals" });
     const plan = await planStickmanVideo(fit.script, title);
+    if (isCancelled(job)) return;
     Object.assign(job, { title: plan.title, description: plan.description, tags: plan.tags, scenes: plan.scenes.length, aiVisuals: plan.aiVisuals });
     setStage(job, "plan", { status: "done", fraction: 1 });
     log(`Planned ${plan.scenes.length} scenes (${plan.aiVisuals ? "AI" : "rule-based"} visuals)`);
@@ -202,6 +212,7 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
 
     finishJob(job, result.videoPath, log);
   } catch (err: any) {
+    if (isCancelled(job)) return; // the render was stopped on purpose; keep the cancelled state
     const running = job.stages.find((s) => s.status === "running");
     if (running) running.status = "failed";
     job.status = "failed";
@@ -214,6 +225,7 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
 }
 
 function finishJob(job: StickmanJob, videoPath: string, log: (m: string) => void): void {
+  if (isCancelled(job)) return;
   for (const s of job.stages) if (s.status !== "done") setStage(job, s.key, { status: "done", fraction: 1 });
   job.videoPath = videoPath;
   job.status = "done";
@@ -221,6 +233,23 @@ function finishJob(job: StickmanJob, videoPath: string, log: (m: string) => void
   job.cloudRun = undefined;
   learn(job);
   log(`Done in ${Math.round((job.finishedAt - job.createdAt) / 1000)}s -> ${videoPath}`);
+}
+
+/** Forcefully stops a running job: marks it cancelled and cancels its GitHub run so no more minutes are spent. */
+export async function cancelStickmanJob(id: string): Promise<StickmanJob | undefined> {
+  const job = jobs.get(id);
+  if (!job) return undefined;
+  if (job.status !== "running") return job;
+  job.status = "cancelled";
+  job.error = "Cancelled by you";
+  job.finishedAt = Date.now();
+  for (const s of job.stages) if (s.status === "running") s.status = "failed";
+  const ref = job.cloudRun;
+  job.cloudRun = undefined;
+  persist();
+  pipelineLogger.info(`[${job.id}] Cancelled by user${ref ? ` (stopping GitHub run #${ref.runId})` : ""}`, "StickmanJob");
+  if (ref) await cancelCloudRun(ref);
+  return job;
 }
 
 /** Feed measured stage timings back so the next estimate is closer. */

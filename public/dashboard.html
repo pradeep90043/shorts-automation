@@ -1086,7 +1086,7 @@
         clearInterval(lvPollTimer); clearInterval(lvTickTimer);
         document.getElementById('lv-start-btn').disabled = false;
         lvBadge(false);
-        showToast(d.job.status === 'done' ? '✅ Video ready!' : '❌ Video failed: ' + (d.job.error || '').slice(0, 120), d.job.status === 'done' ? 'ok' : 'err');
+        showToast(d.job.status === 'done' ? '✅ Video ready!' : d.job.status === 'cancelled' ? '🛑 Cancelled' : '❌ Video failed: ' + (d.job.error || '').slice(0, 120), d.job.status === 'done' ? 'ok' : 'err');
         lvLoadHistory();
       }
     } catch (e) { /* transient network error: next tick retries */ }
@@ -1133,19 +1133,40 @@
           '</div></div>' +
         '<div style="width:' + (vertical ? '170px' : '320px') + ';background:#000;border-radius:8px;overflow:hidden;border:1px solid #30363d;">' +
           '<video src="' + src + '" controls style="width:100%;display:block;"></video></div></div>';
-    } else if (j.status === 'failed') {
+    } else if (j.status === 'failed' || j.status === 'cancelled') {
       result = '<div style="margin-top:12px;padding:10px;background:var(--danger-bg);border:1px solid var(--danger);border-radius:6px;color:var(--danger);font-size:12px;white-space:pre-wrap;max-height:160px;overflow:auto;">' + lvEsc(j.error) + '</div>';
     }
 
     card.innerHTML =
       '<div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:10px;">' +
-        '<div style="font-size:14px;font-weight:800;color:#fff;">' + (running ? '⏳ Creating video…' : j.status === 'done' ? '✅ Video ready' : '❌ Failed') + (j.title ? ' <span style="font-weight:400;color:var(--text-muted);">&middot; ' + lvEsc(j.title) + '</span>' : '') + '</div>' +
+        '<div style="font-size:14px;font-weight:800;color:#fff;">' + (running ? '⏳ Creating video…' : j.status === 'done' ? '✅ Video ready' : j.status === 'cancelled' ? '🛑 Cancelled' : '❌ Failed') + (j.title ? ' <span style="font-weight:400;color:var(--text-muted);">&middot; ' + lvEsc(j.title) + '</span>' : '') + '</div>' +
         '<div style="font-size:12px;font-family:var(--font-mono);color:var(--text-muted);">elapsed <b style="color:#fff;">' + lvFmt(elapsed) + '</b>' + (running ? ' &middot; remaining ~<b style="color:var(--primary);">' + lvFmt(eta) + '</b>' : '') + ' &middot; estimated ' + lvFmt(estTotal) + '</div>' +
       '</div>' +
       (j.adjustNote ? '<div style="font-size:12px;color:var(--primary);margin-bottom:8px;">✍️ ' + lvEsc(j.adjustNote) + '</div>' : '') +
       '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;"><div style="flex:1;height:10px;background:#21262d;border-radius:5px;overflow:hidden;"><div style="height:100%;width:' + pct + '%;background:' + color + ';transition:width .4s;"></div></div><div style="font-size:12px;font-family:var(--font-mono);color:#fff;width:40px;text-align:right;">' + pct + '%</div></div>' +
       stages + result +
+      (running ? '<div style="margin-top:12px;"><button id="lv-cancel-btn" class="btn-primary" style="background:#3a1d1d;border:1px solid var(--danger);color:#ff7b72;padding:7px 16px;font-size:12px;" onclick="lvCancel()">🛑 Cancel creation</button></div>' : '') +
       (!running && j.finalScript ? '<details style="margin-top:12px;"><summary style="cursor:pointer;font-size:12px;color:var(--text-muted);">Final narration used (' + j.finalScript.split(/\s+/).length + ' words)</summary><div style="margin-top:8px;padding:10px;background:#161b22;border:1px solid #21262d;border-radius:6px;font-size:12px;line-height:1.6;color:#c9d1d9;white-space:pre-wrap;max-height:240px;overflow:auto;">' + lvEsc(j.finalScript) + '</div></details>' : '');
+  }
+
+  async function lvCancel() {
+    if (!lvJob || lvJob.status !== 'running') return;
+    if (!confirm('Stop creating this video now? Progress is lost and the cloud render is cancelled.')) return;
+    const btn = document.getElementById('lv-cancel-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Cancelling…'; }
+    try {
+      const r = await fetch(BASE_URL + '/api/longvideo/cancel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: lvJob.id }) });
+      const d = await r.json();
+      if (!d.success) throw new Error(d.message || 'Cancel failed');
+      lvJob = d.job; lvJobFetchedAt = Date.now();
+      clearInterval(lvPollTimer); clearInterval(lvTickTimer);
+      document.getElementById('lv-start-btn').disabled = false;
+      lvBadge(false); lvRender(); lvLoadHistory();
+      showToast('🛑 Video creation cancelled', 'ok');
+    } catch (e) {
+      if (btn) { btn.disabled = false; btn.textContent = '🛑 Cancel creation'; }
+      showToast('Cancel failed: ' + (e.message || e), 'err');
+    }
   }
 
   function lvPublishArea(j) {
@@ -1191,7 +1212,7 @@
       window._lvJobs = d.jobs;
       el.innerHTML = d.jobs.length ? d.jobs.map((j, i) =>
         '<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-top:1px solid #21262d;cursor:pointer;" onclick="lvOpenJob(' + i + ')">' +
-          '<span style="color:#fff;">' + (j.status === 'done' ? '✅' : j.status === 'failed' ? '❌' : '⏳') + ' ' + lvEsc(j.title || j.input.script.slice(0, 60)) + '</span>' +
+          '<span style="color:#fff;">' + (j.status === 'done' ? '✅' : j.status === 'cancelled' ? '🛑' : j.status === 'failed' ? '❌' : '⏳') + ' ' + lvEsc(j.title || j.input.script.slice(0, 60)) + '</span>' +
           '<span style="font-family:var(--font-mono);">' + new Date(j.createdAt).toLocaleString() + ' &middot; ' + lvFmt(j.elapsedSec) + '</span></div>').join('') : 'No videos yet.';
       return d.jobs;
     } catch (e) {}

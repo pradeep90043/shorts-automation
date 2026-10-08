@@ -17,7 +17,7 @@ import { computeViralScore } from "./utils/viralScore";
 import { MultiSceneGenerator } from "./video/multiSceneGenerator";
 import { YouTubeService } from "./youtube";
 import { estimateStickman } from "./my-video/stickmanEstimate";
-import { getStickmanJob, getStickmanJobForPoll, listStickmanJobs, resetPublish, startPublish, startStickmanJob } from "./my-video/stickmanJobs";
+import { cancelStickmanJob, getStickmanJob, getStickmanJobForPoll, listStickmanJobs, resetPublish, startPublish, startStickmanJob } from "./my-video/stickmanJobs";
 import { recordCloudProgress, resolveMyVideoDir } from "./my-video/myVideoService";
 import { pipelineLogger } from "./utils/logger";
 import { buildActivityFeed, loadJobSummaries, jobsFileFor } from "./utils/activityFeed";
@@ -1678,6 +1678,12 @@ export function startLogServer(): void {
           if (!script) return json(400, { success: false, message: "Script is empty" });
           const resolution = Number(body.resolution) === 1080 ? 1080 : 720;
           return json(200, { success: true, estimate: estimateStickman(script, toSec(body.targetSec), resolution) });
+        }
+        if (req.method === "POST" && route === "/api/longvideo/cancel") {
+          const body = await parseJsonBody(req);
+          const cancelled = await cancelStickmanJob(String(body.id || ""));
+          if (!cancelled) return json(404, { success: false, message: "Job not found" });
+          return json(200, { success: true, job: getStickmanJob(cancelled.id) });
         }
         if (req.method === "POST" && route === "/api/longvideo/start") {
           const body = await parseJsonBody(req);
