@@ -631,16 +631,19 @@ const isThin = (v: any): boolean =>
   !v || (!(Array.isArray(v.callouts) && v.callouts.some((c: unknown) => typeof c === "string" && c.trim())) &&
     !(Array.isArray(v.props) && v.props.length) && !PANEL_KEYS.some((k) => v[k]));
 
-/** One LLM call for the given beat numbers: returns the scenes it directed, keyed by beat number (possibly partial). */
-async function directBeats(
-  beats: string[], idxs: number[], total: number, notes?: { beatScene: number[]; notes: string[] } | null,
-): Promise<{ meta: any; byIndex: Map<number, any> } | null> {
+/**
+ * The full director prompt for the given beat numbers. Used by the built-in LLM call and, with `echoText`, handed to
+ * the user so they can run it in any external chat model and import the JSON it returns.
+ */
+export function buildDirectorPrompt(
+  beats: string[], idxs: number[], total: number, notes?: { beatScene: number[]; notes: string[] } | null, echoText = false,
+): string {
   // the script author's own visual directions for the sections these beats belong to (never narrated)
   const sections = notes ? [...new Set(idxs.map((i) => notes.beatScene[i]))].filter((k) => notes.notes[k]) : [];
   const notesBlock = sections.length
     ? `\nAUTHOR'S VISUAL DIRECTIONS (NOT narration - never put these sentences on screen verbatim; use them to choose the setting, props, panels, pose and mood):\n${sections.map((k) => `- ${notes!.notes[k]}`).join("\n")}\n`
     : "";
-  const prompt = `${DIRECTOR_RULES}
+  return `${DIRECTOR_RULES}
 ${notesBlock}
 The narration is already split into numbered beats - do NOT change the words. This is part of a ${total}-beat video; you are directing the ${idxs.length} beats below.
 
@@ -655,9 +658,16 @@ ${idxs.length <= 3 ? `Context only (do NOT direct these): previous beat: "${beat
 ${idxs.map((i) => `${i}. ${beats[i]}`).join("\n")}
 
 Return ONLY raw JSON, no markdown:
-{${idxs.includes(0) ? '"title":"catchy YouTube title under 90 chars","description":"2-3 sentence description with 3-4 hashtags","tags":["8 relevant tags"],' : ""}"scenes":[{"i":0,"pose":"","mood":"","accent":"","camera":"","setting":"","title":"","callouts":["..."]}]}
+{${idxs.includes(0) ? '"title":"catchy YouTube title under 90 chars","description":"2-3 sentence description with 3-4 hashtags","tags":["8 relevant tags"],' : ""}"scenes":[{"i":0,${echoText ? '"text":"the beat copied EXACTLY, word for word",' : ""}"pose":"","mood":"","accent":"","camera":"","setting":"","title":"","callouts":["..."]}]}
 Add optional keys to a scene ONLY when needed: "chapter","flip","props":[{"type":""}] and at most one panel key ("steps","flow","code","terminal","browser","compare","counter","chart","progress","table","alert","svg","container","quiz") with the structure described above. Do NOT output keys with null values.
 "scenes" must have exactly ${idxs.length} entries, one per beat, in order; "i" is the beat number it directs. Every scene needs a setting and at least one of: callouts, props or a panel.`;
+}
+
+/** One LLM call for the given beat numbers: returns the scenes it directed, keyed by beat number (possibly partial). */
+async function directBeats(
+  beats: string[], idxs: number[], total: number, notes?: { beatScene: number[]; notes: string[] } | null,
+): Promise<{ meta: any; byIndex: Map<number, any> } | null> {
+  const prompt = buildDirectorPrompt(beats, idxs, total, notes);
   try {
     const raw = await askLlm(prompt);
     if (!raw) return null;
@@ -702,13 +712,17 @@ async function pool<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]>
  */
 export async function planStickmanVideo(
   script: string, titleHint?: string, notes?: { beatScene: number[]; notes: string[] } | null,
+  /** scenes the user imported from an external model: kept as-is, the AI only directs the remaining beats */
+  prefilled?: { byIndex: Map<number, any>; meta: any },
 ): Promise<StickmanPlan> {
   script = cleanScript(script);
   const beats = splitScriptIntoBeats(script);
   if (!beats.length) throw new Error("Script is empty");
 
   const visuals: any[] = new Array(beats.length).fill(undefined);
-  let meta: any = null;
+  const locked = new Set<number>();
+  let meta: any = prefilled && Object.keys(prefilled.meta ?? {}).length ? prefilled.meta : null;
+  if (prefilled) for (const [i, sc] of prefilled.byIndex) if (i >= 0 && i < beats.length) { visuals[i] = sc; locked.add(i); }
   const merge = (res: { meta: any; byIndex: Map<number, any> } | null) => {
     if (!res) return;
     if (!meta && res.byIndex.has(0)) meta = res.meta;
@@ -724,21 +738,27 @@ export async function planStickmanVideo(
   for (let r = 0; r < ROUNDS.length; r++) {
     if (r > 0 && Date.now() - planStart > PLAN_BUDGET_MS) { pipelineLogger.warn("Stickman director: planning time budget used up", "StickmanPlanner"); break; }
     // early rounds also re-ask bare scenes; the last rounds only chase scenes the AI never directed at all
-    const todo = r === 0 ? all : all.filter((i) => (r < 4 ? isThin(visuals[i]) : !visuals[i]));
+    const open = all.filter((i) => !locked.has(i));
+    const todo = r === 0 ? open : open.filter((i) => (r < 4 ? isThin(visuals[i]) : !visuals[i]));
     if (!todo.length) break;
     const results = await pool(groups(todo, ROUNDS[r]).map((g) => () => directBeats(beats, g, beats.length, notes)), 4);
     results.forEach(merge);
-    const left = all.filter((i) => isThin(visuals[i])).length;
+    const left = open.filter((i) => isThin(visuals[i])).length;
     pipelineLogger.info(`Stickman director round ${r + 1}/${ROUNDS.length}: ${beats.length - left}/${beats.length} beats directed`, "StickmanPlanner");
   }
   const missing = all.filter((i) => !visuals[i]).length;
-  const bare = all.filter((i) => visuals[i] && isThin(visuals[i])).length;
+  const bare = all.filter((i) => !locked.has(i) && visuals[i] && isThin(visuals[i])).length;
   if (missing || bare > Math.ceil(beats.length * 0.3)) {
     throw new Error(
       `The AI visual director could not direct ${missing} of ${beats.length} scenes (${bare} had no visuals) after several retries, so no video was created. ` +
         "This is usually a temporary LLM problem - start the video again.",
     );
   }
+  return finalizePlan(beats, visuals, meta, script, titleHint);
+}
+
+/** Shared by every way of getting a plan (AI, imported with a script, plan-only): consistent backdrops, sanitising, variety. */
+function finalizePlan(beats: string[], visuals: any[], meta: any, script: string, titleHint?: string): StickmanPlan {
   // backdrops persist while the topic stays the same: a beat without one keeps the previous setting
   let lastSetting = "office";
   for (const v of visuals) {
@@ -765,4 +785,242 @@ export async function planStickmanVideo(
     scenes,
     aiVisuals,
   };
+}
+
+
+// ── Importing a plan made outside the app (any chat model) ─────────────────────────────────────────────────────
+
+/** A plan the user pasted was rejected; `details` says exactly why, `missing` lists beats that have no scene. */
+export class PlanImportError extends Error {
+  constructor(message: string, public details: string[] = [], public missing: number[] = []) {
+    super(message);
+    this.name = "PlanImportError";
+  }
+}
+
+/** Director prompts for the whole script, split into chunks small enough for one external chat answer. */
+export function buildImportPrompts(
+  script: string, chunkSize = 40,
+): { beatCount: number; prompts: { from: number; to: number; prompt: string }[] } {
+  const cleaned = cleanScript(script);
+  const beats = splitScriptIntoBeats(cleaned);
+  if (!beats.length) throw new PlanImportError("Script is empty");
+  const notes = sceneNotesForBeats(script, beats);
+  const size = Math.max(5, Math.min(80, Math.round(chunkSize) || 40));
+  const prompts: { from: number; to: number; prompt: string }[] = [];
+  for (let from = 0; from < beats.length; from += size) {
+    const idxs = beats.slice(from, from + size).map((_, k) => from + k);
+    prompts.push({ from, to: idxs[idxs.length - 1], prompt: buildDirectorPrompt(beats, idxs, beats.length, notes, true) });
+  }
+  return { beatCount: beats.length, prompts };
+}
+
+/** Every complete top-level {...} / [...] value in pasted text; prose and ``` fences around them are ignored. */
+function topLevelJson(raw: string): string[] {
+  const out: string[] = [];
+  let depth = 0, begin = -1, inStr = false, esc = false;
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i];
+    if (inStr) { if (esc) esc = false; else if (c === "\\") esc = true; else if (c === '"') inStr = false; continue; }
+    if (c === '"' && depth > 0) inStr = true;
+    else if (c === "{" || c === "[") { if (depth++ === 0) begin = i; }
+    else if ((c === "}" || c === "]") && depth > 0 && --depth === 0 && begin >= 0) { out.push(raw.slice(begin, i + 1)); begin = -1; }
+  }
+  return out;
+}
+
+/** Reads the pasted answer(s): one JSON object, several answers pasted one after another, or a bare scenes array. */
+export function parsePlanText(raw: string): { meta: any; scenes: any[] } {
+  const scenes: any[] = [];
+  let meta: any = {};
+  const take = (v: any) => {
+    const objects = (list: any[]) => list.filter((x) => x && typeof x === "object");
+    if (Array.isArray(v)) { scenes.push(...objects(v)); return; }
+    if (!v || typeof v !== "object") return;
+    if (Array.isArray(v.scenes)) {
+      scenes.push(...objects(v.scenes));
+      if (!meta.title && !meta.description && !meta.tags) meta = { title: v.title, description: v.description, tags: v.tags };
+    } else if (Number.isInteger(v.i)) scenes.push(v);
+  };
+  const chunks = topLevelJson(raw);
+  for (const chunk of chunks) {
+    try { take(JSON.parse(chunk)); } catch {
+      try { take(parseAiJson<any>(chunk)); } catch {
+        scenes.push(...salvageScenes(chunk).filter((x) => x && typeof x === "object"));
+      }
+    }
+  }
+  if (!chunks.length && raw.includes('"scenes"')) scenes.push(...salvageScenes(raw).filter((x) => x && typeof x === "object")); // truncated answer
+  if (!scenes.length) throw new PlanImportError("No scenes found in the pasted JSON", ['Paste the JSON the other model returned: an object with a "scenes" array.']);
+  return { meta, scenes };
+}
+
+const sameText = (a: string, b: string): boolean => {
+  const n = (x: string) => x.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+  return n(a) === n(b);
+};
+
+export interface PlanCheck {
+  beatCount: number;
+  /** imported scenes that line up with a beat of the script */
+  byIndex: Map<number, any>;
+  meta: any;
+  /** beats of the script that have no scene yet */
+  missing: number[];
+  /** things that make the plan unusable (wrong text, out-of-range or duplicate beat numbers) */
+  errors: string[];
+}
+
+/** Lines the pasted plan up against the script's beats without using any AI. */
+export function checkImportedPlan(script: string, plan: unknown): PlanCheck {
+  const beats = splitScriptIntoBeats(cleanScript(script));
+  if (!beats.length) throw new PlanImportError("Script is empty");
+  const parsed = typeof plan === "string" ? parsePlanText(plan) : Array.isArray(plan) ? { meta: {}, scenes: plan } : parsePlanText(JSON.stringify(plan ?? {}));
+  const errors: string[] = [];
+  const byIndex = new Map<number, any>();
+  const short = (t: string) => (t.length > 60 ? `${t.slice(0, 57)}...` : t);
+  parsed.scenes.forEach((sc, pos) => {
+    if (!sc || typeof sc !== "object") { errors.push(`Scene #${pos + 1} is not an object`); return; }
+    const idx = Number.isInteger(sc.i) ? (sc.i as number) : parsed.scenes.length === beats.length ? pos : -1;
+    if (idx < 0) { errors.push(`Scene #${pos + 1} has no beat number "i"`); return; }
+    if (idx >= beats.length) { errors.push(`Scene "i": ${idx} does not exist - the script has ${beats.length} beats (0-${beats.length - 1})`); return; }
+    if (byIndex.has(idx)) { errors.push(`Beat ${idx} appears more than once`); return; }
+    if (typeof sc.text === "string" && sc.text.trim() && !sameText(sc.text, beats[idx])) {
+      errors.push(`Beat ${idx} text does not match the script: got "${short(sc.text.trim())}", expected "${short(beats[idx])}"`);
+      return;
+    }
+    byIndex.set(idx, sc);
+  });
+  const missing = beats.map((_, i) => i).filter((i) => !byIndex.has(i));
+  return { beatCount: beats.length, byIndex, meta: parsed.meta ?? {}, missing, errors };
+}
+
+/** Throws a PlanImportError unless the plan matches the script (and, without `repair`, covers every beat). */
+export function assertImportablePlan(script: string, plan: unknown, repair: boolean): PlanCheck {
+  const check = checkImportedPlan(script, plan);
+  const cap = (list: string[]) => (list.length > 12 ? [...list.slice(0, 12), `...and ${list.length - 12} more`] : list);
+  if (check.errors.length) {
+    throw new PlanImportError(`The imported plan does not match your script (${check.errors.length} problem${check.errors.length > 1 ? "s" : ""})`, cap(check.errors), check.missing);
+  }
+  if (check.missing.length && !repair) {
+    throw new PlanImportError(
+      `The imported plan has no scene for ${check.missing.length} of ${check.beatCount} beats - paste the rest, or tick "Let the AI fill missing beats"`,
+      [`Missing beat numbers: ${check.missing.slice(0, 40).join(", ")}${check.missing.length > 40 ? ", ..." : ""}`],
+      check.missing,
+    );
+  }
+  return check;
+}
+
+/**
+ * Builds the video plan from an imported one. Imported scenes are sanitised like AI ones; with `repair` the AI directs
+ * only the beats the import left out. Throws PlanImportError on any mismatch with the script.
+ */
+export async function importStickmanPlan(
+  script: string, plan: unknown, opts: { repair?: boolean; titleHint?: string; notes?: { beatScene: number[]; notes: string[] } | null } = {},
+): Promise<StickmanPlan> {
+  const check = assertImportablePlan(script, plan, !!opts.repair);
+  return planStickmanVideo(script, opts.titleHint, opts.notes, { byIndex: check.byIndex, meta: check.meta });
+}
+
+
+// ── Plan-only: the pasted JSON carries the narration itself (each scene's "text"), so no script and no AI is involved ──
+
+/** A scene longer than this is not a "beat" any more: the visuals would sit still for far too long. */
+const PLAN_ONLY_MAX_WORDS = 40;
+
+export interface PlanOnlyCheck {
+  scenes: { text: string; scene: any }[];
+  meta: any;
+  /** the narration, one scene per line */
+  script: string;
+  words: number;
+  errors: string[];
+}
+
+const speakable = (t: string): string => t.replace(/[*#_`]+/g, "").replace(/[“”"]/g, "").replace(/\s+/g, " ").trim();
+
+/** Reads and validates a plan-only JSON without any AI: scene order, narration present and of sensible length. */
+export function checkPlanOnly(plan: unknown): PlanOnlyCheck {
+  const parsed = typeof plan === "string" ? parsePlanText(plan) : Array.isArray(plan) ? { meta: {}, scenes: plan } : parsePlanText(JSON.stringify(plan ?? {}));
+  const errors: string[] = [];
+  const short = (t: string) => (t.length > 50 ? `${t.slice(0, 47)}...` : t);
+  const withI = parsed.scenes.filter((s) => Number.isInteger(s?.i));
+  // numbered scenes are put in order (answers pasted out of order are fine); unnumbered ones keep the pasted order
+  const ordered = withI.length === parsed.scenes.length ? [...parsed.scenes].sort((a, b) => a.i - b.i) : parsed.scenes;
+  if (withI.length === parsed.scenes.length) {
+    const seen = new Set<number>();
+    ordered.forEach((s) => { if (seen.has(s.i)) errors.push(`Scene number ${s.i} appears more than once`); seen.add(s.i); });
+    const gaps = ordered.map((s) => s.i).filter((n, k) => k > 0 && n > ordered[k - 1].i + 1);
+    if (ordered[0].i !== 0) errors.push(`Scenes must start at "i": 0 (the first one is ${ordered[0].i}) - a part is missing`);
+    if (gaps.length) errors.push(`Scene numbers skip ahead before ${gaps.slice(0, 8).join(", ")} - part of the plan is missing`);
+  }
+  const scenes: { text: string; scene: any }[] = [];
+  ordered.forEach((sc, pos) => {
+    const label = Number.isInteger(sc.i) ? `Scene ${sc.i}` : `Scene #${pos + 1}`;
+    const text = typeof sc.text === "string" ? speakable(sc.text) : "";
+    if (!text) { errors.push(`${label} has no narration "text"`); return; }
+    const n = countWords(text);
+    if (n > PLAN_ONLY_MAX_WORDS) { errors.push(`${label} narration is ${n} words (max ${PLAN_ONLY_MAX_WORDS}) - split it into shorter scenes: "${short(text)}"`); return; }
+    scenes.push({ text, scene: sc });
+  });
+  const script = scenes.map((s) => s.text).join("\n");
+  return { scenes, meta: parsed.meta ?? {}, script, words: countWords(script), errors };
+}
+
+/** Throws a PlanImportError unless the plan-only JSON is complete and usable. */
+export function assertPlanOnly(plan: unknown): PlanOnlyCheck {
+  const check = checkPlanOnly(plan);
+  if (check.errors.length) {
+    const list = check.errors.length > 12 ? [...check.errors.slice(0, 12), `...and ${check.errors.length - 12} more`] : check.errors;
+    throw new PlanImportError(`The plan cannot be used (${check.errors.length} problem${check.errors.length > 1 ? "s" : ""})`, list);
+  }
+  if (!check.scenes.length) throw new PlanImportError("The plan has no scenes");
+  return check;
+}
+
+/** The video plan straight from the pasted JSON: no script, no length rewrite, no LLM. */
+export function planFromPlanOnly(plan: unknown, titleHint?: string): StickmanPlan {
+  const check = assertPlanOnly(plan);
+  const beats = check.scenes.map((s) => s.text);
+  return finalizePlan(beats, check.scenes.map((s) => s.scene), check.meta, check.script, titleHint);
+}
+
+/** What to give ChatGPT (with the transcript underneath) to get a plan-only JSON, in parts of `chunk` scenes. */
+export function buildPlanOnlyPrompt(minutes: number, language: string, chunk = 40): string {
+  const mins = Math.min(60, Math.max(1, Math.round(minutes) || 20));
+  const words = targetWordsFor(mins * 60);
+  const scenes = Math.round(words / 9);
+  return `You are the scriptwriter AND the visual director for a finished video. Turn the TRANSCRIPT at the end into a ${mins}-minute narrated explainer, delivered as JSON scenes. Nothing else will edit your output: the JSON is fed straight into the video renderer.
+
+NARRATION
+- Total narration: about ${words} words (it is spoken at 2.4 words per second, so that is ${mins} minutes). About ${scenes} scenes, each scene = ONE beat of narration.
+- Language: ${language}. Conversational, confident, technically accurate.
+- Every scene's "text" is 6-16 words (never more than 25): one short spoken sentence or half-sentence. Plain text only: no markdown, no quotes, no emojis, no bullet points, no stage directions, no raw code (describe code aloud, show it in a "code" panel).
+- Use only facts, names and numbers that appear in the transcript. Never invent statistics.
+
+${DIRECTOR_RULES}
+
+DELIVERY - IMPORTANT
+- You will answer in PARTS of ${chunk} scenes. Numbering is continuous across parts: part 1 is "i": 0-${chunk - 1}, part 2 is "i": ${chunk}-${chunk * 2 - 1}, and so on.
+- Part 1 only: include "title", "description" and "tags". Later parts: only "scenes".
+- Each part is ONE raw JSON object and nothing else - no markdown fence, no explanation, no comments. Valid JSON only (double quotes, no trailing commas).
+- After each part, stop. I will reply "next" and you continue with the following ${chunk} scenes. After the final scene of the video, end that part with the extra key "done": true.
+
+Each scene looks like this:
+{"i":0,"text":"the spoken narration for this beat","pose":"","mood":"","accent":"","camera":"","setting":"","title":"","callouts":["..."]}
+Add optional keys to a scene ONLY when needed: "chapter","flip","props":[{"type":""}] and at most one panel key ("steps","flow","code","terminal","browser","compare","counter","chart","progress","table","alert","svg","container","quiz") with the structure described above. Do NOT output keys with null values.
+
+Allowed values:
+- pose: ${POSES.join(", ")}
+- mood: ${MOODS.join(", ")}
+- accent: ${ACCENTS.join(", ")}
+- camera: ${CAMERAS.join(", ")}
+- setting: ${SETTINGS.filter((x) => x !== "none").join(", ")}
+Every scene needs a setting and at least one of: callouts, props or a panel.
+
+Start with part 1 now.
+
+TRANSCRIPT:
+`;
 }
