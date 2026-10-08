@@ -17,7 +17,7 @@ import { computeViralScore } from "./utils/viralScore";
 import { MultiSceneGenerator } from "./video/multiSceneGenerator";
 import { YouTubeService } from "./youtube";
 import { estimateStickman } from "./my-video/stickmanEstimate";
-import { buildImportPrompts, checkImportedPlan, PlanImportError } from "./my-video/stickmanPlanner";
+import { buildImportPrompts, buildPlanOnlyPrompt, checkImportedPlan, checkPlanOnly, PlanImportError } from "./my-video/stickmanPlanner";
 import { cancelStickmanJob, getStickmanJob, getStickmanJobForPoll, listStickmanJobs, resetPublish, startPublish, startStickmanJob } from "./my-video/stickmanJobs";
 import { recordCloudProgress, resolveMyVideoDir } from "./my-video/myVideoService";
 import { pipelineLogger } from "./utils/logger";
@@ -1687,8 +1687,23 @@ export function startLogServer(): void {
           if (!script) return json(400, { success: false, message: "Script is empty" });
           return json(200, { success: true, ...buildImportPrompts(script, Number(body.chunkSize) || 40) });
         }
+        // Plan-only: the prompt to give ChatGPT (transcript goes underneath) and a no-AI check of what it returns
+        if (req.method === "POST" && route === "/api/longvideo/plan/prompt-only") {
+          const body = await parseJsonBody(req);
+          return json(200, { success: true, prompt: buildPlanOnlyPrompt(Number(body.minutes) || 20, String(body.language || "Hinglish").slice(0, 40)) });
+        }
         if (req.method === "POST" && route === "/api/longvideo/plan/check") {
           const body = await parseJsonBody(req);
+          if (body.planOnly === true) {
+            if (body.plan == null || body.plan === "") return json(400, { success: false, message: "Paste the plan JSON first" });
+            const c = checkPlanOnly(body.plan);
+            const resolution = Number(body.resolution) === 1080 ? 1080 : 720;
+            return json(200, {
+              success: true, ok: c.errors.length === 0 && c.scenes.length > 0, planOnly: true, scenes: c.scenes.length, words: c.words,
+              title: c.meta?.title || null, errors: c.errors.slice(0, 20), moreErrors: Math.max(0, c.errors.length - 20),
+              estimate: c.script ? estimateStickman(c.script, toSec(body.targetSec), resolution) : null,
+            });
+          }
           const script = String(body.script || "").trim();
           if (!script) return json(400, { success: false, message: "Script is empty" });
           if (body.plan == null || body.plan === "") return json(400, { success: false, message: "Paste the plan JSON first" });
@@ -1706,8 +1721,9 @@ export function startLogServer(): void {
         }
         if (req.method === "POST" && route === "/api/longvideo/start") {
           const body = await parseJsonBody(req);
+          const planOnly = body.planOnly === true;
           const script = String(body.script || "").trim();
-          if (!script) return json(400, { success: false, message: "Script is empty" });
+          if (!script && !planOnly) return json(400, { success: false, message: "Script is empty" });
           try {
             resolveMyVideoDir();
           } catch (e: any) {
@@ -1716,6 +1732,7 @@ export function startLogServer(): void {
           const orientation = body.orientation === "vertical" ? "vertical" : "horizontal";
           const job = startStickmanJob({
             script,
+            planOnly,
             plan: body.plan == null || body.plan === "" ? undefined : body.plan,
             repairMissing: body.repairMissing === true,
             title: body.title ? String(body.title) : undefined,

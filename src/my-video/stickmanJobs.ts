@@ -9,11 +9,15 @@ import {
   type StageKey, type StickmanEstimate,
 } from "./stickmanEstimate";
 import {
-  assertImportablePlan, cleanScript, fitScriptToDuration, importStickmanPlan, planStickmanVideo, sceneNotesForBeats, splitScriptIntoBeats,
+  assertImportablePlan, assertPlanOnly, cleanScript, fitScriptToDuration, importStickmanPlan, planFromPlanOnly, planStickmanVideo,
+  sceneNotesForBeats, splitScriptIntoBeats,
 } from "./stickmanPlanner";
 
 export interface StickmanJobInput {
+  /** narration; with `planOnly` it is derived from the plan's scenes and may be empty */
   script: string;
+  /** `plan` is the whole video (each scene carries its own narration "text"): no script, no AI */
+  planOnly?: boolean;
   /** a ready-made plan (JSON object or pasted text) from an external model: skips the AI planning */
   plan?: unknown;
   /** with `plan`: let the AI direct the beats the plan left out (otherwise they are rejected) */
@@ -155,11 +159,18 @@ function applyProgress(job: StickmanJob, p: RenderProgress): void {
 
 export function startStickmanJob(input: StickmanJobInput): StickmanJob {
   if (isStickmanBusy()) throw new Error("A video is already being created - wait for it to finish.");
-  const script = input.script.trim();
-  if (!script) throw new Error("Script is empty");
-  // an imported plan is checked against the script up front, so a mismatch is rejected before a job exists
-  if (input.plan != null && input.plan !== "") assertImportablePlan(script, input.plan, !!input.repairMissing);
-  else input = { ...input, plan: undefined, repairMissing: undefined };
+  let script = (input.script ?? "").trim();
+  if (input.planOnly) {
+    // plan-only: the pasted JSON is the whole video, its scenes' text is the narration (no script, no AI)
+    if (input.plan == null || input.plan === "") throw new Error("Paste the plan JSON first");
+    script = assertPlanOnly(input.plan).script;
+    input = { ...input, repairMissing: undefined };
+  } else {
+    if (!script) throw new Error("Script is empty");
+    // an imported plan is checked against the script up front, so a mismatch is rejected before a job exists
+    if (input.plan != null && input.plan !== "") assertImportablePlan(script, input.plan, !!input.repairMissing);
+    else input = { ...input, plan: undefined, repairMissing: undefined };
+  }
 
   const estimate = estimateStickman(script, input.targetSec, input.resolution ?? 720);
   const job: StickmanJob = {
@@ -188,12 +199,15 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
       finishJob(job, result.videoPath, log);
       return;
     }
+    const planOnly = !!job.input.planOnly;
     const imported = job.input.plan != null;
     setStage(job, "plan", { status: "running", fraction: 0.1, detail: imported ? "Checking imported plan" : "Fitting script to length" });
     // an imported plan lines up with the script's own beats, so the script is never rewritten to fit a length
-    const fit = imported
-      ? { script: cleanScript(script), note: "Imported plan: script kept exactly as written (no length rewrite)" }
-      : await fitScriptToDuration(cleanScript(script), job.input.targetSec);
+    const fit = planOnly
+      ? { script, note: "Plan-only import: narration taken from the pasted plan, no AI used" }
+      : imported
+        ? { script: cleanScript(script), note: "Imported plan: script kept exactly as written (no length rewrite)" }
+        : await fitScriptToDuration(cleanScript(script), job.input.targetSec);
     if (isCancelled(job)) return;
     job.finalScript = fit.script;
     job.adjustNote = fit.note;
@@ -204,11 +218,13 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
     for (const s of job.stages) s.estSec = fitted.stageSec[s.key];
     setStage(job, "plan", { fraction: 0.5, detail: imported ? "Applying imported visuals" : "Choosing visuals" });
     // the author's Stickman/Remotion-visual sections steer the director, but only while the narration is still their script
-    const notes = fit.script === cleanScript(script) ? sceneNotesForBeats(script, splitScriptIntoBeats(fit.script)) : null;
+    const notes = !planOnly && fit.script === cleanScript(script) ? sceneNotesForBeats(script, splitScriptIntoBeats(fit.script)) : null;
     if (notes) log(`Structured script: narrating only the Voiceover sections; ${notes.notes.filter(Boolean).length} section(s) of visual directions passed to the director`);
-    const plan = imported
-      ? await importStickmanPlan(fit.script, job.input.plan, { repair: job.input.repairMissing, titleHint: title, notes })
-      : await planStickmanVideo(fit.script, title, notes);
+    const plan = planOnly
+      ? planFromPlanOnly(job.input.plan, title)
+      : imported
+        ? await importStickmanPlan(fit.script, job.input.plan, { repair: job.input.repairMissing, titleHint: title, notes })
+        : await planStickmanVideo(fit.script, title, notes);
     if (isCancelled(job)) return;
     Object.assign(job, { title: plan.title, description: plan.description, tags: plan.tags, scenes: plan.scenes.length, aiVisuals: plan.aiVisuals });
     setStage(job, "plan", { status: "done", fraction: 1 });
