@@ -737,6 +737,11 @@ export async function planStickmanVideo(
         "This is usually a temporary LLM problem - start the video again.",
     );
   }
+  return finalizePlan(beats, visuals, meta, script, titleHint);
+}
+
+/** Shared by every way of getting a plan (AI, imported with a script, plan-only): consistent backdrops, sanitising, variety. */
+function finalizePlan(beats: string[], visuals: any[], meta: any, script: string, titleHint?: string): StickmanPlan {
   // backdrops persist while the topic stays the same: a beat without one keeps the previous setting
   let lastSetting = "office";
   for (const v of visuals) {
@@ -899,4 +904,105 @@ export async function importStickmanPlan(
 ): Promise<StickmanPlan> {
   const check = assertImportablePlan(script, plan, !!opts.repair);
   return planStickmanVideo(script, opts.titleHint, opts.notes, { byIndex: check.byIndex, meta: check.meta });
+}
+
+
+// ── Plan-only: the pasted JSON carries the narration itself (each scene's "text"), so no script and no AI is involved ──
+
+/** A scene longer than this is not a "beat" any more: the visuals would sit still for far too long. */
+const PLAN_ONLY_MAX_WORDS = 40;
+
+export interface PlanOnlyCheck {
+  scenes: { text: string; scene: any }[];
+  meta: any;
+  /** the narration, one scene per line */
+  script: string;
+  words: number;
+  errors: string[];
+}
+
+const speakable = (t: string): string => t.replace(/[*#_`]+/g, "").replace(/[“”"]/g, "").replace(/\s+/g, " ").trim();
+
+/** Reads and validates a plan-only JSON without any AI: scene order, narration present and of sensible length. */
+export function checkPlanOnly(plan: unknown): PlanOnlyCheck {
+  const parsed = typeof plan === "string" ? parsePlanText(plan) : Array.isArray(plan) ? { meta: {}, scenes: plan } : parsePlanText(JSON.stringify(plan ?? {}));
+  const errors: string[] = [];
+  const short = (t: string) => (t.length > 50 ? `${t.slice(0, 47)}...` : t);
+  const withI = parsed.scenes.filter((s) => Number.isInteger(s?.i));
+  // numbered scenes are put in order (answers pasted out of order are fine); unnumbered ones keep the pasted order
+  const ordered = withI.length === parsed.scenes.length ? [...parsed.scenes].sort((a, b) => a.i - b.i) : parsed.scenes;
+  if (withI.length === parsed.scenes.length) {
+    const seen = new Set<number>();
+    ordered.forEach((s) => { if (seen.has(s.i)) errors.push(`Scene number ${s.i} appears more than once`); seen.add(s.i); });
+    const gaps = ordered.map((s) => s.i).filter((n, k) => k > 0 && n > ordered[k - 1].i + 1);
+    if (ordered[0].i !== 0) errors.push(`Scenes must start at "i": 0 (the first one is ${ordered[0].i}) - a part is missing`);
+    if (gaps.length) errors.push(`Scene numbers skip ahead before ${gaps.slice(0, 8).join(", ")} - part of the plan is missing`);
+  }
+  const scenes: { text: string; scene: any }[] = [];
+  ordered.forEach((sc, pos) => {
+    const label = Number.isInteger(sc.i) ? `Scene ${sc.i}` : `Scene #${pos + 1}`;
+    const text = typeof sc.text === "string" ? speakable(sc.text) : "";
+    if (!text) { errors.push(`${label} has no narration "text"`); return; }
+    const n = countWords(text);
+    if (n > PLAN_ONLY_MAX_WORDS) { errors.push(`${label} narration is ${n} words (max ${PLAN_ONLY_MAX_WORDS}) - split it into shorter scenes: "${short(text)}"`); return; }
+    scenes.push({ text, scene: sc });
+  });
+  const script = scenes.map((s) => s.text).join("\n");
+  return { scenes, meta: parsed.meta ?? {}, script, words: countWords(script), errors };
+}
+
+/** Throws a PlanImportError unless the plan-only JSON is complete and usable. */
+export function assertPlanOnly(plan: unknown): PlanOnlyCheck {
+  const check = checkPlanOnly(plan);
+  if (check.errors.length) {
+    const list = check.errors.length > 12 ? [...check.errors.slice(0, 12), `...and ${check.errors.length - 12} more`] : check.errors;
+    throw new PlanImportError(`The plan cannot be used (${check.errors.length} problem${check.errors.length > 1 ? "s" : ""})`, list);
+  }
+  if (!check.scenes.length) throw new PlanImportError("The plan has no scenes");
+  return check;
+}
+
+/** The video plan straight from the pasted JSON: no script, no length rewrite, no LLM. */
+export function planFromPlanOnly(plan: unknown, titleHint?: string): StickmanPlan {
+  const check = assertPlanOnly(plan);
+  const beats = check.scenes.map((s) => s.text);
+  return finalizePlan(beats, check.scenes.map((s) => s.scene), check.meta, check.script, titleHint);
+}
+
+/** What to give ChatGPT (with the transcript underneath) to get a plan-only JSON, in parts of `chunk` scenes. */
+export function buildPlanOnlyPrompt(minutes: number, language: string, chunk = 40): string {
+  const mins = Math.min(60, Math.max(1, Math.round(minutes) || 20));
+  const words = targetWordsFor(mins * 60);
+  const scenes = Math.round(words / 9);
+  return `You are the scriptwriter AND the visual director for a finished video. Turn the TRANSCRIPT at the end into a ${mins}-minute narrated explainer, delivered as JSON scenes. Nothing else will edit your output: the JSON is fed straight into the video renderer.
+
+NARRATION
+- Total narration: about ${words} words (it is spoken at 2.4 words per second, so that is ${mins} minutes). About ${scenes} scenes, each scene = ONE beat of narration.
+- Language: ${language}. Conversational, confident, technically accurate.
+- Every scene's "text" is 6-16 words (never more than 25): one short spoken sentence or half-sentence. Plain text only: no markdown, no quotes, no emojis, no bullet points, no stage directions, no raw code (describe code aloud, show it in a "code" panel).
+- Use only facts, names and numbers that appear in the transcript. Never invent statistics.
+
+${DIRECTOR_RULES}
+
+DELIVERY - IMPORTANT
+- You will answer in PARTS of ${chunk} scenes. Numbering is continuous across parts: part 1 is "i": 0-${chunk - 1}, part 2 is "i": ${chunk}-${chunk * 2 - 1}, and so on.
+- Part 1 only: include "title", "description" and "tags". Later parts: only "scenes".
+- Each part is ONE raw JSON object and nothing else - no markdown fence, no explanation, no comments. Valid JSON only (double quotes, no trailing commas).
+- After each part, stop. I will reply "next" and you continue with the following ${chunk} scenes. After the final scene of the video, end that part with the extra key "done": true.
+
+Each scene looks like this (use null for every panel you do not use):
+{"i":0,"text":"the spoken narration for this beat","pose":"","mood":"","accent":"","camera":"","setting":"","chapter":"","title":"","flip":false,"callouts":[],"props":[{"type":""}],"steps":null,"flow":null,"code":null,"terminal":null,"browser":null,"compare":null,"counter":null,"chart":null,"progress":null,"table":null,"alert":null,"svg":null,"container":null,"quiz":null}
+
+Allowed values:
+- pose: ${POSES.join(", ")}
+- mood: ${MOODS.join(", ")}
+- accent: ${ACCENTS.join(", ")}
+- camera: ${CAMERAS.join(", ")}
+- setting: ${SETTINGS.filter((x) => x !== "none").join(", ")}
+Every scene needs a setting and at least one of: callouts, props or a panel.
+
+Start with part 1 now.
+
+TRANSCRIPT:
+`;
 }

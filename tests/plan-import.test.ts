@@ -1,7 +1,8 @@
 import assert from "assert";
 import { FreeLlmApiClient } from "../src/ai/freellmapi";
 import {
-  assertImportablePlan, buildImportPrompts, checkImportedPlan, importStickmanPlan, parsePlanText, PlanImportError, splitScriptIntoBeats,
+  assertImportablePlan, buildImportPrompts, buildPlanOnlyPrompt, checkImportedPlan, checkPlanOnly, importStickmanPlan, parsePlanText,
+  PlanImportError, planFromPlanOnly, splitScriptIntoBeats,
 } from "../src/my-video/stickmanPlanner";
 
 process.env.FREELLMAPI_KEY = process.env.FREELLMAPI_KEY || "test";
@@ -73,5 +74,31 @@ const all = beats.map((_, i) => i);
   assert.deepStrictEqual((repaired.scenes[9].visual as any).callouts, ["FILLED BY AI"]);
   proto.generateText = real;
 
-  console.log("✓ plan import: prompts, parsing, strict matching, repair");
+  // 7) plan-only: the JSON carries the narration, no script, no AI
+  const po = (idxs: number[], extra: object = {}) => ({ scenes: idxs.map((i) => ({ i, text: `Scene ${i} is spoken with **some** words here.`, pose: "point", mood: "happy", accent: "gold", setting: "server", callouts: ["PLAN ONLY"], ...extra })) });
+  let poCalls = 0;
+  proto.generateText = async () => { poCalls++; return ""; };
+  const only = planFromPlanOnly({ title: "Plan only", description: "D", tags: ["t"], ...po([0, 1, 2, 3]) });
+  assert.strictEqual(only.scenes.length, 4);
+  assert.strictEqual(only.title, "Plan only");
+  assert.strictEqual(only.scenes[2].text, "Scene 2 is spoken with some words here."); // markdown stripped from narration
+  assert.strictEqual(poCalls, 0);
+  // answers pasted in parts, even out of order, are merged and ordered
+  const parts = JSON.stringify({ title: "T", ...po([2, 3]) }) + "\n" + JSON.stringify({ ...po([0, 1]), done: true });
+  const merged2 = checkPlanOnly(parts);
+  assert.deepStrictEqual(merged2.errors, []);
+  assert.deepStrictEqual(merged2.scenes.map((s) => s.text.slice(0, 7)), ["Scene 0", "Scene 1", "Scene 2", "Scene 3"]);
+  // a missing part, duplicates, empty or oversized narration are rejected
+  assert.ok(checkPlanOnly(po([0, 1, 4, 5])).errors.some((e) => /skip ahead/.test(e)));
+  assert.ok(checkPlanOnly(po([1, 2])).errors.some((e) => /start at "i": 0/.test(e)));
+  assert.ok(checkPlanOnly(po([0, 0])).errors.some((e) => /more than once/.test(e)));
+  assert.ok(checkPlanOnly(po([0, 1], { text: "" })).errors.some((e) => /no narration/.test(e)));
+  assert.ok(checkPlanOnly(po([0], { text: Array(60).fill("word").join(" ") })).errors.some((e) => /max 40/.test(e)));
+  assert.throws(() => planFromPlanOnly(po([0, 2])), PlanImportError);
+  // the ChatGPT prompt: right size, parts, format
+  const prompt = buildPlanOnlyPrompt(20, "Hinglish", 40);
+  assert.ok(prompt.includes("2678 words") && prompt.includes("20-minute") && prompt.includes('"text":"the spoken narration') && prompt.endsWith("TRANSCRIPT:\n"));
+  proto.generateText = real;
+
+  console.log("✓ plan import: prompts, parsing, strict matching, repair, plan-only");
 })().catch((e) => { console.error(e); process.exit(1); });
