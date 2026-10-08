@@ -17,11 +17,11 @@ export class FreeLlmApiClient {
     this.visionModel = "auto";
   }
 
-  public async generateChat(messages: any[], isVision = false): Promise<string> {
+  public async generateChat(messages: any[], isVision = false, timeoutOverrideMs?: number): Promise<string> {
     const url = `${this.baseUrl}/v1/chat/completions`;
     const controller = new AbortController();
     // Vision calls carry 4 base64 keyframes and a large prompt — give them longer
-    const timeoutMs = isVision ? 120000 : 60000;
+    const timeoutMs = timeoutOverrideMs ?? (isVision ? 120000 : 60000);
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
@@ -55,10 +55,10 @@ export class FreeLlmApiClient {
     }
   }
 
-  public async generateText(prompt: string): Promise<string> {
+  public async generateText(prompt: string, timeoutMs?: number): Promise<string> {
     return this.generateChat([
       { role: 'user', content: prompt }
-    ]);
+    ], false, timeoutMs);
   }
 
   public async generateVision(
