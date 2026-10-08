@@ -575,7 +575,7 @@ Allowed values:
 - camera: ${CAMERAS.join(", ")}
 - setting: ${SETTINGS.filter((x) => x !== "none").join(", ")}
 
-Beats:
+${idxs.length <= 3 ? `Context only (do NOT direct these): previous beat: "${beats[idxs[0] - 1] ?? ""}"; next beat: "${beats[idxs[idxs.length - 1] + 1] ?? ""}".\n` : ""}Beats:
 ${idxs.map((i) => `${i}. ${beats[i]}`).join("\n")}
 
 Return ONLY raw JSON, no markdown:
@@ -639,9 +639,10 @@ export async function planStickmanVideo(script: string, titleHint?: string): Pro
   // round 1: everything in batches; later rounds: only beats that are missing or bare, in smaller groups
   const all = beats.map((_, i) => i);
   const groups = (idxs: number[], size: number) => Array.from({ length: Math.ceil(idxs.length / size) }, (_, g) => idxs.slice(g * size, g * size + size));
-  const ROUNDS = [BATCH, 8, 5, 3];
+  const ROUNDS = [BATCH, 8, 5, 3, 2, 1, 1, 1]; // keeps shrinking: a stubborn beat is asked alone, with its neighbours as context
   for (let r = 0; r < ROUNDS.length; r++) {
-    const todo = r === 0 ? all : all.filter((i) => isThin(visuals[i]));
+    // early rounds also re-ask bare scenes; the last rounds only chase scenes the AI never directed at all
+    const todo = r === 0 ? all : all.filter((i) => (r < 4 ? isThin(visuals[i]) : !visuals[i]));
     if (!todo.length) break;
     const results = await pool(groups(todo, ROUNDS[r]).map((g) => () => directBeats(beats, g, beats.length)), 5);
     results.forEach(merge);
