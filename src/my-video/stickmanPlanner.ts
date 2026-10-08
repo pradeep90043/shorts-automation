@@ -11,6 +11,7 @@ const MOODS = ["neutral", "happy", "worried", "shocked", "sad", "angry", "excite
 const PROPS = ["laptop", "bulb", "chartUp", "chartDown", "warning", "clock", "money", "robot", "question", "check", "cross", "rocket", "lock", "gear", "magnifier", "bug", "code"];
 const ACCENTS = ["red", "blue", "gold", "green"];
 const CAMERAS = ["none", "push", "pull", "pan-left", "pan-right"];
+const SETTINGS = ["none", "office", "classroom", "server", "city", "home", "stage", "space", "cloud"];
 
 /** ~14 words is about 5-6 s of narration: short beats keep the visuals changing. */
 const MAX_WORDS_PER_SCENE = 16;
@@ -292,6 +293,7 @@ export function sanitizeVisual(raw: any, index: number): Record<string, unknown>
     mood: pick(v.mood, MOODS, "neutral"),
     accent: pick(v.accent, ACCENTS, ACCENTS[Math.floor(index / 3) % ACCENTS.length]),
     camera: pick(v.camera, CAMERAS, index % 4 === 0 ? "push" : "none"),
+    setting: pick(v.setting, SETTINGS, "none"),
     transition: index > 0 && index % 5 === 0 ? "wipe" : "cut",
   };
   if (typeof v.title === "string" && v.title.trim()) visual.title = v.title.trim().slice(0, 60);
@@ -501,6 +503,8 @@ PANELS (right side of the frame, at most ONE per beat, never the same panel type
 - "container": things living inside something (beans in a Spring container): {"label":"Spring Container","beans":["UserService","UserRepo"]}.
 Use a panel when it explains something; for hooks, reactions and opinions use the stickman with a prop and callouts instead of forcing a panel. Never invent statistics: numbers in counter/chart/progress must come from the script.
 
+SETTING (animated backdrop behind the scene, one per beat): office (careers, jobs, teams, interviews), classroom (learning, concepts, tutorials, roadmaps), server (backend, databases, infrastructure), city (industry, market, real world), home (personal advice, study habits, motivation), stage (hooks, intros, outros, big announcements), space (AI, futuristic, big ideas), cloud (cloud, DevOps, deployment, networks). Keep the SAME setting while the topic stays the same and change it only when the topic changes. Never use "none".
+
 PROPS (0-2, only when they match what is said): ${PROPS.join(", ")}.
 
 TEXT: "title" is a short headline (max 6 words) that stays the same while the topic stays the same. "callouts" are up to 3 punchy phrases of 3-8 words in UPPERCASE typography, e.g. "LEARNING ≠ JOB READY", "YOU ALREADY KNOW THE BASICS". Never copy the whole narration onto the screen.
@@ -529,27 +533,32 @@ export function salvageScenes(raw: string): any[] {
   return out;
 }
 
-/** One LLM call for beats [start, start+count): returns the raw parsed object, or null on failure. */
-async function directBatch(
-  beats: string[], start: number, total: number, carry: string,
-): Promise<{ meta: any; scenes: any[] } | null> {
-  const slice = beats.slice(start, start + BATCH);
+const PANEL_KEYS = ["steps", "flow", "code", "terminal", "browser", "compare", "counter", "chart", "progress", "table", "alert", "svg", "container", "quiz"];
+const isThin = (v: any): boolean =>
+  !v || (!(Array.isArray(v.callouts) && v.callouts.some((c: unknown) => typeof c === "string" && c.trim())) &&
+    !(Array.isArray(v.props) && v.props.length) && !PANEL_KEYS.some((k) => v[k]));
+
+/** One LLM call for the given beat numbers: returns the scenes it directed, keyed by beat number (possibly partial). */
+async function directBeats(
+  beats: string[], idxs: number[], total: number,
+): Promise<{ meta: any; byIndex: Map<number, any> } | null> {
   const prompt = `${DIRECTOR_RULES}
 
-The narration is already split into numbered beats - do NOT change the words. This is part of a ${total}-beat video; you are directing beats ${start}-${start + slice.length - 1}.${carry ? `\nContext from the previous part: ${carry}` : ""}
+The narration is already split into numbered beats - do NOT change the words. This is part of a ${total}-beat video; you are directing the ${idxs.length} beats below.
 
 Allowed values:
 - pose: ${POSES.join(", ")}
 - mood: ${MOODS.join(", ")}
 - accent: ${ACCENTS.join(", ")}
 - camera: ${CAMERAS.join(", ")}
+- setting: ${SETTINGS.filter((x) => x !== "none").join(", ")}
 
 Beats:
-${slice.map((b, i) => `${start + i}. ${b}`).join("\n")}
+${idxs.map((i) => `${i}. ${beats[i]}`).join("\n")}
 
 Return ONLY raw JSON, no markdown:
-{${start === 0 ? '"title":"catchy YouTube title under 90 chars","description":"2-3 sentence description with 3-4 hashtags","tags":["8 relevant tags"],' : ""}"scenes":[{"i":0,"pose":"","mood":"","accent":"","camera":"","chapter":"","title":"","flip":false,"callouts":[],"props":[{"type":""}],"steps":null,"flow":null,"code":null,"terminal":null,"browser":null,"compare":null,"counter":null,"chart":null,"progress":null,"table":null,"alert":null,"svg":null,"container":null,"quiz":null}]}
-"scenes" must have exactly ${slice.length} entries, one per beat, in order; "i" is the beat number it directs (${start}..${start + slice.length - 1}). Use null or omit fields you do not need.`;
+{${idxs.includes(0) ? '"title":"catchy YouTube title under 90 chars","description":"2-3 sentence description with 3-4 hashtags","tags":["8 relevant tags"],' : ""}"scenes":[{"i":0,"pose":"","mood":"","accent":"","camera":"","setting":"","chapter":"","title":"","flip":false,"callouts":[],"props":[{"type":""}],"steps":null,"flow":null,"code":null,"terminal":null,"browser":null,"compare":null,"counter":null,"chart":null,"progress":null,"table":null,"alert":null,"svg":null,"container":null,"quiz":null}]}
+"scenes" must have exactly ${idxs.length} entries, one per beat, in order; "i" is the beat number it directs. Every scene needs a setting and at least one of: callouts, props or a panel.`;
   try {
     const raw = await askLlm(prompt);
     if (!raw) return null;
@@ -558,62 +567,82 @@ Return ONLY raw JSON, no markdown:
       pipelineLogger.warn(`Stickman plan JSON broken (${err.message}); salvaging complete scenes`, "StickmanPlanner");
     }
     const got: any[] = Array.isArray(parsed?.scenes) ? parsed.scenes : salvageScenes(raw);
-    // align by the beat number the model echoes ("i"); positional when it did not
-    const aligned: any[] = new Array(slice.length).fill(undefined);
+    const byIndex = new Map<number, any>();
     got.forEach((sc, pos) => {
-      const idx = Number.isInteger(sc?.i) ? sc.i - start : pos;
-      if (sc && idx >= 0 && idx < slice.length && aligned[idx] === undefined) aligned[idx] = sc;
+      if (!sc || typeof sc !== "object") return;
+      const idx = Number.isInteger(sc.i) ? sc.i : got.length === idxs.length ? idxs[pos] : -1;
+      if (idxs.includes(idx) && !byIndex.has(idx)) byIndex.set(idx, sc);
     });
-    const filled = aligned.filter(Boolean).length;
-    if (filled < slice.length) {
-      pipelineLogger.warn(`Stickman director gave ${filled}/${slice.length} usable scenes (batch @${start}); the rest use rule-based visuals`, "StickmanPlanner");
+    if (byIndex.size < idxs.length) {
+      pipelineLogger.warn(`Stickman director gave ${byIndex.size}/${idxs.length} usable scenes`, "StickmanPlanner");
     }
-    if (filled >= Math.ceil(slice.length * 0.5)) return { meta: parsed ?? {}, scenes: aligned };
+    return byIndex.size ? { meta: parsed ?? {}, byIndex } : null;
   } catch (err: any) {
-    pipelineLogger.warn(`Stickman plan batch @${start} failed: ${err.message}`, "StickmanPlanner");
+    pipelineLogger.warn(`Stickman plan call failed: ${err.message}`, "StickmanPlanner");
+    return null;
   }
-  return null;
+}
+
+/** Runs `tasks` with at most `limit` in flight. */
+async function pool<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]> {
+  const out: T[] = new Array(tasks.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, async () => {
+    for (;;) { const k = next++; if (k >= tasks.length) return; out[k] = await tasks[k](); }
+  }));
+  return out;
 }
 
 /**
  * Turns the user's script into stickman scenes. The narration is split
- * deterministically (the script is never rewritten); the LLM only directs the
- * visuals (pose, mood, panels, props, on-screen text) and writes the YouTube
- * metadata. Long scripts are directed in batches so one bad answer only
- * costs that batch, which falls back to rule-based visuals.
+ * deterministically (the script is never rewritten); the LLM directs the
+ * visuals (pose, mood, backdrop, panels, props, on-screen text) and writes the
+ * YouTube metadata. There is NO plain-stickman fallback: beats the AI missed or
+ * left bare are re-asked in smaller groups, and if it still cannot direct the
+ * video the plan throws so nothing is rendered.
  */
 export async function planStickmanVideo(script: string, titleHint?: string): Promise<StickmanPlan> {
   script = cleanScript(script);
   const beats = splitScriptIntoBeats(script);
   if (!beats.length) throw new Error("Script is empty");
 
-  const starts: number[] = [];
-  for (let st = 0; st < beats.length; st += BATCH) starts.push(st);
-  const results: ({ meta: any; scenes: any[] } | null)[] = new Array(starts.length).fill(null);
-  let next = 0;
-  // 3 batches in flight: planning no longer waits on one slow/timing-out LLM call at a time
-  const worker = async () => {
-    for (;;) {
-      const k = next++;
-      if (k >= starts.length) return;
-      let res = null;
-      for (let attempt = 0; attempt < 3 && !res; attempt++) res = await directBatch(beats, starts[k], beats.length, "");
-      results[k] = res;
-    }
-  };
-  await Promise.all([worker(), worker(), worker()]);
-
-  const visuals: any[] = [];
+  const visuals: any[] = new Array(beats.length).fill(undefined);
   let meta: any = null;
-  let okBatches = 0;
-  starts.forEach((st, k) => {
-    const res = results[k];
-    if (res) { okBatches++; if (st === 0) meta = res.meta; visuals.push(...res.scenes); }
-    else visuals.push(...beats.slice(st, st + BATCH).map(() => undefined));
-  });
-  pipelineLogger.info(`Stickman director: ${okBatches}/${starts.length} batches directed by AI`, "StickmanPlanner");
+  const merge = (res: { meta: any; byIndex: Map<number, any> } | null) => {
+    if (!res) return;
+    if (!meta && res.byIndex.has(0)) meta = res.meta;
+    for (const [i, sc] of res.byIndex) if (isThin(visuals[i]) || !isThin(sc)) visuals[i] = sc;
+  };
 
-  const aiVisuals = okBatches > 0;
+  // round 1: everything in batches; later rounds: only beats that are missing or bare, in smaller groups
+  const all = beats.map((_, i) => i);
+  const groups = (idxs: number[], size: number) => Array.from({ length: Math.ceil(idxs.length / size) }, (_, g) => idxs.slice(g * size, g * size + size));
+  const ROUNDS = [BATCH, 8, 5, 3];
+  for (let r = 0; r < ROUNDS.length; r++) {
+    const todo = r === 0 ? all : all.filter((i) => isThin(visuals[i]));
+    if (!todo.length) break;
+    const results = await pool(groups(todo, ROUNDS[r]).map((g) => () => directBeats(beats, g, beats.length)), 3);
+    results.forEach(merge);
+    const left = all.filter((i) => isThin(visuals[i])).length;
+    pipelineLogger.info(`Stickman director round ${r + 1}/${ROUNDS.length}: ${beats.length - left}/${beats.length} beats directed`, "StickmanPlanner");
+  }
+  const missing = all.filter((i) => !visuals[i]).length;
+  const bare = all.filter((i) => visuals[i] && isThin(visuals[i])).length;
+  if (missing || bare > Math.ceil(beats.length * 0.3)) {
+    throw new Error(
+      `The AI visual director could not direct ${missing} of ${beats.length} scenes (${bare} had no visuals) after several retries, so no video was created. ` +
+        "This is usually a temporary LLM problem - start the video again.",
+    );
+  }
+  // backdrops persist while the topic stays the same: a beat without one keeps the previous setting
+  let lastSetting = "office";
+  for (const v of visuals) {
+    const st = typeof v?.setting === "string" && SETTINGS.includes(v.setting) && v.setting !== "none" ? v.setting : lastSetting;
+    if (v) v.setting = st;
+    lastSetting = st;
+  }
+
+  const aiVisuals = true;
   const scenes: StickmanScene[] = beats.map((text, i) => ({
     id: `s${String(i + 1).padStart(2, "0")}`,
     text,
