@@ -17,7 +17,7 @@ import { computeViralScore } from "./utils/viralScore";
 import { MultiSceneGenerator } from "./video/multiSceneGenerator";
 import { YouTubeService } from "./youtube";
 import { estimateStickman } from "./my-video/stickmanEstimate";
-import { getStickmanJob, listStickmanJobs, resetPublish, startPublish, startStickmanJob } from "./my-video/stickmanJobs";
+import { getStickmanJob, getStickmanJobForPoll, listStickmanJobs, resetPublish, startPublish, startStickmanJob } from "./my-video/stickmanJobs";
 import { recordCloudProgress, resolveMyVideoDir } from "./my-video/myVideoService";
 import { pipelineLogger } from "./utils/logger";
 import { buildActivityFeed, loadJobSummaries, jobsFileFor } from "./utils/activityFeed";
@@ -416,7 +416,18 @@ function buildRecentActivity(reelHistory: any[], watchStates: any[]) {
   }
 }
 
-async function getDashboardData() {
+let dashCache: { at: number; p: Promise<any> } | null = null;
+/** Coalesce concurrent/rapid dashboard polls: one DB+log pass per 8s no matter how many tabs. */
+function getDashboardData(): Promise<any> {
+  const now = Date.now();
+  if (dashCache && now - dashCache.at < 8000) return dashCache.p;
+  const p = getDashboardDataUncached();
+  dashCache = { at: now, p };
+  p.catch(() => { if (dashCache?.p === p) dashCache = null; });
+  return p;
+}
+
+async function getDashboardDataUncached() {
   let dbStatus = "connected";
   let reelHistory: any[] = [];
   let watchStates: any[] = [];
@@ -1051,8 +1062,18 @@ function notifyLiveReload() {
   }
 }
 
+let htmlCache: { mtime: number; out: string } | null = null;
 function getHTML(): string {
-  const html = fs.readFileSync(resolveHtmlPath(), "utf8");
+  const htmlPath = resolveHtmlPath();
+  const mtime = fs.statSync(htmlPath).mtimeMs;
+  if (htmlCache && htmlCache.mtime === mtime) return htmlCache.out;
+  const html = fs.readFileSync(htmlPath, "utf8");
+  const out = buildHTML(html);
+  htmlCache = { mtime, out };
+  return out;
+}
+
+function buildHTML(html: string): string {
   // Inject hot-reload client script before </body>
   const hotReloadScript = `
 <script>
@@ -1064,6 +1085,8 @@ function getHTML(): string {
 </script>`;
   return html.replace(/<\/body>/, hotReloadScript + "</body>");
 }
+
+let lvJobsCache: { at: number; body: string } | null = null;
 
 export function startLogServer(): void {
   const server = http.createServer(async (req, res) => {
@@ -1740,11 +1763,14 @@ export function startLogServer(): void {
         }
         if (req.method === "GET" && route === "/api/longvideo/job") {
           const id = new URL(url, "http://localhost").searchParams.get("id") || "";
-          const job = getStickmanJob(id);
+          const job = getStickmanJobForPoll(id);
           return job ? json(200, { success: true, job }) : json(404, { success: false, message: "Job not found" });
         }
         if (req.method === "GET" && route === "/api/longvideo/jobs") {
-          return json(200, { success: true, jobs: listStickmanJobs() });
+          const now = Date.now();
+          if (!lvJobsCache || now - lvJobsCache.at > 2000) lvJobsCache = { at: now, body: JSON.stringify({ success: true, jobs: listStickmanJobs() }) };
+          res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store", "Access-Control-Allow-Origin": "*" });
+          return res.end(lvJobsCache.body);
         }
         return json(404, { success: false, message: "Unknown long video endpoint" });
       } catch (err: any) {

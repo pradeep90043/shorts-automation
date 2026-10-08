@@ -1,7 +1,9 @@
 import fs from "fs";
 import path from "path";
 import { randomBytes } from "crypto";
-import { spawn, execSync } from "child_process";
+import { spawn } from "child_process";
+import { Readable } from "stream";
+import { pipeline } from "stream/promises";
 import { config } from "../config";
 import { logger } from "../utils/logger";
 
@@ -303,16 +305,24 @@ async function renderViaGithubActions(
   });
   if (!downloadRes.ok) throw new Error(`Failed to download artifact: ${downloadRes.status}`);
 
-  const buffer = Buffer.from(await downloadRes.arrayBuffer());
   const outDir = path.dirname(renderedPath);
   fs.mkdirSync(outDir, { recursive: true });
   const zipFile = path.join(outDir, `${spec.slug}.artifact.zip`);
-  fs.writeFileSync(zipFile, buffer);
+  // stream to disk: buffering a few-hundred-MB zip in RAM swaps a small VM to a crawl
+  if (!downloadRes.body) throw new Error("Artifact download had no body");
+  await pipeline(Readable.fromWeb(downloadRes.body as any), fs.createWriteStream(zipFile));
 
+  // async + low priority so unzipping never blocks the event loop / starves the API
+  const runCmd = (cmd: string, args: string[]) =>
+    new Promise<void>((resolve, reject) => {
+      const p = spawn("nice", ["-n", "15", cmd, ...args], { stdio: "ignore" });
+      p.on("error", reject);
+      p.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`${cmd} exited ${code}`))));
+    });
   try {
-    execSync(`python3 -m zipfile -e "${zipFile}" "${outDir}"`, { stdio: "ignore" });
+    await runCmd("unzip", ["-o", zipFile, "-d", outDir]);
   } catch {
-    execSync(`unzip -o "${zipFile}" -d "${outDir}"`, { stdio: "ignore" });
+    await runCmd("python3", ["-m", "zipfile", "-e", zipFile, outDir]);
   }
   fs.rmSync(zipFile, { force: true });
 
@@ -360,7 +370,7 @@ export const resumeCloudRender = (
       if (!fs.existsSync(renderedPath)) throw new Error(`cloud render finished but ${renderedPath} is missing`);
       fs.mkdirSync(config.paths.outputDir, { recursive: true });
       const videoPath = path.join(config.paths.outputDir, `stickman-${slug}.mp4`);
-      fs.copyFileSync(renderedPath, videoPath);
+      await fs.promises.copyFile(renderedPath, videoPath);
       return { videoPath, slug };
     } finally {
       cloudProgress.delete(slug);
@@ -475,7 +485,7 @@ const doRender = async (spec: StickmanVideoSpec, onProgress?: ProgressCallback):
 
     fs.mkdirSync(config.paths.outputDir, { recursive: true });
     const videoPath = path.join(config.paths.outputDir, `stickman-${spec.slug}.mp4`);
-    fs.copyFileSync(renderedPath, videoPath);
+    await fs.promises.copyFile(renderedPath, videoPath);
     return { videoPath, slug: spec.slug };
   } finally {
     cloudProgress.delete(spec.slug);

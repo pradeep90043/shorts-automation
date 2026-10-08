@@ -77,16 +77,25 @@ const KEEP = 20;
 
 function persist(): void {
   try {
-    fs.mkdirSync(config.paths.dataDir, { recursive: true });
     // running jobs are saved too, so a restart can resume them
     const all = [...jobs.values()].sort((x, y) => x.createdAt - y.createdAt).slice(-KEEP);
-    const tmp = `${jobsFile()}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(all));
-    fs.renameSync(tmp, jobsFile());
+    const data = JSON.stringify(all);
+    // async + serialized: never block the event loop on disk
+    writeChain = writeChain.then(async () => {
+      try {
+        await fs.promises.mkdir(config.paths.dataDir, { recursive: true });
+        const tmp = `${jobsFile()}.tmp`;
+        await fs.promises.writeFile(tmp, data);
+        await fs.promises.rename(tmp, jobsFile());
+      } catch {
+        /* history is best-effort */
+      }
+    });
   } catch {
     /* history is best-effort */
   }
 }
+let writeChain: Promise<void> = Promise.resolve();
 
 let persistTimer: NodeJS.Timeout | null = null;
 function persistSoon(): void {
@@ -94,7 +103,7 @@ function persistSoon(): void {
   persistTimer = setTimeout(() => {
     persistTimer = null;
     persist();
-  }, 3000);
+  }, 10000);
 }
 
 (function loadJobs() {
@@ -257,8 +266,18 @@ export const getStickmanJob = (id: string): JobSnapshot | undefined => {
   return j ? snapshot(j) : undefined;
 };
 
+/** Poll payload: the narration is only shown once finished, so skip it while running. */
+export const getStickmanJobForPoll = (id: string): JobSnapshot | undefined => {
+  const s = getStickmanJob(id);
+  return s && s.status === "running" ? { ...s, finalScript: undefined } : s;
+};
+
+/** History rows: drop the big text fields (script, final narration); the full job is fetched on open. */
 export const listStickmanJobs = (): JobSnapshot[] =>
-  [...jobs.values()].sort((a, b) => b.createdAt - a.createdAt).slice(0, KEEP).map(snapshot);
+  [...jobs.values()].sort((a, b) => b.createdAt - a.createdAt).slice(0, KEEP).map((j) => {
+    const s = snapshot(j);
+    return { ...s, finalScript: undefined, input: { ...s.input, script: s.input.script.slice(0, 120) } };
+  });
 
 // ── Durable publishing ──────────────────────────────────────────────────────
 // Upload runs in the background and its state lives on the job, so closing the

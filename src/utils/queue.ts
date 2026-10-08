@@ -12,8 +12,19 @@ export class JobQueue {
   private activeCount = 0;
   private maxConcurrency: number;
 
+  // All channel queues share the same small VM: cap total simultaneous pipelines
+  // (Whisper + OCR + ffmpeg each) so they stop starving the API and long renders.
+  private static all = new Set<JobQueue>();
+  private static globalActive = 0;
+  private static readonly GLOBAL_LIMIT = Math.max(1, Number(process.env.MAX_PARALLEL_PIPELINES) || 2);
+
   constructor(maxConcurrency = 1) {
     this.maxConcurrency = maxConcurrency;
+    JobQueue.all.add(this);
+  }
+
+  private static wakeAll(): void {
+    for (const q of JobQueue.all) q.processNext();
   }
 
   /**
@@ -54,7 +65,7 @@ export class JobQueue {
    * Process the next job in the queue if concurrency limit allows.
    */
   private processNext(): void {
-    if (this.activeCount >= this.maxConcurrency) {
+    if (this.activeCount >= this.maxConcurrency || JobQueue.globalActive >= JobQueue.GLOBAL_LIMIT) {
       return;
     }
 
@@ -64,6 +75,7 @@ export class JobQueue {
     }
 
     this.activeCount++;
+    JobQueue.globalActive++;
     pipelineLogger.info(
       `Starting execution of job ${job.id}. Active jobs: ${this.activeCount}`,
       "JobQueue",
@@ -73,11 +85,13 @@ export class JobQueue {
       .workerFn()
       .then(() => {
         this.activeCount--;
+        JobQueue.globalActive--;
         pipelineLogger.checkpoint(`Job ${job.id} completed successfully`, true);
-        this.processNext();
+        JobQueue.wakeAll();
       })
       .catch((err) => {
         this.activeCount--;
+        JobQueue.globalActive--;
         pipelineLogger.error(
           `Job ${job.id} failed during execution`,
           err,
@@ -98,7 +112,7 @@ export class JobQueue {
           );
         }
 
-        this.processNext();
+        JobQueue.wakeAll();
       });
   }
 
