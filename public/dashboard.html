@@ -1209,8 +1209,13 @@
     const jobs = await lvLoadHistory();
     if (!jobs || !jobs.length) return;
     let saved = null; try { saved = localStorage.getItem('lv-job'); } catch (e) {}
-    const running = jobs.find(j => j.status === 'running') || jobs.find(j => j.id === saved);
-    if (running) lvTrack(running);
+    // running job first, then the one this browser last opened, else the newest (jobs started elsewhere, e.g. API, never set localStorage)
+    const pick = jobs.find(j => j.status === 'running') || jobs.find(j => j.id === saved) || jobs[0];
+    if (!pick) return;
+    lvTrack(pick);
+    if (pick.status !== 'running') {
+      try { const r = await fetch(BASE_URL + '/api/longvideo/job?id=' + encodeURIComponent(pick.id)); const d = await r.json(); if (d.success) { lvJob = d.job; lvJobFetchedAt = Date.now(); lvRender(); } } catch (e) {}
+    }
   }
   document.addEventListener('DOMContentLoaded', () => { lvOnOpen(); });
 
