@@ -13,6 +13,7 @@ import { FacebookPublisher, FacebookUploadResult } from "./facebook/publisher";
 import { TelegramService, escapeMarkdown } from "./telegram";
 import { PipelineContext, VideoMetadata } from "./types";
 import { pipelineLogger } from "./utils/logger";
+import { renderHowItWorksClip } from "./my-video/howItWorksClip";
 import { FreeLlmApiClient } from "./ai/freellmapi";
 import { GeminiClient } from "./ai/gemini";
 import { parseAiJson, extractJsonArrayField } from "./utils/json";
@@ -5106,6 +5107,35 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
 
         const workflowData = this.deriveTranscriptionWorkflow(context);
         const rawExplanation = workflowData.explanation;
+
+        // Preferred: build the clip with my-video (GitHub cloud render). Any problem -> the Pexels route below, as before.
+        let myVideoDone = false;
+        try {
+          const myVideoClip = path.join(tempDir, "hiw_myvideo.mp4");
+          const rendered = await renderHowItWorksClip(
+            { explanation: rawExplanation, mermaid: workflowData.mermaidCode, diagramTitle: workflowData.diagramTitle },
+            myVideoClip,
+          );
+          if (rendered) {
+            // normalise to the short's format (1080x1920, 30 fps, 44.1 kHz stereo, broadcast loudness) so the concat below accepts it
+            await new Promise<void>((resolve, reject) => {
+              const cmd =
+                `${config.binaries.ffmpeg} -y -i "${myVideoClip}" ` +
+                `-vf "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1,fps=30" ` +
+                `-af "aresample=44100,loudnorm=I=-16:TP=-1.5:LRA=11" -ar 44100 -ac 2 ` +
+                `-c:v libx264 -preset superfast -crf 20 -pix_fmt yuv420p -c:a aac "${transitionClipPath}"`;
+              exec(cmd, (err) => (err ? reject(err) : resolve()));
+            });
+            myVideoDone = fs.existsSync(transitionClipPath) && fs.statSync(transitionClipPath).size > 1000;
+          }
+        } catch (myVideoErr) {
+          pipelineLogger.warn(
+            `my-video transition clip unusable, falling back to Pexels: ${myVideoErr instanceof Error ? myVideoErr.message : myVideoErr}`,
+            "DirectUploader",
+          );
+        }
+
+        if (!myVideoDone) {
         const speechScript = `Let us check how is it working. ${rawExplanation}`;
 
         let ttsDuration = 3.5;
@@ -5231,8 +5261,9 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         await new Promise<void>((resolve, reject) => {
           exec(compileCmd, (err) => (err ? reject(err) : resolve()));
         });
+        } // end Pexels / last-frame fallback (only runs when the my-video clip was not available)
         pipelineLogger.info(
-          "✓ Transition clip generated successfully.",
+          `✓ Transition clip generated successfully (${myVideoDone ? "my-video" : "Pexels fallback"}).`,
           "DirectUploader",
         );
       }
