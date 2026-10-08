@@ -65,6 +65,20 @@ export interface CloudRunRef {
   token: string;
 }
 
+/** Stops a GitHub Actions render (used by the Cancel button). Never throws. */
+export async function cancelCloudRun(ref: CloudRunRef): Promise<void> {
+  const ghToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+  if (!ghToken) return;
+  try {
+    await fetch(`https://api.github.com/repos/${ref.repo}/actions/runs/${ref.runId}/cancel`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${ghToken}`, Accept: "application/vnd.github+json" },
+    });
+  } catch {
+    /* the run times out on its own if GitHub is unreachable */
+  }
+}
+
 export type ProgressCallback = (p: RenderProgress) => void;
 
 export interface MyVideoRenderResult {
