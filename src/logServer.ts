@@ -1701,7 +1701,7 @@ export function startLogServer(): void {
             return json(200, {
               success: true, ok: c.errors.length === 0 && c.scenes.length > 0, planOnly: true, scenes: c.scenes.length, words: c.words,
               title: c.meta?.title || null, errors: c.errors.slice(0, 20), moreErrors: Math.max(0, c.errors.length - 20), warnings: c.warnings.slice(0, 15),
-              estimate: c.script ? estimateStickman(c.script, toSec(body.targetSec), resolution) : null,
+              estimate: c.script ? estimateStickman(c.script, toSec(body.targetSec), resolution, false, true) : null,
             });
           }
           const script = String(body.script || "").trim();

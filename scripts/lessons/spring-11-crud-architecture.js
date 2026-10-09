@@ -284,16 +284,16 @@ add("Thanks for watching, and see you in the next lesson.", { pose: "celebrate",
 // Trim: narration-only scenes that repeat what the panels already show, so the lesson lands near 20 minutes.
 const DROP = [
   "It sounds simple, yet this tiny idea", "You will learn a lot, even if", "And do not worry if some of it feels magical", "Scrolling through reels is a read",
-  "A second request with different values", "Soft delete means: do not erase",
+  "A second request with different values", 
   "Who is the client?", "Postman imitates a client", "When you deploy, you replace localhost", "They say we send JSON", "Two headers matter here", "So POST, GET, PUT, DELETE are HTTP methods",
-  "Why a relational database?", "MySQL Workbench is the official tool", "You do not need to create a database yet",
-  "The test dependencies are there too", "Each dependency also pulls in many more", "Tomcat is what listens", "That is expected, because we have not mapped", "Spring Web gives us the Tomcat server",
+  "MySQL Workbench is the official tool", "You do not need to create a database yet",
+  "The test dependencies are there too", "Each dependency also pulls in many more", "That is expected, because we have not mapped", "Spring Web gives us the Tomcat server",
   "You saw this idea in our Spring Core", "We keep it to those four for now", "Imagine students, teachers, and courses", "Some people name the entity package model", "This is the controller, service, repository architecture",
-  "A second student object maps", "We will study Hibernate and JDBC", "Look inside Entity, and you see Retention", "Email would be unique, and so might roll number", "It is a plain old Java object. Think about",
-  "Inside, it still uses Component", "A Rest Controller returns data", "Every method in this class now starts from that path", "You can design it either way", "I prefer the same endpoint", "No response comes back yet", "Magical, yes. Jackson matches",
-  "No annotation is needed.", "A teammate reading Service knows", "Later we will use a special repository annotation", "An error appeared earlier, because Spring could not find a bean", "Then the layers exit in reverse", "The id stays empty",
+  "Email would be unique, and so might roll number", "It is a plain old Java object. Think about",
+  "Every method in this class now starts from that path", 
+  "No annotation is needed.", "An error appeared earlier, because Spring could not find a bean", 
   "The id is null because we never set it", "There is also a shortcut, Response Entity dot ok", "They are for the next video, since this lesson",
-  "If the whole architecture still feels like a lot", "Theory builds the foundation", "If you have doubts, write them in the comments",
+  "If the whole architecture still feels like a lot", "If you have doubts, write them in the comments",
 ];
 for (let k = scenes.length - 1; k >= 0; k--) if (DROP.some((d) => scenes[k].text.startsWith(d))) scenes.splice(k, 1);
 scenes.forEach((sc, k) => { sc.i = k; });
