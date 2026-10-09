@@ -1,7 +1,9 @@
 /**
  * One-shot copyright-risk scan of the local music library.
  *
- * Usage: npm run scan:music
+ * Usage: npm run scan:music            AcoustID score for every track
+ *        npm run scan:music -- --shazam   also fingerprint each track with Shazam (slower); a match = a known commercial song
+ *        npm run scan:music -- --shazam --prune   delete blocked / Shazam-matched tracks
  *
  * Requires: fpcalc (brew install chromaprint) and ACOUSTID_API_KEY in .env
  * (free key: https://acoustid.org/new-application). Verdicts are cached in
@@ -12,6 +14,8 @@ import fs from "fs";
 import path from "path";
 import { config } from "../src/config";
 import { getCopyrightRisk } from "../src/audio/copyrightCheck";
+import { identifyAudio } from "../src/audio/shazam";
+import { loadMusicBlocklist } from "../src/music";
 
 const AUDIO_EXTENSIONS = [".mp3", ".wav", ".m4a", ".aac", ".ogg"];
 // AcoustID free tier allows 3 requests/second
@@ -44,8 +48,27 @@ async function main() {
 
   let risky = 0;
   let unverified = 0;
+  const useShazam = process.argv.includes("--shazam");
+  const prune = process.argv.includes("--prune");
+  const blocked = loadMusicBlocklist(musicDir);
 
   for (const file of files) {
+    const rel0 = path.relative(musicDir, file);
+    if (blocked.some((b) => rel0.toLowerCase().includes(b))) {
+      console.log(`🚫  BLOCKED  ${rel0}`);
+      risky++;
+      if (prune) fs.rmSync(file);
+      continue;
+    }
+    if (useShazam) {
+      const s = await identifyAudio(file);
+      if (s.matched) {
+        console.log(`🚫  SHAZAM   ${rel0.padEnd(60)} "${s.title}" by ${s.artist || "Unknown"}`);
+        risky++;
+        if (prune) fs.rmSync(file);
+        continue;
+      }
+    }
     const risk = await getCopyrightRisk(file);
     const rel = path.relative(musicDir, file);
     const scoreLabel =

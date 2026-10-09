@@ -106,6 +106,8 @@ export interface AppConfig {
     fps: number;
     musicVolume: number;
     musicStartOffset: number;
+    /** Background music from the library. OFF by default: videos carry voice only (Content ID claims). */
+    backgroundMusicEnabled: boolean;
     beautifyCode: boolean;
   };
   binaries: {
@@ -119,6 +121,10 @@ export interface AppConfig {
   copyright: {
     enabled: boolean;
     acoustidApiKey: string;
+  };
+  /** Final pre-publish gate: strip any recognisable music still in the video's audio. */
+  audioClearance: {
+    enabled: boolean;
   };
   instagramScraper: {
     /**
@@ -500,6 +506,7 @@ export const config: AppConfig = {
     fps: parseInt(process.env.VIDEO_FPS || "30", 10),
     musicVolume: parseFloat(process.env.MUSIC_VOLUME || "0.15"),
     musicStartOffset: parseInt(process.env.MUSIC_START_OFFSET || "20", 10),
+    backgroundMusicEnabled: process.env.BACKGROUND_MUSIC_ENABLED === "true",
     beautifyCode: process.env.BEAUTIFY_CODE !== "false",
   },
   binaries: {
@@ -524,6 +531,9 @@ export const config: AppConfig = {
   copyright: {
     enabled: process.env.COPYRIGHT_CHECK_ENABLED !== "false",
     acoustidApiKey: process.env.ACOUSTID_API_KEY || "",
+  },
+  audioClearance: {
+    enabled: process.env.AUDIO_CLEARANCE_ENABLED !== "false",
   },
   instagramScraper: {
     loginFreeMode:

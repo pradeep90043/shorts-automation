@@ -6,7 +6,7 @@ import { exec, execSync } from "child_process";
 import { config, ChannelProfile } from "./config";
 import { VideoRenderer, calculateVideoCrop } from "./renderer";
 import { OcrService } from "./ocr";
-import { MusicService, normalizeMood } from "./music";
+import { MusicService, normalizeMood, ambientBedPath } from "./music";
 import { YouTubeService, UploadResult } from "./youtube";
 import { InstagramPublisher, InstagramUploadResult } from "./instagram/publisher";
 import { FacebookPublisher, FacebookUploadResult } from "./facebook/publisher";
@@ -23,6 +23,7 @@ import { JobDatabase } from "./utils/db";
 import { getStoredChannelConfig, StoredInstagramAccount, StoredYoutubeChannel } from "./utils/channelConfigStore";
 import { getCopyrightRisk, formatRisk } from "./audio/copyrightCheck";
 import { identifyAudio } from "./audio/shazam";
+import { clearBackgroundMusic } from "./audio/audioClearance";
 import { ReelHistoryStore } from "./utils/reelHistoryStore";
 
 import { ViralAnalyzer } from "./utils/viral-analyzer";
@@ -2265,7 +2266,7 @@ ${this.theme.analysisRules}`;
    */
   private async buildMusicCaptionLine(specificTrack?: string): Promise<string> {
     const track = specificTrack || this.music.lastSelectedTrack;
-    if (!track) return "";
+    if (!track || path.resolve(track) === path.resolve(ambientBedPath())) return "";
     const risk = await getCopyrightRisk(track);
     return `🎵 *Music:* ${escapeMarkdown(path.basename(track))} — ${escapeMarkdown(formatRisk(risk))}\n\n`;
   }
@@ -3739,10 +3740,9 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       // Original audio and background music are a single mutually-exclusive
       // toggle now: music plays exactly when original audio is off.
       if (!settings.originalAudio) {
-        context.selectedMusicTrack = this.music.selectLocalTrack(
-          config.paths.musicDir,
-          context.metadata?.mood,
-        );
+        context.selectedMusicTrack = config.rendering.backgroundMusicEnabled
+          ? this.music.selectLocalTrack(config.paths.musicDir, context.metadata?.mood)
+          : ambientBedPath();
       } else {
         context.selectedMusicTrack = undefined;
       }
@@ -3816,6 +3816,25 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         );
       } else {
         fs.copyFileSync(baseVideoPath, finalVideoPath);
+      }
+
+      // 3.4 — Audio clearance: if the mixed audio still contains recognisable music, strip it
+      // (keeps voiceover / isolated speech only) so a Content ID claim can't block the video.
+      try {
+        const cleared = await clearBackgroundMusic(
+          finalVideoPath,
+          path.join(tempDir, "video_final_cleared.mp4"),
+          { voiceoverPath: useVoice ? voiceoverPath : undefined, tempDir, isolateSpeech: settings.originalAudio && !useVoice },
+        );
+        if (cleared.removed) {
+          finalVideoPath = cleared.outputPath;
+          pipelineLogger.warn(`Background music removed before publish (${cleared.match})`, "DirectUploader");
+        }
+      } catch (clearErr) {
+        pipelineLogger.warn(
+          `Audio clearance failed: ${clearErr instanceof Error ? clearErr.message : clearErr}`,
+          "DirectUploader",
+        );
       }
 
       // 3.5 — Append verdict / CTA sequence (CodeOrCap + Storiyum + Prompt Gag)

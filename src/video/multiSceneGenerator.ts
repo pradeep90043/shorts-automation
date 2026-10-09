@@ -10,7 +10,7 @@ import { GeminiClient } from "../ai/gemini";
 import { TTSService } from "../audio/tts";
 import { estimateWordTimings, groupWordsIntoLines, generateASSFile, SubtitleStyle } from "../audio/subtitles";
 import { PexelsService } from "./pexelsService";
-import { MusicService } from "../music";
+import { MusicService, ambientBedPath } from "../music";
 import { parseAiJson } from "../utils/json";
 import { VideoMetadata } from "../types";
 
@@ -307,9 +307,13 @@ Return ONLY valid JSON with this exact schema:
       // 6. Background Music
       let musicFile = options.musicFile || "";
       if (!musicFile) {
-        try {
-          musicFile = this.music.selectLocalTrack(config.paths.musicDir, options.niche);
-        } catch (_) {}
+        if (config.rendering.backgroundMusicEnabled) {
+          try {
+            musicFile = this.music.selectLocalTrack(config.paths.musicDir, options.niche);
+          } catch (_) {}
+        } else {
+          musicFile = ambientBedPath(); // non-musical ambient bed only
+        }
       }
 
       // 7. Render Subtitle Overlay Images
