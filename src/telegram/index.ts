@@ -147,7 +147,6 @@ export class TelegramService implements ITelegramService {
         ],
         [
           { text: "🔊 / 🔇 Toggle Voiceover", callback_data: `rv_togv_${id}` },
-          { text: "🎵 Replace Music", callback_data: `rv_mus_${id}` },
         ],
       ],
     };

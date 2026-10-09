@@ -1,0 +1,5 @@
+# Tracks/artists that must never be mixed into a video. One case-insensitive substring per line,
+# matched against the file name. A match is skipped by MusicService.selectLocalTrack even if the file reappears.
+# grand_project: "Joyful Snowman" got a global Content ID block (2026-10-09) — Pixabay "free" tracks can still be registered.
+grand_project
+joyful-snowman
