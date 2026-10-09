@@ -29,6 +29,19 @@ export function normalizeMood(mood?: string): Mood {
   return KNOWN_MOODS.includes(m) ? m : "other";
 }
 
+/** Substrings (from <musicDir>/blocklist.list) of file names that must never be used as background music. */
+export function loadMusicBlocklist(musicFolder: string): string[] {
+  try {
+    return fs
+      .readFileSync(path.join(musicFolder, "blocklist.list"), "utf-8")
+      .split("\n")
+      .map((l) => l.trim().toLowerCase())
+      .filter((l) => l && !l.startsWith("#"));
+  } catch {
+    return [];
+  }
+}
+
 export class MusicService implements IMusicService {
   /** Track used by the most recent addBackgroundMusic call */
   public lastSelectedTrack: string | null = null;
@@ -210,13 +223,15 @@ const getVideoDuration = (pathStr: string): Promise<number> => {
     }
     foldersToTry.push(musicFolder);
 
+    const blocked = loadMusicBlocklist(musicFolder);
     let audioTracks: string[] = [];
     for (const folder of foldersToTry) {
       if (!fs.existsSync(folder)) continue;
       const files = fs
         .readdirSync(folder)
         .filter((file) =>
-          AUDIO_EXTENSIONS.includes(path.extname(file).toLowerCase()),
+          AUDIO_EXTENSIONS.includes(path.extname(file).toLowerCase()) &&
+          !blocked.some((b) => file.toLowerCase().includes(b)),
         )
         .map((file) => path.join(folder, file));
 

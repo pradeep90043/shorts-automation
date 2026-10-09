@@ -23,6 +23,7 @@ import { JobDatabase } from "./utils/db";
 import { getStoredChannelConfig, StoredInstagramAccount, StoredYoutubeChannel } from "./utils/channelConfigStore";
 import { getCopyrightRisk, formatRisk } from "./audio/copyrightCheck";
 import { identifyAudio } from "./audio/shazam";
+import { clearBackgroundMusic } from "./audio/audioClearance";
 import { ReelHistoryStore } from "./utils/reelHistoryStore";
 
 import { ViralAnalyzer } from "./utils/viral-analyzer";
@@ -3816,6 +3817,25 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         );
       } else {
         fs.copyFileSync(baseVideoPath, finalVideoPath);
+      }
+
+      // 3.4 — Audio clearance: if the mixed audio still contains recognisable music, strip it
+      // (keeps voiceover / isolated speech only) so a Content ID claim can't block the video.
+      try {
+        const cleared = await clearBackgroundMusic(
+          finalVideoPath,
+          path.join(tempDir, "video_final_cleared.mp4"),
+          { voiceoverPath: useVoice ? voiceoverPath : undefined, tempDir },
+        );
+        if (cleared.removed) {
+          finalVideoPath = cleared.outputPath;
+          pipelineLogger.warn(`Background music removed before publish (${cleared.match})`, "DirectUploader");
+        }
+      } catch (clearErr) {
+        pipelineLogger.warn(
+          `Audio clearance failed: ${clearErr instanceof Error ? clearErr.message : clearErr}`,
+          "DirectUploader",
+        );
       }
 
       // 3.5 — Append verdict / CTA sequence (CodeOrCap + Storiyum + Prompt Gag)

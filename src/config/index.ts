@@ -120,6 +120,10 @@ export interface AppConfig {
     enabled: boolean;
     acoustidApiKey: string;
   };
+  /** Final pre-publish gate: strip any recognisable music still in the video's audio. */
+  audioClearance: {
+    enabled: boolean;
+  };
   instagramScraper: {
     /**
      * "session_only" (default): the server never performs a username/password
@@ -524,6 +528,9 @@ export const config: AppConfig = {
   copyright: {
     enabled: process.env.COPYRIGHT_CHECK_ENABLED !== "false",
     acoustidApiKey: process.env.ACOUSTID_API_KEY || "",
+  },
+  audioClearance: {
+    enabled: process.env.AUDIO_CLEARANCE_ENABLED !== "false",
   },
   instagramScraper: {
     loginFreeMode:
