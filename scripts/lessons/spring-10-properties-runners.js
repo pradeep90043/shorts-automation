@@ -107,7 +107,7 @@ add("A fair question: is a file inside resources really external?", { pose: "thi
 add("Not quite. Inside src main resources, it is packaged into the final JAR.", { pose: "point", ...flow(["src/main/resources", "Build", "app.jar"], 2, "packaged") });
 add("But Spring Boot has externalized configuration: values can come from outside the package.", { pose: "present", ...steps(STEPS_CONFIG, 0) });
 add("Properties file, YAML, environment variables, command-line arguments, system properties.", { pose: "point", ...steps(STEPS_CONFIG, 4) });
-add("And external config files. Same Java code, different values in each environment.", { pose: "present", ...compare("versus", [{ title: "Development", points: ["provider=TestProvider", "retry-count=1"] }, { title: "Production", points: ["provider=Razorpay", "retry-count=3"], winner: true }]) });
+add("And external config files. Same Java code, different values in each environment.", { pose: "present", ...compare("versus", [{ title: "Development", points: ["provider=TestProvider", "retry-count=1"] }, { title: "Production", points: ["provider=Razorpay", "retry-count=3"] }]) });
 add("The main idea: keep changeable values outside the Java business logic.", { pose: "smug", mood: "happy", callouts: ["CONFIG OUTSIDE CODE"] });
 add("So how does Java code ask for these values? Let us see.", { pose: "think", mood: "confused", props: [{ type: "question" }] });
 
@@ -189,7 +189,7 @@ add("In main, fetch the bean and call print. Run it.", { pose: "point", ...code(
 add("All four values print: paytm, five, true, three thousand.", { pose: "celebrate", mood: "excited", ...term(["paytm", "5", "true", "3000"]) });
 add("Spring Boot read the file, filled PaymentProperties, and injected it into the gateway.", { pose: "present", ...flow(["Properties file", "PaymentProperties", "PaymentGateway"], 2, "paytm") });
 add("Why not use the properties class everywhere? Because the standard pattern is a normal service class.", { pose: "think" });
-add("The properties class only reads. The gateway holds the business logic.", { pose: "present", ...compare("versus", [{ title: "PaymentProperties", points: ["Reads the file", "Holds the values"] }, { title: "PaymentGateway", points: ["Business logic", "Uses the values"], winner: true }]) });
+add("The properties class only reads. The gateway holds the business logic.", { pose: "present", ...compare("versus", [{ title: "PaymentProperties", points: ["Reads the file", "Holds the values"] }, { title: "PaymentGateway", points: ["Business logic", "Uses the values"] }]) });
 
 // ═══════════════════════ 9 · Running code at startup ═══════════════════════
 chapter("9 · Running code at startup", "server");
@@ -245,7 +245,7 @@ add("Two: Value injects a single property, with an optional default.", { pose: "
 add("Three: ConfigurationProperties binds a whole group of keys to one class.", { pose: "point", ...steps(RECAP, 2) });
 add("Four: Spring maps kebab case keys to camel case fields for you.", { pose: "point", ...steps(RECAP, 3) });
 add("Five: runner interfaces run your code after the application starts.", { pose: "point", ...steps(RECAP, 4) });
-add("The simple rule: one or two values, use Value. A group of values, use ConfigurationProperties.", { pose: "smug", mood: "happy", ...compare("versus", [{ title: "@Value", points: ["One or two values", "Small demos"] }, { title: "@ConfigurationProperties", points: ["A group of values", "Cleaner, larger apps"], winner: true }]) });
+add("The simple rule: one or two values, use Value. A group of values, use ConfigurationProperties.", { pose: "smug", mood: "happy", ...compare("versus", [{ title: "@Value", points: ["One or two values", "Small demos"] }, { title: "@ConfigurationProperties", points: ["A group of values", "Cleaner, larger apps"] }]) });
 const TASK = ["Add payment-property.currency to the file", "Add a field and getters for it", "Print it from a runner"];
 add("Now a challenge for you, without looking back at the code.", { pose: "smug", mood: "excited", ...steps(TASK, 0) });
 add("Add a currency property, bind it in PaymentProperties, and print it from a runner.", { pose: "point", ...steps(TASK, 2) });
