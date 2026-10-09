@@ -2405,7 +2405,14 @@ ${this.theme.analysisRules}`;
       // ── Duplicate Content Check ──────────────────────────────────────────
       // If this reel was already picked or published for ANY profile, refuse to process it again.
       if (context.shortcode && !context.userPrompt) {
-        const isAlreadyPublished = await ReelHistoryStore.isPublishedAnywhere(context.shortcode);
+        // A dashboard injection is an explicit choice of profile, so the same reel may go to
+        // another channel; only block it when it was already published for THIS profile.
+        const isAlreadyPublished = isManualInjectContext(context)
+          ? await ReelHistoryStore.isPublishedForProfile(
+              context.shortcode,
+              this.profile.isDefault ? "default" : this.profile.key,
+            )
+          : await ReelHistoryStore.isPublishedAnywhere(context.shortcode);
         if (isAlreadyPublished) {
           pipelineLogger.warn(
             `[DirectUploader] Shortcode "${context.shortcode}" has already been published in the past — blocking duplicate re-upload!`,

@@ -80,6 +80,21 @@ export class ReelHistoryStore {
     }
   }
 
+  /** Like isPublishedAnywhere, but only for one profile (used by explicit dashboard injections). */
+  public static async isPublishedForProfile(shortcode: string, profileKey: string): Promise<boolean> {
+    if (!shortcode) return false;
+    try {
+      const pool = await getPool();
+      const { rows } = await pool.query(
+        `SELECT 1 FROM reel_history WHERE shortcode = $1 AND profile_key = $2 AND (published_at IS NOT NULL OR failed = false) LIMIT 1`,
+        [shortcode, profileKey],
+      );
+      return rows.length > 0;
+    } catch {
+      return false;
+    }
+  }
+
   /** Record a newly-picked reel before it enters the publish queue. */
   public async add(shortcode: string, channel: string): Promise<void> {
     if (this.records.has(shortcode)) return;
