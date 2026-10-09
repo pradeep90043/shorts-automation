@@ -34,6 +34,15 @@ const near = estimateStickman(script, Math.round(countWords(script) / 2.4 / 0.93
 assert.strictEqual(near.fitToWords, undefined);
 assert.ok(estimateStickman(script, 120, 1080).stageSec.render > estimateStickman(script, 120, 720).stageSec.render, "1080p renders slower");
 
+// plan-only: narration is never rewritten, speech time follows the characters (0.0827 s each at the default rate)
+const poNatural = Math.round(script.length * 0.0827);
+const po = estimateStickman(script, poNatural, 1080, false, true);
+assert.strictEqual(po.fitToWords, undefined, "plan-only never plans a rewrite");
+assert.ok(Math.abs(parseInt(po.rate) - 5) <= 4, `rate near the default at the natural length: ${po.rate}`);
+assert.ok(Math.abs(po.videoSec - poNatural) < poNatural * 0.1, `length follows the characters: ${po.videoSec} vs ${poNatural}`);
+assert.ok(estimateStickman(script, poNatural * 2, 1080, false, true).videoSec > poNatural * 1.15, "a longer target slows the voice (down to the -20% limit)");
+assert.ok(po.stageSec.plan < 10, "plan-only has no planning stage to wait for");
+
 // panels from the LLM are clamped to my-video's limits; only one panel and no props alongside it
 const code = sanitizeVisual({
   props: [{ type: "laptop" }],
