@@ -67,6 +67,20 @@ export class TelegramService implements ITelegramService {
     this.profile = profile;
     this.db = new JobDatabase(profile.key);
     this.bot = new Telegraf(profile.telegramToken);
+    // Model-written text sometimes breaks Markdown entities ("can't parse entities"), which used to drop the
+    // whole message. Retry once as plain text so the user still gets it.
+    const callApi = this.bot.telegram.callApi.bind(this.bot.telegram) as (m: string, d: any, s?: any) => Promise<any>;
+    (this.bot.telegram as any).callApi = async (method: string, data: any, signal?: any) => {
+      try {
+        return await callApi(method, data, signal);
+      } catch (err: any) {
+        if (data?.parse_mode && /can't parse entities/i.test(String(err?.description || err?.message || ""))) {
+          const { parse_mode: _drop, ...plain } = data;
+          return callApi(method, plain, signal);
+        }
+        throw err;
+      }
+    };
     this.setupHandlers();
     TelegramService.instances.push(this);
   }
@@ -1194,7 +1208,7 @@ export class TelegramService implements ITelegramService {
       fileId: reelUrl,
     };
 
-    const shortcodeMatch = reelUrl.match(/instagram\.com\/(?:[A-Za-z0-9_.]+\/)?(?:p|reel|tv)\/([A-Za-z0-9_-]+)/);
+    const shortcodeMatch = reelUrl.match(/instagram\.com\/(?:[A-Za-z0-9_.]+\/)?(?:p|reels?|tv)\/([A-Za-z0-9_-]+)/);
     const shortcode = shortcodeMatch ? shortcodeMatch[1] : undefined;
 
     const context: PipelineContext = {
