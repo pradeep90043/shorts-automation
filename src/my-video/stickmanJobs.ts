@@ -12,6 +12,7 @@ import {
   assertImportablePlan, assertPlanOnly, cleanScript, fitScriptToDuration, importStickmanPlan, planFromPlanOnly, planStickmanVideo,
   sceneNotesForBeats, splitScriptIntoBeats,
 } from "./stickmanPlanner";
+import { lessonQualityReport, type QualityWarning } from "./lessonQuality";
 
 export interface StickmanJobInput {
   /** narration; with `planOnly` it is derived from the plan's scenes and may be empty */
@@ -56,6 +57,8 @@ export interface StickmanJob {
   tags?: string[];
   scenes?: number;
   aiVisuals?: boolean;
+  /** lesson-quality findings for the planned video (code shown? quiz answers leaking? ...) */
+  warnings?: QualityWarning[];
   /** the narration actually used (after cleanup and, if a target length was set, rewriting) */
   finalScript?: string;
   /** how the script was adjusted to the target length */
@@ -228,7 +231,11 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
     if (isCancelled(job)) return;
     Object.assign(job, { title: plan.title, description: plan.description, tags: plan.tags, scenes: plan.scenes.length, aiVisuals: plan.aiVisuals });
     setStage(job, "plan", { status: "done", fraction: 1 });
-    log(`Planned ${plan.scenes.length} scenes (${plan.aiVisuals ? "AI" : "rule-based"} visuals)`);
+    log(`Planned ${plan.scenes.length} scenes (${planOnly ? "imported plan, no AI" : plan.aiVisuals ? "AI" : "rule-based"} visuals)`);
+    // lesson-quality gate: warnings only, shown in the dashboard and kept on the job
+    const warnings = lessonQualityReport(plan.scenes.map((s) => ({ text: s.text, visual: s.visual }))).slice(0, 15);
+    job.warnings = warnings;
+    for (const w of warnings.filter((x) => x.level === "warn")) log(`quality: ${w.scene ? `scene ${w.scene}: ` : ""}${w.message}`);
 
     const result = await renderStickmanVideo(
       {
