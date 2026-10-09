@@ -5113,7 +5113,8 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         try {
           const myVideoClip = path.join(tempDir, "hiw_myvideo.mp4");
           const rendered = await renderHowItWorksClip(
-            { explanation: rawExplanation, mermaid: workflowData.mermaidCode, diagramTitle: workflowData.diagramTitle },
+            // the short's own diagram (not the generic placeholder deriveTranscriptionWorkflow invents when it is missing)
+            { explanation: rawExplanation, title: context.metadata?.title, mermaid: context.metadata?.diagramWorkflow, diagramTitle: workflowData.diagramTitle },
             myVideoClip,
           );
           if (rendered) {
