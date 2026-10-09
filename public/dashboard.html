@@ -577,6 +577,17 @@
             </div>
           </div>
           <div>
+            <label style="font-size:11px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Narration voice</label>
+            <select class="select-field" id="lv-voice" style="width:100%;padding:8px 12px;font-size:12px;">
+              <option value="">Hindi / Hinglish &mdash; Madhur (default)</option>
+              <option value="hi-IN-SwaraNeural">Hindi &mdash; Swara (female)</option>
+              <option value="en-IN-PrabhatNeural">English (India) &mdash; Prabhat (male)</option>
+              <option value="en-IN-NeerjaNeural">English (India) &mdash; Neerja (female)</option>
+              <option value="en-US-GuyNeural">English (US) &mdash; Guy (male)</option>
+              <option value="en-US-JennyNeural">English (US) &mdash; Jenny (female)</option>
+            </select>
+          </div>
+          <div>
             <label style="font-size:11px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Format</label>
             <select class="select-field" id="lv-orientation" onchange="lvOrientationChanged()" style="width:100%;padding:8px 12px;font-size:12px;">
               <option value="horizontal">📺 16:9 Long video (YouTube)</option>
@@ -1211,6 +1222,7 @@
           plan: plan || undefined, planOnly, repairMissing: !planOnly && !!plan && document.getElementById('lv-repair').checked,
           title: document.getElementById('lv-title').value.trim(),
           orientation: document.getElementById('lv-orientation').value,
+          voice: document.getElementById('lv-voice').value || undefined,
           resolution: document.getElementById('lv-resolution').value,
           channelKey: document.getElementById('lv-channel-select').value,
         })

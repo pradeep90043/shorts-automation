@@ -27,6 +27,8 @@ export interface StickmanJobInput {
   /** requested video length in seconds */
   targetSec?: number;
   orientation?: "horizontal" | "vertical";
+  /** edge-tts voice for the narration, e.g. "en-IN-PrabhatNeural"; omit for my-video's default Hindi voice */
+  voice?: string;
   resolution?: 720 | 1080;
   channelKey?: string;
 }
@@ -247,6 +249,7 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
         orientation: orientation ?? "horizontal",
         resolution: resolution ?? (orientation === "vertical" ? 1080 : 720),
         rate: job.estimate.rate,
+        ...(job.input.voice ? { voice: job.input.voice, language: job.input.voice.slice(0, 2) } : {}),
       },
       (p) => applyProgress(job, p),
     );
