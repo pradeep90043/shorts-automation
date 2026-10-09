@@ -1096,6 +1096,13 @@
     } catch (err) { box.style.display = 'none'; }
   }
 
+  /* Lesson-quality findings (warnings only): code shown? quiz answers leaking? lines too long? */
+  function lvWarningsHtml(list) {
+    if (!list || !list.length) return '';
+    const rows = list.map(w => '<li style="margin:3px 0;color:' + (w.level === 'warn' ? '#d29922' : 'var(--text-muted)') + ';">' + (w.level === 'warn' ? '⚠️ ' : 'ℹ️ ') + (w.scene ? '<b>Scene ' + w.scene + ':</b> ' : '') + lvEsc(w.message) + '</li>').join('');
+    return '<details style="margin-top:12px;"' + (list.some(w => w.level === 'warn') ? ' open' : '') + '><summary style="cursor:pointer;font-size:12px;color:#d29922;">Lesson quality check (' + list.filter(w => w.level === 'warn').length + ' warning' + (list.filter(w => w.level === 'warn').length === 1 ? '' : 's') + ', ' + list.filter(w => w.level !== 'warn').length + ' tip' + (list.filter(w => w.level !== 'warn').length === 1 ? '' : 's') + ')</summary><ul style="margin:6px 0 0 18px;padding:0;font-size:12px;line-height:1.5;">' + rows + '</ul></details>';
+  }
+
   /* ── Plan made by another AI ── */
   let lvPrompts = [];
   function lvPlanStatus(html) { document.getElementById('lv-plan-status').innerHTML = html; }
@@ -1155,7 +1162,7 @@
       if (!d.success) { lvPlanStatus('<span style="color:#ff7b72;">❌ ' + lvEsc(d.message || 'Plan could not be read') + lvPlanProblems(d) + '</span>'); return false; }
       if (!d.ok) { lvPlanStatus('<span style="color:#ff7b72;">❌ Rejected:' + lvPlanProblems(d) + '</span>'); return false; }
       const e = d.estimate;
-      lvPlanStatus('<span style="color:#3fb950;">✅ ' + d.scenes + ' scenes, ' + d.words + ' words' + (e ? ' &middot; video ~' + lvFmt(e.videoSec) + ' &middot; creating takes ~' + lvFmt(e.totalSec) : '') + '. No AI will be used. Press Create Video.</span>');
+      lvPlanStatus('<span style="color:#3fb950;">✅ ' + d.scenes + ' scenes, ' + d.words + ' words' + (e ? ' &middot; video ~' + lvFmt(e.videoSec) + ' &middot; creating takes ~' + lvFmt(e.totalSec) : '') + '. No AI will be used. Press Create Video.</span>' + lvWarningsHtml(d.warnings));
       return true;
     } catch (err) { lvPlanStatus('<span style="color:#ff7b72;">Error: ' + lvEsc(err.message) + '</span>'); return false; }
   }
@@ -1182,7 +1189,7 @@
         lvPlanStatus('<span style="color:#d29922;">⚠️ ' + d.matched + ' of ' + d.beatCount + ' beats covered. Missing beats: ' + d.missing.slice(0, 40).join(', ') + (miss > 40 ? ', ...' : '') + '. Paste the rest, or tick &ldquo;Let the AI fill missing beats&rdquo;.</span>');
         return false;
       }
-      lvPlanStatus('<span style="color:#3fb950;">✅ Plan matches your script (' + d.matched + ' of ' + d.beatCount + ' beats)' + (miss ? '; the AI will fill the ' + miss + ' missing beat' + (miss > 1 ? 's' : '') : '') + '. Press Create Video.</span>');
+      lvPlanStatus('<span style="color:#3fb950;">✅ Plan matches your script (' + d.matched + ' of ' + d.beatCount + ' beats)' + (miss ? '; the AI will fill the ' + miss + ' missing beat' + (miss > 1 ? 's' : '') : '') + '. Press Create Video.</span>' + lvWarningsHtml(d.warnings));
       return true;
     } catch (err) { lvPlanStatus('<span style="color:#ff7b72;">Error: ' + lvEsc(err.message) + '</span>'); return false; }
   }
@@ -1328,7 +1335,7 @@
       '</div>' +
       (j.adjustNote ? '<div style="font-size:12px;color:var(--primary);margin-bottom:8px;">✍️ ' + lvEsc(j.adjustNote) + '</div>' : '') +
       '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;"><div style="flex:1;height:10px;background:#21262d;border-radius:5px;overflow:hidden;"><div style="height:100%;width:' + pct + '%;background:' + color + ';transition:width .4s;"></div></div><div style="font-size:12px;font-family:var(--font-mono);color:#fff;width:40px;text-align:right;">' + pct + '%</div></div>' +
-      stages + result +
+      stages + result + lvWarningsHtml(j.warnings) +
       (running ? '<div style="margin-top:12px;"><button id="lv-cancel-btn" class="btn-primary" style="background:#3a1d1d;border:1px solid var(--danger);color:#ff7b72;padding:7px 16px;font-size:12px;" onclick="lvCancel()">🛑 Cancel creation</button></div>' : '') +
       (!running && j.finalScript ? '<details style="margin-top:12px;"><summary style="cursor:pointer;font-size:12px;color:var(--text-muted);">Final narration used (' + j.finalScript.split(/\s+/).length + ' words)</summary><div style="margin-top:8px;padding:10px;background:#161b22;border:1px solid #21262d;border-radius:6px;font-size:12px;line-height:1.6;color:#c9d1d9;white-space:pre-wrap;max-height:240px;overflow:auto;">' + lvEsc(j.finalScript) + '</div></details>' : '');
   }

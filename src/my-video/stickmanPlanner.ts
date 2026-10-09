@@ -5,6 +5,9 @@ import { parseAiJson } from "../utils/json";
 import { pipelineLogger } from "../utils/logger";
 import type { StickmanScene } from "./myVideoService";
 import { SCENE_ASSETS, SCENE_BACKGROUNDS, SCENE_TINTS } from "./sceneCatalog";
+import { lessonQualityReport, type QualityWarning } from "./lessonQuality";
+
+const CODE_LANGUAGES = ["java", "properties", "yaml", "bash", "xml", "text"] as const; // mirrors my-video/src/stickman/code.ts
 
 // Mirrors my-video/src/stickman/schema.ts (that repo is not importable from here).
 const POSES = ["idle", "point", "present", "shrug", "think", "celebrate", "worried", "facepalm", "shocked", "walk", "angry", "laugh", "cry", "smug"];
@@ -260,6 +263,69 @@ export function svgFallback(raw: any): Record<string, unknown> | null {
   return labels.length >= 2 ? { steps: { items: labels.slice(0, 8), current: 0 } } : null;
 }
 
+const CODE_MAX_CHARS = 56; // my-video's schema limit per line
+const CODE_MAX_LINES = 14;
+
+/** Splits an over-long code line at a comma / space / dot near the limit; continuation lines are indented 4 more spaces. */
+export function wrapCodeLine(line: string, max = CODE_MAX_CHARS): string[] {
+  if (line.length <= max) return [line];
+  const indent = /^\s*/.exec(line)![0];
+  const out: string[] = [];
+  let rest = line;
+  let guard = 0;
+  while (rest.length > max && guard++ < 6) {
+    let cut = -1;
+    for (const re of [/, /g, / /g, /\./g]) {
+      re.lastIndex = 0;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(rest)) !== null && m.index + m[0].length <= max) if (m.index > indent.length + 8) cut = m.index + (re.source === "\\." ? 0 : m[0].length);
+      if (cut > 0) break;
+    }
+    if (cut <= 0) cut = max;
+    out.push(rest.slice(0, cut).replace(/\s+$/, ""));
+    rest = `${indent}    ${rest.slice(cut).replace(/^\s+/, "")}`;
+  }
+  out.push(rest.slice(0, max));
+  return out;
+}
+
+/** File extension -> language, for when a model gives a filename but no language. */
+const LANGUAGE_BY_EXT: Record<string, (typeof CODE_LANGUAGES)[number]> = {
+  java: "java", kt: "java", properties: "properties", yml: "yaml", yaml: "yaml", xml: "xml", sh: "bash", bash: "bash", txt: "text", md: "text", json: "text",
+};
+
+/**
+ * A code panel the way a tutorial needs it: up to 14 lines (long lines are wrapped, never silently cut), a language,
+ * 1-based aliases accepted, highlight / revealFrom kept pointing at the right lines after wrapping.
+ */
+export function sanitizeCode(code: any): Record<string, unknown> | null {
+  const rawLines: unknown[] = Array.isArray(code?.lines) ? code.lines : typeof code?.lines === "string" ? code.lines.split("\n") : [];
+  if (!rawLines.length) return null;
+  const title = str(code.title ?? code.filename, 40);
+  const lines: string[] = [];
+  const firstOf: number[] = []; // original line index -> first output line
+  for (const raw of rawLines) {
+    firstOf.push(lines.length);
+    for (const piece of wrapCodeLine(String(raw ?? "").replace(/\t/g, "  ").replace(/\s+$/, ""))) if (lines.length < CODE_MAX_LINES) lines.push(piece);
+  }
+  while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+  if (!lines.some((l) => l.trim())) return null;
+  const at = (i: number): number => firstOf[Math.min(Math.max(i, 0), firstOf.length - 1)];
+  const marked = [
+    ...(Array.isArray(code.highlight) ? code.highlight : []),
+    ...(Array.isArray(code.highlightLines) ? code.highlightLines.map((n: unknown) => (typeof n === "number" ? n - 1 : n)) : []), // 1-based alias
+  ].filter((n) => Number.isInteger(n) && n >= 0 && n < rawLines.length);
+  const highlight = [...new Set(marked.map((n: number) => at(n)))].filter((n) => n < lines.length).slice(0, 4);
+  const rf = Number.isInteger(code.revealFrom) && code.revealFrom > 0 ? at(code.revealFrom) : 0;
+  const ext = /\.([A-Za-z]+)$/.exec(title)?.[1]?.toLowerCase() ?? "";
+  const language = pick(code.language, CODE_LANGUAGES, LANGUAGE_BY_EXT[ext] ?? "java");
+  return {
+    title: title || undefined, lines, highlight, language,
+    revealFrom: rf < lines.length ? rf : 0,
+    animate: pick(code.animate, ["lines", "type"] as const, "lines"),
+  };
+}
+
 /** Illustration from the doodle asset library: only known assets, numbers clamped to the card. */
 export function sanitizeScene(raw: any): Record<string, unknown> | null {
   if (!raw || !Array.isArray(raw.items)) return null;
@@ -286,16 +352,8 @@ export function sanitizeScene(raw: any): Record<string, unknown> | null {
 
 // Panels (right side of the frame). Limits mirror my-video/src/stickman/schema.ts.
 function sanitizePanel(v: any): Record<string, unknown> {
-  const code = v?.code;
-  if (code && Array.isArray(code.lines)) {
-    const lines = code.lines.map((l: unknown) => String(l ?? "").replace(/\t/g, "  ").replace(/\s+$/, "").slice(0, 56)).slice(0, 10);
-    while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
-    if (lines.some((l: string) => l.trim())) {
-      const highlight = (Array.isArray(code.highlight) ? code.highlight : [])
-        .filter((n: unknown) => Number.isInteger(n) && (n as number) >= 0 && (n as number) < lines.length).slice(0, 3);
-      return { code: { title: str(code.title, 40) || undefined, lines, highlight } };
-    }
-  }
+  const codePanel = sanitizeCode(v?.code);
+  if (codePanel) return { code: codePanel };
   const steps = strList(v?.steps?.items, 8, 48);
   if (steps.length >= 2) {
     const cur = Number(v.steps.current);
@@ -321,7 +379,10 @@ function sanitizePanel(v: any): Record<string, unknown> {
     const active = Number.isInteger(v.flow.active) && v.flow.active >= 0 && v.flow.active < nodes.length ? v.flow.active : undefined;
     return { flow: { nodes, active, packet: str(v.flow.packet, 20) || undefined } };
   }
-  const tLines = (Array.isArray(v?.terminal?.lines) ? v.terminal.lines : []).map((l: unknown) => String(l ?? "").slice(0, 64)).filter((l: string) => l.trim()).slice(0, 10);
+  const tSource: unknown[] = Array.isArray(v?.terminal?.lines)
+    ? v.terminal.lines
+    : [...(typeof v?.terminal?.command === "string" ? [`$ ${v.terminal.command}`] : []), ...(Array.isArray(v?.terminal?.output) ? v.terminal.output : [])];
+  const tLines = tSource.map((l: unknown) => String(l ?? "").slice(0, 64)).filter((l: string) => l.trim()).slice(0, 10);
   if (tLines.length) return { terminal: { title: str(v.terminal.title, 30) || undefined, lines: tLines } };
   const b = v?.browser;
   const bLines = (Array.isArray(b?.lines) ? b.lines : []).map((l: unknown) => String(l ?? "").replace(/\s+$/, "").slice(0, 44)).filter((l: string) => l.trim()).slice(0, 8);
@@ -609,7 +670,7 @@ POSES (map the intent): pointing at something -> point; explaining -> present; t
 PANELS (right side of the frame, at most ONE per beat, never the same panel type twice in a row, and no callouts/props on a panel beat). Pick the panel that matches what is being said:
 - "steps": roadmaps, timelines, checklists, stages. {"items":["Core Java","Spring Boot","Database","Production"],"current":1}. 2-8 labels (max 48 chars); "current" = the step being discussed, earlier ones show as done. Reuse the SAME items for consecutive beats of one topic and move "current" forward.
 - "flow": architecture / request flow, animated packet travelling through the nodes. {"nodes":["Controller","Service","Repository","Database"],"packet":"GET /users"} (2-5 nodes, max 24 chars; optional "active" = node index the packet stops at).
-- "code": only when the narration talks about code. Realistic, technically correct, 3-8 lines, each max 50 chars: {"title":"UserController.java","lines":["@GetMapping(\"/users\")","public List<User> getUsers() {","    return userService.getUsers();","}"],"highlight":[2]}.
+- "code": whenever the narration talks about code, a class, an annotation, a method or a config file - show that code. Realistic, technically correct, real names from the script, up to 14 lines of max 56 chars: {"title":"UserController.java","language":"java","lines":["@GetMapping(\"/users\")","public List<User> getUsers() {","    return userService.getUsers();","}"],"highlight":[2]}. "title" is the file name; "language" is java, properties, yaml, bash, xml or text (config files: properties / yaml). "highlight" = 0-based lines being explained right now. To build a file over several beats REPEAT the earlier lines and set "revealFrom" (0-based) to the first new line, so only the new lines appear. "animate":"type" types the new lines out (use it when important code first appears).
 - "terminal": commands and their output. Lines starting with "$ " are typed as commands: {"title":"zsh","lines":["$ mvn spring-boot:run","Started Application in 3.2 seconds"]}.
 - "browser": a web page or an API response. {"url":"localhost:8080/users","kind":"json","lines":["{","  \"id\": 1,","  \"name\": \"Asha\"","}"]} or kind "page" with "heading" and short row lines.
 - "compare": options side by side, or a transformation. {"mode":"versus","cards":[{"title":"Java","points":["Strong typing","Huge ecosystem"],"winner":true},{"title":"Node.js","points":["Fast to start"]}]} (2-3 cards, max 4 points of max 40 chars). Use mode "beforeAfter" with two cards for before/after.
@@ -622,7 +683,7 @@ PANELS (right side of the frame, at most ONE per beat, never the same panel type
 - "svg": LAST RESORT. A custom diagram YOU draw, only for things the panels above cannot show: a tree (inheritance, hierarchy), a 2x2 matrix, a layered stack, a cycle. A simple chain or request path is a "flow" or "steps", NOT an svg. Never use svg on two beats in a row. Canvas is 1300 wide x 700 tall. Shapes: rect{x,y,w,h,rx}, circle{cx,cy,r}, line{x1,y1,x2,y2,arrow,dash}, path{d}, text{x,y,text,size,anchor}. Colours: ink, accent, red, green, blue, gold, faint, bg, white or #rrggbb ("white" text on accent/green/blue/red boxes, "ink" text on gold/faint boxes). Shapes appear in the order given (same "step" = together): build the diagram in the order it is explained.
   LAYOUT RULES (drawings that break them are discarded): put boxes on a grid, boxes 300x100, rows at y=60 / 250 / 440 (a 4th row at 600 only for a short chain), column centres x=250 / 650 / 1050 (so a box at centre c has x=c-150); text centred in its box with x=centre and y=box y+66 for size 44; arrows run only through the GAP between boxes (from the bottom edge of one box to the top edge of the next, e.g. y1=160 to y2=250), never through a box or a label; text size 32-48, at most 24 characters; 4-14 shapes; never overlap boxes; no title (the scene headline names it).
   Example tree (Animal with children Dog and Cat): [{"t":"rect","x":500,"y":60,"w":300,"h":100,"rx":22,"fill":"accent","stroke":"ink","step":0},{"t":"text","x":650,"y":126,"text":"Animal","size":44,"fill":"white","step":0},{"t":"line","x1":600,"y1":160,"x2":300,"y2":250,"arrow":true,"step":1},{"t":"line","x1":700,"y1":160,"x2":1000,"y2":250,"arrow":true,"step":1},{"t":"rect","x":100,"y":250,"w":300,"h":100,"rx":22,"fill":"green","stroke":"ink","step":2},{"t":"text","x":250,"y":316,"text":"Dog","size":44,"fill":"white","step":2},{"t":"rect","x":900,"y":250,"w":300,"h":100,"rx":22,"fill":"gold","stroke":"ink","step":2},{"t":"text","x":1050,"y":316,"text":"Cat","size":44,"fill":"ink","step":2}]
-- "quiz": at most once or twice in the whole video, only where a question is asked to the viewer: {"question":"...","options":["..","..",".."],"answer":0}.
+- "quiz": only where a question is asked to the viewer (a "pause and think" moment): {"question":"...","options":["..","..",".."],"answer":0}. Once or twice in a normal video; in a programming lesson about once per chapter, placed BEFORE the result is shown. The answer must not appear in the question, title, callouts or narration of that beat.
 - "container": things living inside something (beans in a Spring container): {"label":"Spring Container","beans":["UserService","UserRepo"]}.
 Use a panel when it explains something; for hooks, reactions and opinions use the stickman with a prop and callouts instead of forcing a panel. Never invent statistics: numbers in counter/chart/progress must come from the script.
 
@@ -631,6 +692,14 @@ SETTING (animated backdrop behind the scene, one per beat): office (careers, job
 PROPS (0-2, only when they match what is said): ${PROPS.join(", ")}.
 
 TEXT: "title" is a short headline (max 6 words) that stays the same while the topic stays the same. "callouts" are up to 3 punchy phrases of 3-8 words in UPPERCASE typography, e.g. "LEARNING ≠ JOB READY", "YOU ALREADY KNOW THE BASICS". Never copy the whole narration onto the screen.
+
+CODING TUTORIALS (when the narration teaches programming): the viewer must SEE the code. Order: narration -> the exact code on screen -> run it -> explain the result.
+- Mix of beats: about 35-45% "code" panels, 15-20% "terminal" (the run command and its output), 20-25% architecture visuals ("flow", "steps", "scene"), and the rest the stickman explaining or reacting. Never explain a class, annotation, property or method only with callouts - show it in a "code" panel.
+- Use the real identifiers, annotations, class names and config keys from the script; never a generic placeholder snippet. If the author's directions contain a code block, show exactly that code.
+- Config next to code: after showing @Value("\${payment.gateway.type}") show the properties / yaml file that defines the key, with the right "language".
+- Highlight the line being explained and move the highlight as the narration moves. Build files progressively with "revealFrom" instead of redrawing them from scratch.
+- After the code is explained, run it: a "terminal" beat with the command ("$ mvn spring-boot:run") and the output lines. Only show output the narration or the script states; never invent results.
+- Teach one idea at a time: problem -> intuition -> visual model -> code -> run -> why it happened -> a prediction ("quiz") or a small task. Revisit an earlier idea near the end and finish with one practical task.
 
 VISUAL PACING: change something every 20-40 seconds of narration (new panel type, camera move, a reaction beat). Camera ("push" to emphasise, "pull" to reveal, pans to follow flows) only when it helps, otherwise "none". Do not bounce or overdo effects.
 
@@ -671,7 +740,7 @@ export function buildDirectorPrompt(
   // the script author's own visual directions for the sections these beats belong to (never narrated)
   const sections = notes ? [...new Set(idxs.map((i) => notes.beatScene[i]))].filter((k) => notes.notes[k]) : [];
   const notesBlock = sections.length
-    ? `\nAUTHOR'S VISUAL DIRECTIONS (NOT narration - never put these sentences on screen verbatim; use them to choose the setting, props, panels, pose and mood):\n${sections.map((k) => `- ${notes!.notes[k]}`).join("\n")}\n`
+    ? `\nAUTHOR'S VISUAL DIRECTIONS (NOT narration - never put these sentences on screen verbatim; use them to choose the setting, props, panels, pose and mood. Code blocks inside them ARE real code: show that exact code in a "code" panel, split over several beats if it is long):\n${sections.map((k) => `- ${notes!.notes[k]}`).join("\n")}\n`
     : "";
   return `${DIRECTOR_RULES}
 ${notesBlock}
@@ -866,12 +935,39 @@ function topLevelJson(raw: string): string[] {
   return out;
 }
 
+const PANEL_TYPES = ["steps", "flow", "code", "terminal", "browser", "compare", "counter", "chart", "progress", "table", "alert", "scene", "svg", "container", "quiz"];
+
+/**
+ * Other models often write a scene's panel as `"panel": {"type": "code", "filename": ..., "highlightLines": [1]}` instead of
+ * our `"code": {"title": ..., "highlight": [0]}`. Convert it, otherwise the panel would be dropped without a word.
+ */
+export function normalizeSceneShape(sc: any): any {
+  const p = sc && typeof sc === "object" ? sc.panel : null;
+  if (!p || typeof p !== "object" || typeof p.type !== "string" || !PANEL_TYPES.includes(p.type)) return sc;
+  const { type, ...rest } = p;
+  const out: any = { ...sc };
+  delete out.panel;
+  if (out[type] != null) return out; // the scene already has its own panel of that kind
+  if (type === "code") {
+    out.code = {
+      title: rest.filename ?? rest.title, language: rest.language, animate: rest.animate, revealFrom: rest.revealFrom,
+      lines: rest.lines ?? (typeof rest.code === "string" ? rest.code.split("\n") : undefined),
+      highlight: rest.highlight, highlightLines: rest.highlightLines,
+    };
+  } else if (type === "terminal") {
+    out.terminal = { title: rest.title, lines: rest.lines, command: rest.command, output: rest.output };
+  } else {
+    out[type] = rest;
+  }
+  return out;
+}
+
 /** Reads the pasted answer(s): one JSON object, several answers pasted one after another, or a bare scenes array. */
 export function parsePlanText(raw: string): { meta: any; scenes: any[] } {
   const scenes: any[] = [];
   let meta: any = {};
   const take = (v: any) => {
-    const objects = (list: any[]) => list.filter((x) => x && typeof x === "object");
+    const objects = (list: any[]) => list.filter((x) => x && typeof x === "object").map(normalizeSceneShape);
     if (Array.isArray(v)) { scenes.push(...objects(v)); return; }
     if (!v || typeof v !== "object") return;
     if (Array.isArray(v.scenes)) {
@@ -883,11 +979,11 @@ export function parsePlanText(raw: string): { meta: any; scenes: any[] } {
   for (const chunk of chunks) {
     try { take(JSON.parse(chunk)); } catch {
       try { take(parseAiJson<any>(chunk)); } catch {
-        scenes.push(...salvageScenes(chunk).filter((x) => x && typeof x === "object"));
+        scenes.push(...salvageScenes(chunk).filter((x) => x && typeof x === "object").map(normalizeSceneShape));
       }
     }
   }
-  if (!chunks.length && raw.includes('"scenes"')) scenes.push(...salvageScenes(raw).filter((x) => x && typeof x === "object")); // truncated answer
+  if (!chunks.length && raw.includes('"scenes"')) scenes.push(...salvageScenes(raw).filter((x) => x && typeof x === "object").map(normalizeSceneShape)); // truncated answer
   if (!scenes.length) throw new PlanImportError("No scenes found in the pasted JSON", ['Paste the JSON the other model returned: an object with a "scenes" array.']);
   return { meta, scenes };
 }
@@ -906,13 +1002,15 @@ export interface PlanCheck {
   missing: number[];
   /** things that make the plan unusable (wrong text, out-of-range or duplicate beat numbers) */
   errors: string[];
+  /** lesson-quality findings (warnings only, never blocking) */
+  warnings: QualityWarning[];
 }
 
 /** Lines the pasted plan up against the script's beats without using any AI. */
 export function checkImportedPlan(script: string, plan: unknown): PlanCheck {
   const beats = splitScriptIntoBeats(cleanScript(script));
   if (!beats.length) throw new PlanImportError("Script is empty");
-  const parsed = typeof plan === "string" ? parsePlanText(plan) : Array.isArray(plan) ? { meta: {}, scenes: plan } : parsePlanText(JSON.stringify(plan ?? {}));
+  const parsed = typeof plan === "string" ? parsePlanText(plan) : Array.isArray(plan) ? { meta: {}, scenes: plan.map(normalizeSceneShape) } : parsePlanText(JSON.stringify(plan ?? {}));
   const errors: string[] = [];
   const byIndex = new Map<number, any>();
   const short = (t: string) => (t.length > 60 ? `${t.slice(0, 57)}...` : t);
@@ -929,7 +1027,8 @@ export function checkImportedPlan(script: string, plan: unknown): PlanCheck {
     byIndex.set(idx, sc);
   });
   const missing = beats.map((_, i) => i).filter((i) => !byIndex.has(i));
-  return { beatCount: beats.length, byIndex, meta: parsed.meta ?? {}, missing, errors };
+  const warnings = lessonQualityReport([...byIndex.entries()].sort((a, b) => a[0] - b[0]).map(([i, sc]) => ({ text: beats[i], visual: sc })));
+  return { beatCount: beats.length, byIndex, meta: parsed.meta ?? {}, missing, errors, warnings };
 }
 
 /** Throws a PlanImportError unless the plan matches the script (and, without `repair`, covers every beat). */
@@ -973,13 +1072,15 @@ export interface PlanOnlyCheck {
   script: string;
   words: number;
   errors: string[];
+  /** lesson-quality findings (warnings only, never blocking) */
+  warnings: QualityWarning[];
 }
 
 const speakable = (t: string): string => t.replace(/[*#_`]+/g, "").replace(/[“”"]/g, "").replace(/\s+/g, " ").trim();
 
 /** Reads and validates a plan-only JSON without any AI: scene order, narration present and of sensible length. */
 export function checkPlanOnly(plan: unknown): PlanOnlyCheck {
-  const parsed = typeof plan === "string" ? parsePlanText(plan) : Array.isArray(plan) ? { meta: {}, scenes: plan } : parsePlanText(JSON.stringify(plan ?? {}));
+  const parsed = typeof plan === "string" ? parsePlanText(plan) : Array.isArray(plan) ? { meta: {}, scenes: plan.map(normalizeSceneShape) } : parsePlanText(JSON.stringify(plan ?? {}));
   const errors: string[] = [];
   const short = (t: string) => (t.length > 50 ? `${t.slice(0, 47)}...` : t);
   const withI = parsed.scenes.filter((s) => Number.isInteger(s?.i));
@@ -1002,7 +1103,8 @@ export function checkPlanOnly(plan: unknown): PlanOnlyCheck {
     scenes.push({ text, scene: sc });
   });
   const script = scenes.map((s) => s.text).join("\n");
-  return { scenes, meta: parsed.meta ?? {}, script, words: countWords(script), errors };
+  const warnings = lessonQualityReport(scenes.map((s) => ({ text: s.text, visual: s.scene })));
+  return { scenes, meta: parsed.meta ?? {}, script, words: countWords(script), errors, warnings };
 }
 
 /** Throws a PlanImportError unless the plan-only JSON is complete and usable. */
@@ -1035,6 +1137,15 @@ NARRATION
 - Language: ${language}. Conversational, confident, technically accurate.
 - Every scene's "text" is 6-16 words (never more than 25): one short spoken sentence or half-sentence. Plain text only: no markdown, no quotes, no emojis, no bullet points, no stage directions, no raw code (describe code aloud, show it in a "code" panel).
 - Use only facts, names and numbers that appear in the transcript. Never invent statistics.
+
+LESSON DESIGN (when the transcript teaches programming)
+- Open (first 2-3 scenes) with a concrete problem or a surprising result, not a greeting: "Your app starts fine, so why is this value still null?". Then say what the viewer will be able to do by the end.
+- One idea at a time. For each concept: the problem -> a plain intuition -> a visual model -> the exact code -> run it -> why that result happened -> a prediction question or a small task. Do not stack several new terms in one scene.
+- Show the code the narrator talks about, with the real names from the transcript, in "code" panels (share of code + terminal scenes about 50%). Show config files with their own language ("properties" for application.properties, "yaml", "xml"). After the code, show the run and its output in a "terminal" panel; only output the transcript states.
+- Pause and think: before revealing a result, ask a "quiz" (about one per chapter). Never reveal the answer in the question, the title, the callouts or the narration of that scene.
+- Near the end revisit an earlier idea in a new example, then finish with 3-5 key ideas and one practical task for the viewer.
+- Timing for 20 minutes: 0:00-0:30 hook, to 2:00 promise and prerequisites, to 6:00 intuition with a visual model, to 12:00 build the code step by step, to 16:00 run, debug a realistic mistake and fix it, to 18:30 a new example or challenge, to 20:00 recall and takeaway. Adapt it to the topic.
+- Code scene example (our format): {"i":12,"text":"Spring injects that key into this field.","pose":"present","mood":"neutral","accent":"gold","setting":"office","code":{"title":"PaymentGateway.java","language":"java","lines":["@Component","public class PaymentGateway {","    @Value(\\"\${payment.gateway.type}\\")","    private String type;","}"],"highlight":[2,3],"revealFrom":2,"animate":"type"}} and a terminal scene: {"i":13,"text":"Now run the application.","pose":"think","mood":"excited","accent":"gold","setting":"office","terminal":{"title":"zsh","lines":["$ mvn spring-boot:run","Paytm","5"]}}. When a file grows over several scenes, repeat its earlier lines and move "revealFrom" to the first new line.
 
 ${DIRECTOR_RULES}
 
