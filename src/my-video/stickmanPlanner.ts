@@ -4,6 +4,7 @@ import { config } from "../config";
 import { parseAiJson } from "../utils/json";
 import { pipelineLogger } from "../utils/logger";
 import type { StickmanScene } from "./myVideoService";
+import { SCENE_ASSETS, SCENE_BACKGROUNDS, SCENE_TINTS } from "./sceneCatalog";
 
 // Mirrors my-video/src/stickman/schema.ts (that repo is not importable from here).
 const POSES = ["idle", "point", "present", "shrug", "think", "celebrate", "worried", "facepalm", "shocked", "walk", "angry", "laugh", "cry", "smug"];
@@ -259,6 +260,30 @@ export function svgFallback(raw: any): Record<string, unknown> | null {
   return labels.length >= 2 ? { steps: { items: labels.slice(0, 8), current: 0 } } : null;
 }
 
+/** Illustration from the doodle asset library: only known assets, numbers clamped to the card. */
+export function sanitizeScene(raw: any): Record<string, unknown> | null {
+  if (!raw || !Array.isArray(raw.items)) return null;
+  const pct = (x: unknown, fallback: number): number => clampNum(x, 0, 100) ?? fallback;
+  const items = raw.items
+    .filter((it: any) => it && (SCENE_ASSETS as readonly string[]).includes(it.asset))
+    .slice(0, 8)
+    .map((it: any) => ({
+      asset: it.asset,
+      x: pct(it.x, 50), y: pct(it.y, 46),
+      size: clampNum(it.size, 8, 90) ?? 34,
+      flip: it.flip === true,
+      tint: (SCENE_TINTS as readonly string[]).includes(it.tint) ? it.tint : undefined,
+      label: str(it.label, 22) || undefined,
+    }));
+  if (!items.length) return null;
+  const point = (p: unknown): [number, number] | null =>
+    Array.isArray(p) && p.length === 2 && p.every((n) => typeof n === "number" && Number.isFinite(n)) ? [pct(p[0], 50), pct(p[1], 50)] : null;
+  const arrows = (Array.isArray(raw.arrows) ? raw.arrows : []).slice(0, 6)
+    .map((a: any) => ({ from: point(a?.from), to: point(a?.to), label: str(a?.label, 20) || undefined }))
+    .filter((a: any) => a.from && a.to);
+  return { background: pick(raw.background, SCENE_BACKGROUNDS, "paper"), items, arrows };
+}
+
 // Panels (right side of the frame). Limits mirror my-video/src/stickman/schema.ts.
 function sanitizePanel(v: any): Record<string, unknown> {
   const code = v?.code;
@@ -330,6 +355,8 @@ function sanitizePanel(v: any): Record<string, unknown> {
     const hr = Number.isInteger(tb.highlightRow) && tb.highlightRow >= 0 && tb.highlightRow < rows.length ? tb.highlightRow : undefined;
     return { table: { name: str(tb.name, 30) || undefined, columns: cols, rows, highlightRow: hr } };
   }
+  const scene = sanitizeScene(v?.scene);
+  if (scene) return { scene };
   if (v?.svg) {
     const svg = sanitizeSvg(v.svg);
     if (svg) return { svg };
@@ -591,6 +618,7 @@ PANELS (right side of the frame, at most ONE per beat, never the same panel type
 - "progress": skill / completion bars: {"items":[{"label":"Core Java","value":90}]} (1-5 items, value 0-100).
 - "table": database rows / query results: {"name":"users","columns":["id","name","role"],"rows":[["1","Asha","admin"]],"highlightRow":0} (2-5 columns, 1-5 rows, every row has one cell per column, cells max 18 chars).
 - "alert": an error, success or warning state: {"kind":"error","title":"NullPointerException","detail":"user is null"}.
+- "scene": an ILLUSTRATION composed from a library of ready-made hand-drawn assets. PREFER IT whenever the beat talks about concrete things (devices, data centers, water, power, factories, cities, people, money, time): it makes the visual literally show what is said. {"background":"lab","items":[{"asset":"server","x":24,"y":46,"size":46,"label":"Data center"},{"asset":"drop","x":76,"y":46,"size":46,"label":"Water"}],"arrows":[{"from":[38,46],"to":[62,46]}]}. 1-5 items; x and y are percentages of the card (0-100, left to right / top to bottom), size = asset height in percent (25-55), label max 22 chars (the word the narration uses), arrows are [x,y] points between items showing cause -> effect. Space items so they do not overlap (with 3 items use x 17/50/83). Backgrounds: paper, sky (outdoors, world, nature), night, room (home, office), lab (tech, science). Assets: server, laptop, phone, cloud, database, chip, robot, wifi, plug, bolt, battery, lock, shield, chart, document, magnifier, clock, money, brain, bulb, drop, fire, thermometer, fan, factory, tower, city, globe, tree, sun, house, car, solar, turbine, person, person-worried, person-happy, warning, check, cross, rocket, flag, gear. Never invent an asset name.
 - "svg": LAST RESORT. A custom diagram YOU draw, only for things the panels above cannot show: a tree (inheritance, hierarchy), a 2x2 matrix, a layered stack, a cycle. A simple chain or request path is a "flow" or "steps", NOT an svg. Never use svg on two beats in a row. Canvas is 1300 wide x 700 tall. Shapes: rect{x,y,w,h,rx}, circle{cx,cy,r}, line{x1,y1,x2,y2,arrow,dash}, path{d}, text{x,y,text,size,anchor}. Colours: ink, accent, red, green, blue, gold, faint, bg, white or #rrggbb ("white" text on accent/green/blue/red boxes, "ink" text on gold/faint boxes). Shapes appear in the order given (same "step" = together): build the diagram in the order it is explained.
   LAYOUT RULES (drawings that break them are discarded): put boxes on a grid, boxes 300x100, rows at y=60 / 250 / 440 (a 4th row at 600 only for a short chain), column centres x=250 / 650 / 1050 (so a box at centre c has x=c-150); text centred in its box with x=centre and y=box y+66 for size 44; arrows run only through the GAP between boxes (from the bottom edge of one box to the top edge of the next, e.g. y1=160 to y2=250), never through a box or a label; text size 32-48, at most 24 characters; 4-14 shapes; never overlap boxes; no title (the scene headline names it).
   Example tree (Animal with children Dog and Cat): [{"t":"rect","x":500,"y":60,"w":300,"h":100,"rx":22,"fill":"accent","stroke":"ink","step":0},{"t":"text","x":650,"y":126,"text":"Animal","size":44,"fill":"white","step":0},{"t":"line","x1":600,"y1":160,"x2":300,"y2":250,"arrow":true,"step":1},{"t":"line","x1":700,"y1":160,"x2":1000,"y2":250,"arrow":true,"step":1},{"t":"rect","x":100,"y":250,"w":300,"h":100,"rx":22,"fill":"green","stroke":"ink","step":2},{"t":"text","x":250,"y":316,"text":"Dog","size":44,"fill":"white","step":2},{"t":"rect","x":900,"y":250,"w":300,"h":100,"rx":22,"fill":"gold","stroke":"ink","step":2},{"t":"text","x":1050,"y":316,"text":"Cat","size":44,"fill":"ink","step":2}]
@@ -628,7 +656,7 @@ export function salvageScenes(raw: string): any[] {
   return out;
 }
 
-const PANEL_KEYS = ["steps", "flow", "code", "terminal", "browser", "compare", "counter", "chart", "progress", "table", "alert", "svg", "container", "quiz"];
+const PANEL_KEYS = ["steps", "flow", "code", "terminal", "browser", "compare", "counter", "chart", "progress", "table", "alert", "scene", "svg", "container", "quiz"];
 export const isThin = (v: any): boolean =>
   !v || (!(Array.isArray(v.callouts) && v.callouts.some((c: unknown) => typeof c === "string" && c.trim())) &&
     !(Array.isArray(v.props) && v.props.length) && !PANEL_KEYS.some((k) => v[k]));
@@ -661,7 +689,7 @@ ${idxs.map((i) => `${i}. ${beats[i]}`).join("\n")}
 
 Return ONLY raw JSON, no markdown:
 {${idxs.includes(0) ? '"title":"catchy YouTube title under 90 chars","description":"2-3 sentence description with 3-4 hashtags","tags":["8 relevant tags"],' : ""}"scenes":[{"i":${idxs[0]},${echoText ? '"text":"the beat copied EXACTLY, word for word",' : ""}"pose":"","mood":"","accent":"","camera":"","setting":"","title":"","callouts":["..."]}]}
-Add optional keys to a scene ONLY when needed: "chapter","flip","props":[{"type":""}] and at most one panel key ("steps","flow","code","terminal","browser","compare","counter","chart","progress","table","alert","svg","container","quiz") with the structure described above. Do NOT output keys with null values.
+Add optional keys to a scene ONLY when needed: "chapter","flip","props":[{"type":""}] and at most one panel key ("steps","flow","code","terminal","browser","compare","counter","chart","progress","table","alert","scene","svg","container","quiz") with the structure described above. Do NOT output keys with null values.
 "scenes" must have exactly ${idxs.length} entries, one per beat, in order; "i" is the beat number it directs (${idxs[0]} for the first beat below, counting up in the order given). Every scene needs a setting and at least one of: callouts, props or a panel.`;
 }
 
@@ -1018,7 +1046,7 @@ DELIVERY - IMPORTANT
 
 Each scene looks like this:
 {"i":0,"text":"the spoken narration for this beat","pose":"","mood":"","accent":"","camera":"","setting":"","title":"","callouts":["..."]}
-Add optional keys to a scene ONLY when needed: "chapter","flip","props":[{"type":""}] and at most one panel key ("steps","flow","code","terminal","browser","compare","counter","chart","progress","table","alert","svg","container","quiz") with the structure described above. Do NOT output keys with null values.
+Add optional keys to a scene ONLY when needed: "chapter","flip","props":[{"type":""}] and at most one panel key ("steps","flow","code","terminal","browser","compare","counter","chart","progress","table","alert","scene","svg","container","quiz") with the structure described above. Do NOT output keys with null values.
 
 Allowed values:
 - pose: ${POSES.join(", ")}

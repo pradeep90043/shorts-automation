@@ -4,6 +4,7 @@ import { randomUUID } from "crypto";
 import { pipelineLogger } from "../utils/logger";
 import { cancelCloudRun, renderStickmanVideo, resolveMyVideoDir, type CloudRunRef, type StickmanScene, type StickmanVideoSpec } from "./myVideoService";
 import { isStickmanBusy } from "./stickmanJobs";
+import { sceneForSentence } from "./sceneComposer";
 import { cleanScript, directBeats, diversifyVisuals, dropInventedNumbers, isThin, sanitizeVisual, splitScriptIntoBeats } from "./stickmanPlanner";
 
 /**
@@ -109,7 +110,11 @@ function visualFromSentence(text: string, k: number, count: number, nodes: strin
     pose: POSES[k % POSES.length], mood: k % 2 ? "neutral" : "happy", accent: "gold", camera: k === 0 ? "push" : "none",
     setting: settingFor(text), title: heading,
   };
-  if (nodes.length >= 2) {
+  const illustration = off(process.env.HOWITWORKS_SCENES) ? null : sceneForSentence(text, heading);
+  if (illustration) {
+    // hand-drawn illustration of the things the sentence talks about (server -> water drop ...), one per sentence
+    visual.scene = illustration;
+  } else if (nodes.length >= 2) {
     // the packet travels along the diagram as the narration moves on
     const active = count > 1 ? Math.round((k * (nodes.length - 1)) / (count - 1)) : 0;
     visual.flow = { nodes, active };
