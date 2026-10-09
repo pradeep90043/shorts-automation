@@ -177,7 +177,7 @@ export function startStickmanJob(input: StickmanJobInput): StickmanJob {
     else input = { ...input, plan: undefined, repairMissing: undefined };
   }
 
-  const estimate = estimateStickman(script, input.targetSec, input.resolution ?? 720);
+  const estimate = estimateStickman(script, input.targetSec, input.resolution ?? 720, false, !!input.planOnly);
   const job: StickmanJob = {
     id: randomUUID().slice(0, 8),
     status: "running",
@@ -218,7 +218,7 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
     job.adjustNote = fit.note;
     log(fit.note);
     // re-estimate for the final script: voice rate and stage times follow its real length
-    const fitted = estimateStickman(fit.script, job.input.targetSec, job.input.resolution ?? 720, true);
+    const fitted = estimateStickman(fit.script, job.input.targetSec, job.input.resolution ?? 720, true, planOnly);
     job.estimate = fitted;
     for (const s of job.stages) s.estSec = fitted.stageSec[s.key];
     setStage(job, "plan", { fraction: 0.5, detail: imported ? "Applying imported visuals" : "Choosing visuals" });
