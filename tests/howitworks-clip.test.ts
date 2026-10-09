@@ -1,5 +1,8 @@
 import assert from "assert";
-import { buildHowItWorksSpec, explanationBeats, howItWorksMyVideoEnabled, mermaidNodes, renderHowItWorksClip } from "../src/my-video/howItWorksClip";
+import { FreeLlmApiClient } from "../src/ai/freellmapi";
+import {
+  buildHowItWorksSpec, directHowItWorks, explanationBeats, howItWorksMyVideoEnabled, keyPhrase, mermaidNodes, propsFor, renderHowItWorksClip,
+} from "../src/my-video/howItWorksClip";
 
 const autoMermaid = `graph TD\n  A["📥 1. Receive Input: Spring Boot REST API"] --> B["⚡ 2. Execute Handler"]\n  B --> C["💾 3. State & Storage"]\n  C --> D["🚀 4. Output Response"]`;
 
@@ -33,6 +36,49 @@ const autoMermaid = `graph TD\n  A["📥 1. Receive Input: Spring Boot REST API"
   // no usable diagram -> props + callouts instead of a panel
   const plain = buildHowItWorksSpec({ explanation: "It parses the request and returns the response." }, "hiw-plain");
   assert.ok(plain.scenes.slice(1).every((s) => !(s.visual as any).flow && (s.visual as any).callouts?.length));
+
+  // the real failure: no usable diagram in the metadata -> topic-specific nodes from the sentences, never the generic boxes
+  const water = "AI data centers use liquid cooling to manage the intense heat of dense hardware. Water absorbs thermal energy from the chips before being evaporated. This creates massive consumption at global scale.";
+  const waterSpec = buildHowItWorksSpec({ explanation: water, title: "AI's Massive Water Secret", diagramTitle: "AI Data Center Cooling Loop" }, "hiw-water");
+  const waterFlows = waterSpec.scenes.slice(1).map((s) => (s.visual as any).flow);
+  assert.ok(waterFlows.every((f) => f && f.nodes.length === 3), "one node per sentence");
+  assert.ok(waterFlows[0].nodes.every((n: string) => !/Receive Input|Execute Handler|State & Storage|Output Response/.test(n)));
+  assert.ok(/Data Centers|Liquid Cooling/.test(waterFlows[0].nodes[0]) && /Water/.test(waterFlows[0].nodes[1]));
+  assert.strictEqual((waterSpec.scenes[1].visual as any).setting, "server"); // data centers -> server room
+  assert.strictEqual((waterSpec.scenes[3].visual as any).setting, "city"); // global scale -> city
+  assert.deepStrictEqual(keyPhrase("Water absorbs thermal energy from the chips"), "Water Absorbs Thermal");
+  assert.ok(propsFor("This creates massive consumption").some((p) => p.type === "chartUp"));
+  // a diagram written as "flowchart" (not "graph") is accepted
+  assert.deepStrictEqual(mermaidNodes('flowchart LR\n  A["Sun"] --> B["Panel"] --> C["Battery"]'), ["Sun", "Panel", "Battery"]);
+
+  // director visuals are used when usable; bare/missing ones fall back to the sentence-derived visual
+  const directedMap = new Map<number, any>([
+    [0, { pose: "shocked", mood: "shocked", accent: "red", setting: "server", compare: { mode: "versus", cards: [{ title: "Air", points: ["Cheap"] }, { title: "Water", points: ["Efficient"], winner: true }] } }],
+    [1, { pose: "think", setting: "server" }], // bare: no callouts/props/panel
+  ]);
+  const directedSpec = buildHowItWorksSpec({ explanation: water, diagramTitle: "Cooling" }, "hiw-dir", directedMap);
+  assert.ok((directedSpec.scenes[1].visual as any).compare, "director's panel kept");
+  assert.ok((directedSpec.scenes[2].visual as any).flow, "bare director scene replaced by the sentence-derived one");
+  // invented numbers are dropped (the narration states none)
+  const withChart = new Map<number, any>([[0, { pose: "point", setting: "server", chart: { kind: "bar", labels: ["A", "B"], values: [7, 99] } }]]);
+  assert.ok(!(buildHowItWorksSpec({ explanation: water }, "hiw-chart", withChart).scenes[1].visual as any).chart);
+
+  // LLM director: one call, gets the beats + the hint; a slow/garbage answer -> undefined (derived visuals)
+  process.env.FREELLMAPI_KEY = process.env.FREELLMAPI_KEY || "test";
+  const proto = FreeLlmApiClient.prototype as any;
+  const real = proto.generateText;
+  let prompts: string[] = [];
+  proto.generateText = async (p: string) => { prompts.push(p); return JSON.stringify({ scenes: [0, 1, 2].map((i) => ({ i, pose: "present", mood: "happy", accent: "gold", camera: "none", setting: "server", callouts: ["LIQUID COOLING"] })) }); };
+  const got = await directHowItWorks({ explanation: water, title: "AI's Massive Water Secret" });
+  assert.strictEqual(got?.size, 3);
+  assert.strictEqual(prompts.length, 1);
+  assert.ok(prompts[0].includes("0. AI data centers use liquid cooling") && prompts[0].includes("AI's Massive Water Secret") && prompts[0].includes("never the same generic boxes"));
+  proto.generateText = async () => "not json at all";
+  assert.strictEqual(await directHowItWorks({ explanation: water }), undefined);
+  process.env.HOWITWORKS_LLM = "off";
+  assert.strictEqual(await directHowItWorks({ explanation: water }), undefined);
+  delete process.env.HOWITWORKS_LLM;
+  proto.generateText = real;
 
   // safe by default: nothing to render with -> returns false without throwing
   const saved = { gh: process.env.GITHUB_TOKEN, g2: process.env.GH_TOKEN, loc: process.env.RENDER_LOCAL, off: process.env.HOWITWORKS_MYVIDEO };
