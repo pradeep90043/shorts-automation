@@ -306,7 +306,7 @@ Return ONLY valid JSON with this exact schema:
 
       // 6. Background Music
       let musicFile = options.musicFile || "";
-      if (!musicFile) {
+      if (!musicFile && config.rendering.backgroundMusicEnabled) {
         try {
           musicFile = this.music.selectLocalTrack(config.paths.musicDir, options.niche);
         } catch (_) {}

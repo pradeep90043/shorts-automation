@@ -106,6 +106,8 @@ export interface AppConfig {
     fps: number;
     musicVolume: number;
     musicStartOffset: number;
+    /** Background music from the library. OFF by default: videos carry voice only (Content ID claims). */
+    backgroundMusicEnabled: boolean;
     beautifyCode: boolean;
   };
   binaries: {
@@ -504,6 +506,7 @@ export const config: AppConfig = {
     fps: parseInt(process.env.VIDEO_FPS || "30", 10),
     musicVolume: parseFloat(process.env.MUSIC_VOLUME || "0.15"),
     musicStartOffset: parseInt(process.env.MUSIC_START_OFFSET || "20", 10),
+    backgroundMusicEnabled: process.env.BACKGROUND_MUSIC_ENABLED === "true",
     beautifyCode: process.env.BEAUTIFY_CODE !== "false",
   },
   binaries: {

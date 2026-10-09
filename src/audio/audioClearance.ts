@@ -44,10 +44,22 @@ const hasAudio = (file: string): Promise<boolean> =>
 export async function clearBackgroundMusic(
   videoPath: string,
   outputPath: string,
-  opts: { voiceoverPath?: string; tempDir: string },
+  opts: { voiceoverPath?: string; tempDir: string; isolateSpeech?: boolean },
 ): Promise<ClearanceResult> {
   const unchanged: ClearanceResult = { checked: false, musicFound: false, removed: false, outputPath: videoPath };
   if (!config.audioClearance.enabled || !fs.existsSync(videoPath) || !(await hasAudio(videoPath))) return unchanged;
+
+  // Voice-only policy: when the original audio is kept, always try to drop everything but the speech
+  // (Demucs). Without Demucs we can only act on a Shazam match.
+  if (opts.isolateSpeech) {
+    const vocals = await extractVocals(videoPath, opts.tempDir);
+    if (vocals) {
+      await run(
+        `"${config.binaries.ffmpeg}" -y -i "${videoPath}" -i "${vocals}" -filter_complex "[1:a]apad[a]" -map 0:v -map "[a]" -c:v copy -c:a aac -shortest "${outputPath}"`,
+      );
+      return { checked: true, musicFound: true, removed: true, match: "isolated speech (music dropped)", outputPath };
+    }
+  }
 
   const shazam = await identifyAudio(videoPath);
   if (!shazam.matched) return { ...unchanged, checked: true };

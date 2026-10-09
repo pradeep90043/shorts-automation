@@ -3739,7 +3739,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
 
       // Original audio and background music are a single mutually-exclusive
       // toggle now: music plays exactly when original audio is off.
-      if (!settings.originalAudio) {
+      if (!settings.originalAudio && config.rendering.backgroundMusicEnabled) {
         context.selectedMusicTrack = this.music.selectLocalTrack(
           config.paths.musicDir,
           context.metadata?.mood,
@@ -3825,7 +3825,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         const cleared = await clearBackgroundMusic(
           finalVideoPath,
           path.join(tempDir, "video_final_cleared.mp4"),
-          { voiceoverPath: useVoice ? voiceoverPath : undefined, tempDir },
+          { voiceoverPath: useVoice ? voiceoverPath : undefined, tempDir, isolateSpeech: settings.originalAudio && !useVoice },
         );
         if (cleared.removed) {
           finalVideoPath = cleared.outputPath;
