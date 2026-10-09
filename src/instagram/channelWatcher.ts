@@ -800,7 +800,7 @@ export class ChannelWatcher {
         const elapsedMs = now - firedAt;
         // Download + OCR can legitimately take 6+ min on the CPU-starved prod VM before the
         // job record exists; a 5 min cutoff marked healthy jobs failed while they were still running.
-        if (firedAt > 0 && elapsedMs > 15 * 60 * 1000) {
+        if (firedAt > 0 && elapsedMs > 10 * 60 * 1000) {
           pipelineLogger.warn(
             `[${this.profile.brandName}] Job ${inFlight.jobId} was never initialized in the database (failed to download/init) and has timed out after ${Math.round(elapsedMs / 1000)}s. Marking as failed.`,
             "ChannelWatcher",
@@ -830,7 +830,7 @@ export class ChannelWatcher {
         await this.store.markFailed(inFlight.shortcode, job.error || "Pipeline failed");
         await this.history.markFailed(inFlight.shortcode, job.error || "Pipeline failed");
         pipelineLogger.warn(
-          `[${this.profile.brandName}] Reel @${inFlight.channel}/${inFlight.shortcode} marked failed — ${job.error}`,
+          `[${this.profile.brandName}] Reel @${inFlight.channel}/${inFlight.shortcode} marked failed — ${job.error || "no error recorded"}`,
           "ChannelWatcher",
         );
       }

@@ -1223,7 +1223,7 @@
     const targetChannel = (chanSelect ? chanSelect.value : null) || (focusedChannel !== 'all' ? focusedChannel : 'codeorcap');
     if (!url) { showToast('Please enter a valid Instagram or Video URL', 'warn'); return; }
 
-    const scMatch = url.match(/\/reel\/([\w-]{5,20})/) || url.match(/\/p\/([\w-]{5,20})/);
+    const scMatch = url.match(/\/reels?\/([\w-]{5,20})/) || url.match(/\/p\/([\w-]{5,20})/);
     const shortcode = scMatch ? scMatch[1] : '';
 
     // Immediately reset old reel steps & update source card to show the new reel
@@ -1946,7 +1946,7 @@
       const urlMatch = msg.match(/(https?:\/\/[^\s]+)/i);
       if (urlMatch) {
         const url = urlMatch[1];
-        const scMatch = url.match(/\/reel\/([\w-]{5,20})/) || url.match(/\/p\/([\w-]{5,20})/);
+        const scMatch = url.match(/\/reels?\/([\w-]{5,20})/) || url.match(/\/p\/([\w-]{5,20})/);
         setPipelineSource(url, scMatch ? scMatch[1] : '');
       }
       if (stepState[1].status === 'idle') {
@@ -1983,7 +1983,7 @@
     if (ytMatch) addPublishedLink('youtube', ytMatch[1]);
 
     // Instagram
-    const igMatch = msg.match(/(https?:\/\/(?:www\.)?instagram\.com\/reel\/[\w-]+)/i);
+    const igMatch = msg.match(/(https?:\/\/(?:www\.)?instagram\.com\/reels?\/[\w-]+)/i);
     if (igMatch && !msg.includes('downloading content')) addPublishedLink('instagram', igMatch[1]);
 
     // Facebook
