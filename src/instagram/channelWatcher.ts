@@ -11,7 +11,7 @@ import {
   InstagramSessionDeadError,
   ScraperCallbacks,
 } from "./channelFeed";
-import { buildHashtagsForNiche, searchViralReels, ScoredReel } from "./nicheSearcher";
+import { buildHashtagsForNiche, searchNicheReels, NicheReel } from "./nicheSearcher";
 import { pipelineLogger } from "../utils/logger";
 import { refreshSessionForProfile, patchChannelCredentials } from "../utils/credentialStore";
 
@@ -193,21 +193,20 @@ export class ChannelWatcher {
     }
   }
 
-  private async searchViralReelsWithFallback(
+  private async searchNicheReelsWithFallback(
     hashtags: string[],
-    viralThreshold: number,
     limitPerTag: number,
     allowSessionRefresh = true,
-  ): Promise<ScoredReel[]> {
+  ): Promise<NicheReel[]> {
     if (config.instagramScraper.loginFreeMode || this.scrapersInCooldown()) {
       if (config.instagramScraper.loginFreeMode) {
         pipelineLogger.info(
-          `[${this.profile.brandName}] Login-free mode enabled: searching viral reels via search-engine discovery...`,
+          `[${this.profile.brandName}] Login-free mode enabled: searching niche reels via search-engine discovery...`,
           "ChannelWatcher",
         );
       }
       const se = await this.discoverViaSearchEngine(Math.max(limitPerTag * 2, 10));
-      if (se.length > 0) return se.map((r) => this.seToScored(r));
+      if (se.length > 0) return se.map((r) => this.seToNiche(r));
       throw new Error(
         config.instagramScraper.loginFreeMode
           ? "Search-engine discovery found no reels"
@@ -220,14 +219,14 @@ export class ChannelWatcher {
     for (const env of candidates) {
       try {
         pipelineLogger.info(
-          `[${this.profile.brandName}] Attempting searchViralReels with account "${env.INSTAGRAM_USERNAME || 'session-only'}"...`,
+          `[${this.profile.brandName}] Attempting searchNicheReels with account "${env.INSTAGRAM_USERNAME || 'session-only'}"...`,
           "ChannelWatcher",
         );
-        return await searchViralReels(hashtags, viralThreshold, limitPerTag, this.history, env, this.scraperCallbacks());
+        return await searchNicheReels(hashtags, limitPerTag, this.history, env, this.scraperCallbacks());
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
         pipelineLogger.warn(
-          `[${this.profile.brandName}] searchViralReels failed with account "${env.INSTAGRAM_USERNAME || 'session-only'}": ${lastError.message}. Trying next fallback...`,
+          `[${this.profile.brandName}] searchNicheReels failed with account "${env.INSTAGRAM_USERNAME || 'session-only'}": ${lastError.message}. Trying next fallback...`,
           "ChannelWatcher",
         );
       }
@@ -241,7 +240,7 @@ export class ChannelWatcher {
       const newSession = await refreshSessionForProfile(this.profile.key).catch(() => null);
       if (newSession) {
         this.handleSessionRefresh(newSession);
-        return this.searchViralReelsWithFallback(hashtags, viralThreshold, limitPerTag, false);
+        return this.searchNicheReelsWithFallback(hashtags, limitPerTag, false);
       }
     }
 
@@ -264,7 +263,6 @@ export class ChannelWatcher {
           playCount: r.playCount,
           likeCount: r.likeCount,
           commentCount: r.commentCount,
-          viralScore: 100,
         }));
       }
     } catch (pupErr) {
@@ -278,10 +276,10 @@ export class ChannelWatcher {
       await this.alertSessionDead("hashtag search", lastError);
     }
 
-    // Last resort: search-engine discovery (no Instagram login). Engagement is unknown,
-    // so these are unscored candidates rather than verified viral reels.
+    // Last resort: search-engine discovery (no Instagram login). Hits come from niche keywords,
+    // so they are on-topic candidates (engagement is unknown, and is not used for picking anyway).
     const seReels = await this.discoverViaSearchEngine(Math.max(limitPerTag * 2, 10));
-    if (seReels.length > 0) return seReels.map((r) => this.seToScored(r));
+    if (seReels.length > 0) return seReels.map((r) => this.seToNiche(r));
 
     throw lastError || new Error("All Instagram login candidates failed");
   }
@@ -307,7 +305,7 @@ export class ChannelWatcher {
     }
   }
 
-  private seToScored(r: Awaited<ReturnType<typeof searchReelsViaSearchEngine>>[number]): ScoredReel {
+  private seToNiche(r: Awaited<ReturnType<typeof searchReelsViaSearchEngine>>[number]): NicheReel {
     return {
       shortcode: r.shortcode,
       url: r.url,
@@ -317,7 +315,6 @@ export class ChannelWatcher {
       playCount: r.playCount,
       likeCount: r.likeCount,
       commentCount: r.commentCount,
-      viralScore: 0,
     };
   }
 
@@ -422,8 +419,8 @@ export class ChannelWatcher {
     throw lastError || new Error("All Instagram login candidates failed");
   }
 
-  // Pool of pre-scored reels from hashtag search, populated each daily batch.
-  private hashtagReelPool: ScoredReel[] = [];
+  // Pool of niche reels from hashtag search, populated each daily batch.
+  private hashtagReelPool: NicheReel[] = [];
 
   public async start(): Promise<void> {
     const { channels, adminChatId, searchMode } = this.profile.watch;
@@ -460,9 +457,9 @@ export class ChannelWatcher {
     }, 60 * 1000);
 
     const modeDesc = activeSearchMode === "hashtags"
-      ? `hashtag search (threshold=${this.profile.watch.viralThreshold})`
+      ? "niche hashtag search"
       : activeSearchMode === "both"
-      ? `channels + hashtag search (threshold=${this.profile.watch.viralThreshold})`
+      ? "channels + niche hashtag search"
       : `${channels.length} channel(s) (${channels.join(", ")})`;
     pipelineLogger.info(
       `[${this.profile.brandName}] Channel watch started — ${modeDesc}, ` +
@@ -594,7 +591,7 @@ export class ChannelWatcher {
       return [];
     }
 
-    const { searchMode, channels, dailyCount, nicheHashtags, viralThreshold, excludeChannels = [] } = this.profile.watch;
+    const { searchMode, channels, dailyCount, nicheHashtags, excludeChannels = [] } = this.profile.watch;
     const excludes = new Set(excludeChannels.map(c => c.toLowerCase().trim()));
 
     let activeSearchMode = searchMode || "hashtags";
@@ -607,17 +604,13 @@ export class ChannelWatcher {
     if (activeSearchMode === "hashtags" || activeSearchMode === "both") {
       const hashtags = buildHashtagsForNiche(this.profile.theme, undefined, nicheHashtags);
       pipelineLogger.info(
-        `[${this.profile.brandName}] Searching hashtags: #${hashtags.join(", #")} (threshold=${viralThreshold})`,
+        `[${this.profile.brandName}] Searching niche hashtags: #${hashtags.join(", #")}`,
         "ChannelWatcher",
       );
       try {
-        this.hashtagReelPool = await this.searchViralReelsWithFallback(
-          hashtags,
-          viralThreshold,
-          20,
-        );
+        this.hashtagReelPool = await this.searchNicheReelsWithFallback(hashtags, 20);
         pipelineLogger.info(
-          `[${this.profile.brandName}] Hashtag search returned ${this.hashtagReelPool.length} viral reel(s)`,
+          `[${this.profile.brandName}] Hashtag search returned ${this.hashtagReelPool.length} niche reel(s)`,
           "ChannelWatcher",
         );
       } catch (err) {
@@ -701,11 +694,7 @@ export class ChannelWatcher {
       );
       const hashtags = buildHashtagsForNiche(this.profile.theme, undefined, nicheHashtags);
       try {
-        this.hashtagReelPool = await this.searchViralReelsWithFallback(
-          hashtags,
-          viralThreshold,
-          20,
-        );
+        this.hashtagReelPool = await this.searchNicheReelsWithFallback(hashtags, 20);
       } catch (err) {
         pipelineLogger.error(
           `[${this.profile.brandName}] Fallback hashtag search failed`,
@@ -716,7 +705,7 @@ export class ChannelWatcher {
     }
 
     // ── Merge pools into final picks ─────────────────────────────────────────
-    // In 'both' mode: fill first with hashtag pool (scored/viral), then supplement
+    // In 'both' mode: fill first with hashtag pool (niche-matched), then supplement
     // with channel pool up to dailyCount.
     const allPicks: Array<{ shortcode: string; url: string; channel: string }> = [];
     const seenShortcodes = new Set<string>();

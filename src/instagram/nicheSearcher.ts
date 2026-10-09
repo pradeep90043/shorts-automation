@@ -1,11 +1,14 @@
 import { ContentTheme } from "../config";
 import { pipelineLogger } from "../utils/logger";
-import { scoreAndSort, filterViral } from "../utils/viralScore";
 import { searchAllHashtagReels, InstagramRateLimitError, InstagramSessionDeadError, ScraperCallbacks } from "./channelFeed";
 
 export { InstagramRateLimitError, InstagramSessionDeadError };
 
-export interface ScoredReel {
+/**
+ * A reel picked because it matches the channel's niche (found under one of the niche's hashtags).
+ * Engagement numbers are informational only; they never decide whether a reel is picked.
+ */
+export interface NicheReel {
   shortcode: string;
   url: string;
   channel: string;
@@ -13,7 +16,6 @@ export interface ScoredReel {
   playCount: number;
   likeCount: number;
   commentCount: number;
-  viralScore: number;
 }
 
 // niche key → mood key → hashtag list
@@ -116,21 +118,31 @@ export function buildHashtagsForNiche(
   return [...new Set(tags)];
 }
 
+/** Round-robin across per-hashtag lists: first reel of each tag, then the second of each, and so on. */
+export function interleaveByTag<T>(lists: T[][]): T[] {
+  const out: T[] = [];
+  for (let i = 0; lists.some((l) => i < l.length); i++) {
+    for (const l of lists) if (i < l.length) out.push(l[i]);
+  }
+  return out;
+}
+
 /**
- * Search Instagram hashtags for viral reels. Combines results across all
- * provided hashtags, deduplicates, scores, filters by viralThreshold (fail-
- * open), and returns sorted descending by viralScore.
+ * Search the niche's hashtags and return fresh reels to pick from. Relevance is the hashtag itself:
+ * there is no engagement score and no threshold, so a small account's on-topic reel is as eligible as a big one.
+ * Reels are de-duplicated, anything already in history is dropped, and the rest are interleaved
+ * round-robin across hashtags (in the order given, so the niche's best-matching tags lead). That keeps a daily
+ * batch varied instead of filled by whichever tag happened to return the most.
  *
- * Throws InstagramRateLimitError if every hashtag search is rate-limited.
+ * Throws InstagramRateLimitError / InstagramSessionDeadError if the search could not run.
  */
-export async function searchViralReels(
+export async function searchNicheReels(
   hashtags: string[],
-  viralThreshold: number,
   limitPerTag: number,
   reelHistory: { has: (shortcode: string) => boolean },
   scraperEnv?: Record<string, string>,
   callbacks?: ScraperCallbacks,
-): Promise<ScoredReel[]> {
+): Promise<NicheReel[]> {
   // All hashtags fetched in ONE Python process — single login, rate-limit-safe delays.
   let rawReels: import("./channelFeed").ScoredReelSummary[] = [];
   try {
@@ -146,20 +158,13 @@ export async function searchViralReels(
   }
 
   const seen = new Set<string>();
-  const allReels: Array<{
-    shortcode: string;
-    url: string;
-    channel: string;
-    creatorUsername?: string;
-    playCount: number;
-    likeCount: number;
-    commentCount: number;
-  }> = [];
+  const byTag = new Map<string, NicheReel[]>();
+  for (const tag of hashtags) byTag.set(tag.replace(/^#/, ""), []);
 
   for (const r of rawReels) {
     if (seen.has(r.shortcode) || reelHistory.has(r.shortcode)) continue;
     seen.add(r.shortcode);
-    allReels.push({
+    const reel: NicheReel = {
       shortcode: r.shortcode,
       url: r.url,
       channel: r.sourceHashtag,
@@ -167,21 +172,24 @@ export async function searchViralReels(
       playCount: r.playCount,
       likeCount: r.likeCount,
       commentCount: r.commentCount,
-    });
+    };
+    const list = byTag.get(r.sourceHashtag) ?? [];
+    list.push(reel);
+    byTag.set(r.sourceHashtag, list);
   }
 
-  if (allReels.length === 0) {
-    pipelineLogger.warn("[NicheSearcher] No reels found across all hashtags", "NicheSearcher");
+  const picked = interleaveByTag([...byTag.values()]);
+  const lists = [...byTag.values()].filter((l) => l.length > 0);
+
+  if (picked.length === 0) {
+    pipelineLogger.warn("[NicheSearcher] No fresh reels found across all hashtags", "NicheSearcher");
     return [];
   }
 
-  const scored = scoreAndSort(allReels);
-  const filtered = filterViral(scored, viralThreshold);
-
   pipelineLogger.info(
-    `[NicheSearcher] ${allReels.length} unique reel(s) found → ${filtered.length} pass viral threshold ${viralThreshold}`,
+    `[NicheSearcher] ${picked.length} fresh niche reel(s) from ${lists.length} hashtag(s) (no engagement filter)`,
     "NicheSearcher",
   );
 
-  return filtered;
+  return picked;
 }

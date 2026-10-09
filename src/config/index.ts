@@ -40,7 +40,7 @@ export interface WatchConfig {
   searchMode: "channels" | "hashtags" | "both"; // default: 'hashtags'
   nicheHashtags?: string[]; // override auto-generated hashtags from niche/mood mapping
   moodFilter?: string[]; // preferred moods as a hint to the AI metadata prompt
-  viralThreshold: number; // 0-100 minimum viral score to include (default: 50, fail-open)
+  viralThreshold: number; // DEPRECATED: reels are no longer picked by engagement; kept so stored configs still load
   excludeChannels?: string[]; // list of channels to ignore/exclude
   outroVersion?: "v1" | "v2"; // Outro version: v1 (old) or v2 (with middle transition clip)
 }
