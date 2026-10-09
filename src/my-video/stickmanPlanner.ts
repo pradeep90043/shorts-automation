@@ -629,7 +629,7 @@ export function salvageScenes(raw: string): any[] {
 }
 
 const PANEL_KEYS = ["steps", "flow", "code", "terminal", "browser", "compare", "counter", "chart", "progress", "table", "alert", "svg", "container", "quiz"];
-const isThin = (v: any): boolean =>
+export const isThin = (v: any): boolean =>
   !v || (!(Array.isArray(v.callouts) && v.callouts.some((c: unknown) => typeof c === "string" && c.trim())) &&
     !(Array.isArray(v.props) && v.props.length) && !PANEL_KEYS.some((k) => v[k]));
 
@@ -666,7 +666,7 @@ Add optional keys to a scene ONLY when needed: "chapter","flip","props":[{"type"
 }
 
 /** One LLM call for the given beat numbers: returns the scenes it directed, keyed by beat number (possibly partial). */
-async function directBeats(
+export async function directBeats(
   beats: string[], idxs: number[], total: number, notes?: { beatScene: number[]; notes: string[] } | null,
 ): Promise<{ meta: any; byIndex: Map<number, any> } | null> {
   const prompt = buildDirectorPrompt(beats, idxs, total, notes);
