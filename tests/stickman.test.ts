@@ -60,6 +60,11 @@ const chart = sanitizeVisual({ chart: { kind: "line", labels: ["a", "b", "c"], v
 assert.strictEqual(chart.chart.highlight, undefined);
 assert.strictEqual((sanitizeVisual({ table: { columns: ["id", "name"], rows: [["1"], ["2", "x"]] } }, 0) as any).table.rows.length, 1, "ragged table rows dropped");
 assert.strictEqual((sanitizeVisual({ alert: { kind: "boom", title: "x" } }, 0) as any).alert, undefined);
+// news clipping panel: kept with trimmed fields; dropped without outlet or headline
+const newsV = sanitizeVisual({ news: { outlet: "Reuters", date: "Oct 8, 2026", headline: "US halts green card applications", mark: "halts", stamp: "Alleged" } }, 0) as any;
+assert.strictEqual(newsV.news.outlet, "Reuters");
+assert.strictEqual(newsV.news.stamp, "Alleged");
+assert.strictEqual((sanitizeVisual({ news: { outlet: "Reuters" } }, 0) as any).news, undefined);
 assert.ok((sanitizeVisual({ compare: { cards: [{ title: "A", points: ["1", "2", "3", "4", "5"], winner: true }, { title: "B" }] } }, 0) as any).compare.cards[0].points.length === 4);
 assert.ok((sanitizeVisual({ counter: { items: [{ value: 6, suffix: " mo", label: "FRESHER" }, { value: "x", label: "bad" }] } }, 0) as any).counter.items.length === 1);
 assert.ok((sanitizeVisual({ terminal: { lines: ["$ ls", "", "ok"] } }, 0) as any).terminal.lines.length === 2);
