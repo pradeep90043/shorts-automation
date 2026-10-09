@@ -42,6 +42,11 @@ export function loadMusicBlocklist(musicFolder: string): string[] {
   }
 }
 
+/** The one allowed background sound: a generated soft noise bed (no melody, nothing for Content ID to match). */
+export function ambientBedPath(): string {
+  return path.join(config.paths.assetsDir, "ambient", "ambient-bed.m4a");
+}
+
 export class MusicService implements IMusicService {
   /** Track used by the most recent addBackgroundMusic call */
   public lastSelectedTrack: string | null = null;
@@ -65,24 +70,9 @@ export class MusicService implements IMusicService {
       this.lastSelectedTrack = null;
 
       if (!config.rendering.backgroundMusicEnabled) {
-        // Voice only: never mix any music. Keep the voiceover if given, otherwise the video as is.
-        pipelineLogger.info("Background music disabled — keeping voice only", "MusicService");
-        if (voiceoverPath && fs.existsSync(voiceoverPath)) {
-          const dur = await new Promise<number>((res) =>
-            exec(`"${config.binaries.ffprobe}" -v error -show_entries format=duration -of csv=p=0 "${videoPath}"`, (e, o) =>
-              res(!e && parseFloat(o) > 0 ? parseFloat(o) : config.rendering.videoDurationSeconds)),
-          );
-          await new Promise<void>((res, rej) =>
-            exec(
-              `ffmpeg -y -i "${videoPath}" -i "${voiceoverPath}" -filter_complex "[1:a]apad=whole_dur=${dur},volume=1.2,atrim=0:${dur}[a]" -map 0:v -map "[a]" -c:v copy -c:a aac -shortest "${outputPath}"`,
-              { timeout: 10 * 60 * 1000, killSignal: "SIGKILL" },
-              (e) => (e ? rej(e) : res()),
-            ),
-          );
-        } else {
-          fs.copyFileSync(videoPath, outputPath);
-        }
-        return outputPath;
+        // No library music: only the generated, non-musical ambient bed may sit under the voice.
+        specificTrack = ambientBedPath();
+        excludeTrack = undefined;
       }
 
       // Helper functions to get video details

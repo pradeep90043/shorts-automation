@@ -6,7 +6,7 @@ import { exec, execSync } from "child_process";
 import { config, ChannelProfile } from "./config";
 import { VideoRenderer, calculateVideoCrop } from "./renderer";
 import { OcrService } from "./ocr";
-import { MusicService, normalizeMood } from "./music";
+import { MusicService, normalizeMood, ambientBedPath } from "./music";
 import { YouTubeService, UploadResult } from "./youtube";
 import { InstagramPublisher, InstagramUploadResult } from "./instagram/publisher";
 import { FacebookPublisher, FacebookUploadResult } from "./facebook/publisher";
@@ -2266,7 +2266,7 @@ ${this.theme.analysisRules}`;
    */
   private async buildMusicCaptionLine(specificTrack?: string): Promise<string> {
     const track = specificTrack || this.music.lastSelectedTrack;
-    if (!track) return "";
+    if (!track || path.resolve(track) === path.resolve(ambientBedPath())) return "";
     const risk = await getCopyrightRisk(track);
     return `🎵 *Music:* ${escapeMarkdown(path.basename(track))} — ${escapeMarkdown(formatRisk(risk))}\n\n`;
   }
@@ -3739,11 +3739,10 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
 
       // Original audio and background music are a single mutually-exclusive
       // toggle now: music plays exactly when original audio is off.
-      if (!settings.originalAudio && config.rendering.backgroundMusicEnabled) {
-        context.selectedMusicTrack = this.music.selectLocalTrack(
-          config.paths.musicDir,
-          context.metadata?.mood,
-        );
+      if (!settings.originalAudio) {
+        context.selectedMusicTrack = config.rendering.backgroundMusicEnabled
+          ? this.music.selectLocalTrack(config.paths.musicDir, context.metadata?.mood)
+          : ambientBedPath();
       } else {
         context.selectedMusicTrack = undefined;
       }
