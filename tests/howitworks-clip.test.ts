@@ -4,6 +4,9 @@ import {
   buildHowItWorksSpec, directHowItWorks, explanationBeats, howItWorksMyVideoEnabled, keyPhrase, mermaidNodes, propsFor, renderHowItWorksClip,
 } from "../src/my-video/howItWorksClip";
 
+// this file covers the diagram / flow-panel path; illustrations (the default) are covered by scene-composer.test.ts
+process.env.HOWITWORKS_SCENES = "off";
+
 const autoMermaid = `graph TD\n  A["📥 1. Receive Input: Spring Boot REST API"] --> B["⚡ 2. Execute Handler"]\n  B --> C["💾 3. State & Storage"]\n  C --> D["🚀 4. Output Response"]`;
 
 (async () => {
