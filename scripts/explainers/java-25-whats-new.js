@@ -134,7 +134,7 @@ add("Then try compact headers or the AOT cache one at a time, and compare real n
 add("Do not ship preview features to production unless you accept that the API may change.", { pose: "think", mood: "worried", ...steps(["Update the JDK and build tools", "Run your tests", "Trial one flag at a time", "Keep preview features off in production"], 3) });
 add("Pause and think. Which of these is a preview feature in Java 25?", { pose: "think", ...quiz("Which one is still a preview feature in Java 25?", ["Scoped values", "Structured concurrency", "Compact source files", "Flexible constructor bodies"], 1, 0.7) });
 add("Structured concurrency. Scoped values, compact source files, and flexible constructors are final.", { pose: "smug", mood: "happy" });
-const RECAP = ["Compact source files, module imports, flexible constructors", "Scoped values final; structured concurrency in preview", "Compact headers and AOT cache cut memory and startup", "Better JFR and a new key derivation API", "Test first, then adopt"];
+const RECAP = ["Friendlier language: compact files, imports", "Scoped values final; concurrency preview", "Compact headers, AOT cache: less, faster", "Better JFR and key derivation API", "Test first, adopt step by step"];
 add("Let us recap in five points.", { pose: "present", mood: "happy", ...steps(RECAP, 0) });
 add("One: the language is friendlier, from compact files to validating before super.", { pose: "point", ...steps(RECAP, 0) });
 add("Two: scoped values are final, while structured concurrency and stable values are preview.", { pose: "point", ...steps(RECAP, 1) });
