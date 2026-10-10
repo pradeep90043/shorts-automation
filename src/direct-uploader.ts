@@ -165,13 +165,21 @@ export class DirectUploader {
     if (!duration || duration <= 0) {
       return "Write a short, highly engaging script containing no more than 20-25 words. CRITICAL: The script is a voiceover spoken to the audience. You MUST NEVER mention frame numbers (e.g., 'frame 1', 'frame 2'), 'slide', 'image', 'picture', or refer to the visual layout stages. Narrate the story or explain the code naturally as a single continuous flow of speech.";
     }
-    // Assume a safer speech rate of 1.7 words per second to prevent the voiceover from running past the video duration
-    const wordsPerSecond = 1.7;
-    const targetWords = Math.max(10, Math.min(150, Math.round((duration - 1.5) * wordsPerSecond)));
+    // CodeOrCap: the English voice reads ~2.4 words/s (measured), and the narration must run through the WHOLE video. The
+    // old 1.7 words/s "safe" rate with an "or fewer" cap made the script read ~70% of the video, then silence. The voiceover is
+    // also fitted to the exact video length after synthesis (see generateFittedVoiceover), so this only has to be close.
+    const fillWholeVideo = this.profile.key.toLowerCase() === "codeorcap";
+    const wordsPerSecond = fillWholeVideo ? 2.3 : 1.7; // other channels keep the cautious rate
+    const targetWords = Math.max(10, Math.min(fillWholeVideo ? 220 : 150, Math.round((duration - (fillWholeVideo ? 0.6 : 1.5)) * wordsPerSecond)));
+    const lengthRule = fillWholeVideo
+      ? `Write a highly engaging, natural-sounding script of about ${targetWords} words (never fewer than ${Math.round(targetWords * 0.9)}). ` +
+        `It MUST keep the narration going through the WHOLE ${Math.round(duration)}-second video and finish in its last second or so, ` +
+        `with no early stop and no long silence at the end, ending on a complete sentence. `
+      : `Write a highly engaging, natural-sounding script of exactly or fewer than ${targetWords} words. ` +
+        `It MUST finish speaking about 1.5 to 2 seconds before the end of the ${Math.round(duration)}-second video ` +
+        `so that the voice is never cut off in the middle of a sentence. It should be concise and well-paced. `;
     return (
-      `Write a highly engaging, natural-sounding script of exactly or fewer than ${targetWords} words. ` +
-      `It MUST finish speaking about 1.5 to 2 seconds before the end of the ${Math.round(duration)}-second video ` +
-      `so that the voice is never cut off in the middle of a sentence. It should be concise and well-paced. ` +
+      lengthRule +
       `CRITICAL: The script is a voiceover spoken to the audience. You MUST NEVER mention frame numbers (e.g. 'frame 1', 'frame 2', 'first frame'), 'slide', 'image', 'picture', or refer to the visual layout stages. Narrate the story or explain the code naturally as a single continuous flow of speech.`
     );
   }
@@ -2923,11 +2931,13 @@ ${this.theme.analysisRules}`;
           "Kicking off TTS generation asynchronously...",
           "DirectUploader",
         );
-        ttsPromise = this.tts.generateVoiceover(
-          context.metadata!.voiceoverScript!,
-          path.join(tempDir, "voiceover.mp3"),
-          this.profile.key,
-        );
+        const voiceoverFile = path.join(tempDir, "voiceover.mp3");
+        const reelSeconds = context.videoDurationSeconds;
+        // CodeOrCap: fit the voice to the reel so the narration runs to the end instead of stopping early.
+        ttsPromise =
+          this.profile.key.toLowerCase() === "codeorcap" && reelSeconds && reelSeconds > 0
+            ? this.tts.generateFittedVoiceover(context.metadata!.voiceoverScript!, voiceoverFile, reelSeconds - 0.3, this.profile.key)
+            : this.tts.generateVoiceover(context.metadata!.voiceoverScript!, voiceoverFile, this.profile.key);
       }
 
       // 2 — Render/Process video
