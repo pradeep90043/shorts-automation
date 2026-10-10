@@ -426,13 +426,10 @@ export class ChannelWatcher {
   private hashtagReelPool: ScoredReel[] = [];
 
   public async start(): Promise<void> {
-    const { channels, adminChatId, searchMode } = this.profile.watch;
-    let activeSearchMode = searchMode || "hashtags";
-    if (activeSearchMode === "channels" && (!channels || channels.length === 0)) {
-      activeSearchMode = "hashtags";
-    }
-    const isHashtagMode = activeSearchMode === "hashtags" || activeSearchMode === "both";
-    if ((channels.length === 0 && !isHashtagMode) || !adminChatId) {
+    // Discovery is niche (hashtag) search only: creator watchlists are never used, so only the
+    // admin chat is needed for the feature to be configured.
+    const { adminChatId } = this.profile.watch;
+    if (!adminChatId) {
       return; // feature not configured for this profile
     }
 
@@ -459,11 +456,7 @@ export class ChannelWatcher {
       });
     }, 60 * 1000);
 
-    const modeDesc = activeSearchMode === "hashtags"
-      ? `hashtag search (threshold=${this.profile.watch.viralThreshold})`
-      : activeSearchMode === "both"
-      ? `channels + hashtag search (threshold=${this.profile.watch.viralThreshold})`
-      : `${channels.length} channel(s) (${channels.join(", ")})`;
+    const modeDesc = `niche hashtag search (threshold=${this.profile.watch.viralThreshold})`;
     pipelineLogger.info(
       `[${this.profile.brandName}] Channel watch started — ${modeDesc}, ` +
         `${this.profile.watch.dailyCount}/day at ${this.profile.watch.scheduleTime}, ` +
@@ -594,17 +587,13 @@ export class ChannelWatcher {
       return [];
     }
 
-    const { searchMode, channels, dailyCount, nicheHashtags, viralThreshold, excludeChannels = [] } = this.profile.watch;
+    const { dailyCount, nicheHashtags, viralThreshold, excludeChannels = [] } = this.profile.watch;
     const excludes = new Set(excludeChannels.map(c => c.toLowerCase().trim()));
 
-    let activeSearchMode = searchMode || "hashtags";
-    if (activeSearchMode === "channels" && (!channels || channels.length === 0)) {
-      activeSearchMode = "hashtags";
-    }
-
-    // ── Hashtag search (hashtags | both mode) ───────────────────────────────
+    // ── Niche (hashtag) search: the only discovery mode ─────────────────────
+    // Creator watchlists are never queried, and an empty niche search is not backfilled from creators.
     this.hashtagReelPool = [];
-    if (activeSearchMode === "hashtags" || activeSearchMode === "both") {
+    {
       const hashtags = buildHashtagsForNiche(this.profile.theme, undefined, nicheHashtags);
       pipelineLogger.info(
         `[${this.profile.brandName}] Searching hashtags: #${hashtags.join(", #")} (threshold=${viralThreshold})`,
@@ -625,7 +614,7 @@ export class ChannelWatcher {
         const isRateLimit = err instanceof Error && (err.name === "InstagramRateLimitError" || errorMsg.includes("rate limited"));
         if (isRateLimit) {
           pipelineLogger.warn(
-            `[${this.profile.brandName}] Hashtag search rate-limited — falling back to channel mode`,
+            `[${this.profile.brandName}] Niche search rate-limited — no reels picked this batch`,
             "ChannelWatcher",
           );
         } else {
@@ -635,89 +624,11 @@ export class ChannelWatcher {
             "ChannelWatcher",
           );
         }
-        // Pool stays empty; channel-mode fallback below fills the queue
+        // Pool stays empty: nothing is picked today (no creator fallback)
       }
     }
 
-    // ── Channel-list pool (channels | both mode, or hashtag fallback) ───────
-    const pool: Array<{ shortcode: string; url: string; channel: string }> = [];
-    if (activeSearchMode === "channels" || activeSearchMode === "both" || this.hashtagReelPool.length === 0) {
-      if (config.instagramScraper.loginFreeMode) {
-        pipelineLogger.info(
-          `[${this.profile.brandName}] Login-free mode: discovering reels directly via search engine...`,
-          "ChannelWatcher",
-        );
-        const seReels = await this.discoverViaSearchEngine(Math.max(dailyCount * 3, 20));
-        for (const r of seReels) {
-          if (!this.history.has(r.shortcode)) {
-            pool.push({
-              shortcode: r.shortcode,
-              url: r.url,
-              channel: r.creatorUsername || `search:${r.sourceHashtag || this.profile.key}`,
-            });
-          }
-        }
-      } else {
-        for (const channel of channels) {
-          if (excludes.has(channel.toLowerCase().trim())) {
-            continue;
-          }
-          try {
-            const reels = await this.listChannelReelsWithFallback(channel);
-            for (const r of reels) {
-              if (!this.history.has(r.shortcode)) {
-                pool.push({ ...r, channel });
-              }
-            }
-          } catch (err) {
-            if (err instanceof InstagramSessionDeadError) {
-              await this.alertSessionDead(`batch selection @${channel}`, err);
-              break; // every channel shares the same dead session — stop hammering
-            }
-            pipelineLogger.error(
-              `[${this.profile.brandName}] Failed to list reels for @${channel}`,
-              err,
-              "ChannelWatcher",
-            );
-          }
-          // Space out consecutive channel polls to stay well under Instagram's
-          // per-minute limits (configurable; default 25s + up to 10s jitter).
-          const base = config.instagramScraper.interChannelDelayMs;
-          await new Promise((r) => setTimeout(r, base + Math.random() * 10000));
-        }
-      }
-
-      // Fisher-Yates shuffle
-      for (let i = pool.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [pool[i], pool[j]] = [pool[j], pool[i]];
-      }
-    }
-
-    if (pool.length === 0 && activeSearchMode === "channels") {
-      pipelineLogger.info(
-        `[${this.profile.brandName}] Watchlist pool is empty — falling back to hashtags search`,
-        "ChannelWatcher",
-      );
-      const hashtags = buildHashtagsForNiche(this.profile.theme, undefined, nicheHashtags);
-      try {
-        this.hashtagReelPool = await this.searchViralReelsWithFallback(
-          hashtags,
-          viralThreshold,
-          20,
-        );
-      } catch (err) {
-        pipelineLogger.error(
-          `[${this.profile.brandName}] Fallback hashtag search failed`,
-          err,
-          "ChannelWatcher",
-        );
-      }
-    }
-
-    // ── Merge pools into final picks ─────────────────────────────────────────
-    // In 'both' mode: fill first with hashtag pool (scored/viral), then supplement
-    // with channel pool up to dailyCount.
+    // ── Final picks: the scored niche pool, up to dailyCount ────────────────
     const allPicks: Array<{ shortcode: string; url: string; channel: string }> = [];
     const seenShortcodes = new Set<string>();
 
@@ -733,19 +644,6 @@ export class ChannelWatcher {
         allPicks.push({ shortcode: r.shortcode, url: r.url, channel: r.creatorUsername || r.channel });
       }
     }
-    for (const r of pool) {
-      if (allPicks.length >= dailyCount) break;
-      const creator = (r.channel || "").toLowerCase().trim();
-      if (excludes.has(creator)) {
-        pipelineLogger.info(`[${this.profile.brandName}] Excluding reel #${r.shortcode} from channel pool because it belongs to excluded channel: ${creator}`, "ChannelWatcher");
-        continue;
-      }
-      if (!seenShortcodes.has(r.shortcode)) {
-        seenShortcodes.add(r.shortcode);
-        allPicks.push(r);
-      }
-    }
-
     const picked = allPicks.slice(0, dailyCount);
 
     if (picked.length < dailyCount) {
@@ -770,11 +668,7 @@ export class ChannelWatcher {
     await this.store.setQueue(queue);
     await this.store.setLastBatchDate(today);
 
-    const sourceDesc = searchMode === "hashtags"
-      ? "hashtag search"
-      : searchMode === "both"
-      ? `hashtag search + channels`
-      : `${new Set(picked.map((p) => p.channel)).size} channel(s)`;
+    const sourceDesc = "niche hashtag search";
     pipelineLogger.info(
       `[${this.profile.brandName}] Daily batch selected: ${queue.length} reel(s) from ${sourceDesc}, ` +
         `spaced ${this.profile.watch.gapHours}h apart.`,
@@ -786,7 +680,9 @@ export class ChannelWatcher {
   private async processQueue(): Promise<void> {
     const now = Date.now();
     const queue = this.store.getQueue();
-    const sequence = this.store.getChannelSequence();
+    // Creator-sequence ingestion is retired: discovery is niche search only. Any sequence left over in the
+    // database is ignored, so no creator account is ever queried here.
+    const sequence: string[] = [];
 
     // Step 1: poll any in-flight reel (fired but not yet resolved).
     const inFlight = queue.find((item) => item.fired && !item.published && !item.failed && item.jobId);
@@ -1140,7 +1036,7 @@ export class ChannelWatcher {
       currentSlot: this.store.getCurrentSlot(),
       queue: this.store.getQueue(),
       outroVersion: this.profile.watch.outroVersion,
-      searchMode: this.profile.watch.searchMode,
+      searchMode: "hashtags" as const,
     };
   }
 }
