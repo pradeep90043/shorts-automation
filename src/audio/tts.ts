@@ -3,8 +3,54 @@ import { exec } from 'child_process';
 import { pipelineLogger } from '../utils/logger';
 import fs from 'fs';
 
+/** Edge TTS speaking rate ("-10%", "+5%"): duration scales as 1 / (1 + rate), measured on en-IN-PrabhatNeural. */
+const toRate = (pct: number): string => `${pct >= 0 ? "+" : ""}${Math.round(pct)}%`;
+
 export class TTSService {
-  public async generateVoiceover(script: string, outputPath: string, channelKey?: string): Promise<number> {
+  /**
+   * Generates a voiceover whose length matches `targetSec`, by re-synthesising at a different Edge TTS speaking rate.
+   * The script alone decides how long the voice is, so a script that reads shorter than the video would leave the rest in
+   * silence: slow the voice down (down to `maxSlowPct`) so it keeps going to the end; a script that reads longer is sped up
+   * (up to `maxFastPct`). If the limits are hit, the closest result is kept and the shortfall is logged.
+   * Only Edge TTS honours the rate; the OpenAI fallbacks return their natural length.
+   */
+  public async generateFittedVoiceover(
+    script: string,
+    outputPath: string,
+    targetSec: number,
+    channelKey?: string,
+    opts: { maxSlowPct?: number; maxFastPct?: number; tolerance?: number } = {},
+  ): Promise<number> {
+    const maxSlow = opts.maxSlowPct ?? 25;
+    const maxFast = opts.maxFastPct ?? 25;
+    const tolerance = opts.tolerance ?? 0.03;
+    const goal = Math.max(3, targetSec);
+
+    let duration = await this.generateVoiceover(script, outputPath, channelKey);
+    // duration = natural / (1 + rate), so the rate that lands on the goal is natural / goal - 1
+    let ratePct = 0;
+    for (let pass = 1; pass <= 2; pass++) {
+      if (Math.abs(duration - goal) <= goal * tolerance) break;
+      const wanted = (1 + ratePct / 100) * (duration / goal) - 1;
+      const next = Math.min(maxFast, Math.max(-maxSlow, wanted * 100));
+      if (Math.round(next) === ratePct) break; // already at the limit
+      ratePct = Math.round(next);
+      pipelineLogger.info(
+        `Voiceover is ${duration.toFixed(1)}s for a ${goal.toFixed(1)}s video — re-generating at rate ${toRate(ratePct)} (pass ${pass})...`,
+        'TTSService',
+      );
+      duration = await this.generateVoiceover(script, outputPath, channelKey, toRate(ratePct));
+    }
+    if (duration < goal * (1 - 0.1)) {
+      pipelineLogger.warn(
+        `Voiceover still ends ${(goal - duration).toFixed(1)}s early (${duration.toFixed(1)}s of ${goal.toFixed(1)}s) even at the slowest rate — the script is too short for this video.`,
+        'TTSService',
+      );
+    }
+    return duration;
+  }
+
+  public async generateVoiceover(script: string, outputPath: string, channelKey?: string, rate?: string): Promise<number> {
     try {
       pipelineLogger.info(`Generating TTS voiceover (${script.length} chars) for channel: ${channelKey || 'default'}...`, 'TTSService');
       
@@ -30,7 +76,8 @@ export class TTSService {
           const tts = new EdgeTTS({
             voice: edgeVoice,
             lang: edgeLang,
-            outputFormat: 'audio-24khz-48kbitrate-mono-mp3'
+            outputFormat: 'audio-24khz-48kbitrate-mono-mp3',
+            ...(rate ? { rate } : {}),
           });
           await tts.ttsPromise(script, outputPath);
           generated = true;
