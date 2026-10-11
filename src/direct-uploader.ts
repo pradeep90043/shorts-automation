@@ -30,6 +30,7 @@ import { ViralAnalyzer } from "./utils/viral-analyzer";
 import { JobQueue } from "./utils/queue";
 import { ImageAnalyzer } from "./image-analysis";
 import { TTSService } from "./audio/tts";
+import { prepareScoreAudio } from "./audio/verdictNumber";
 import { estimateWordTimings, groupWordsIntoLines, generateASSFile } from "./audio/subtitles";
 import { buildGridPreview } from "./utils/gridPreview";
 import { TranscriptionService } from "./audio/transcription";
@@ -4894,11 +4895,16 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       codeorcap: {
         assetFile:    "codeorcap_verdict_bg.mp4",
         ttsKey:       "codeorcap",          // voice key for TTSService
-        seg1Target:   3.46,                 // Whisper: 0.00–3.46s
-        gapDuration:  0.60,                 // Whisper: 3.46–4.06s
-        seg2Target:   3.76,                 // Whisper: 4.06–7.82s
+        seg1Target:   3.46,                 // (fallback mode only)
+        gapDuration:  0.60,
+        seg2Target:   3.76,
+        // codeorcap_verdict_bg.mp4, word timings (Whisper): "The verdict of this video is" 0.56–2.34s, then a ~0.6s pause,
+        // "out of 10." 3.0–3.5s, "For more info, check the caption." 4.3–5.5s, "For tech reels, follow." 6.7–7.8s.
+        // The spoken score goes into the pause.
+        numberGapStart: 2.38,
+        numberGapEnd:   2.98,
         scoreEnabled: true as const,
-        scorePinStart: "1.80",              // score badge displays as avatar announces verdict
+        scorePinStart: "2.35",              // score badge appears as the number is spoken
         scorePinEnd:   "7.80",              // stays visible through the entire verdict & outro
         scoreFadeOut:  "7.40",
       },
@@ -5024,23 +5030,20 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         let extraInputs = "";
 
         if (cfg.scoreEnabled) {
-          // CodeOrCap: [0]=avatar clip  [1]=score PNG  [2]=score number TTS
-          // Generate TTS for just the score digit so it fills the gap the avatar
-          // leaves between "…is" and "out of 10" (avatar never said the number).
-          const numberTtsPath = path.join(tempDir, "verdict_number.mp3");
-          try {
-            await this.tts.generateVoiceover(String(score), numberTtsPath, "codeorcap");
-          } catch {
-            // non-fatal — fall back to silent gap
-          }
-          // Delay the number TTS to land just before "out of 10" (~0.35s headroom)
-          const numberDelayMs = Math.max(0, Math.round((parseFloat(scoreShowStart) - 0.35) * 1000));
+          // CodeOrCap: [0]=avatar clip  [1]=score PNG  [2]=spoken score
+          // The recorded person says "…the verdict of this video is … out of 10" and leaves a ~0.6s pause for the number:
+          // fill exactly that pause with the score as a short word at his level (see audio/verdictNumber.ts).
+          const gapStart = (cfg as any).numberGapStart as number;
+          const gapEnd = (cfg as any).numberGapEnd as number;
+          const spoken = await prepareScoreAudio(score, tempDir, this.tts, gapEnd - gapStart, path.join(config.paths.assetsDir, "verdict-clips", "scores"));
+          const numberTtsPath = spoken?.path ?? "";
+          const numberDelayMs = Math.round(gapStart * 1000);
 
           const { label: verdictLabel, color: verdictColor } = this.verdictCategory(
             context.metadata?.verdict ?? "",
           );
-          extraInputs = `-loop 1 -i "${scorePngPath}" ` + (fs.existsSync(numberTtsPath) ? `-i "${numberTtsPath}" ` : "");
-          const hasNumberTts = fs.existsSync(numberTtsPath);
+          const hasNumberTts = !!numberTtsPath && fs.existsSync(numberTtsPath);
+          extraInputs = `-loop 1 -i "${scorePngPath}" ` + (hasNumberTts ? `-i "${numberTtsPath}" ` : "");
           filterComplex = [
             `[0:v]setpts=PTS-STARTPTS[bg]`,
             `[1:v]fade=in:st=${scoreShowStart}:d=0.4,fade=out:st=${scoreFadeOutStart}:d=0.4[scoreCard]`,
@@ -5051,9 +5054,9 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
               `:enable='between(t,0.3,${scoreShowEnd})'[out_v]`,
             ...(hasNumberTts
               ? [
-                  `[0:a]volume=eval=frame:volume='if(between(t,2.05,2.45),0.05,1)'[ducked]`,
-                  `[2:a]volume=3.5,adelay=${numberDelayMs}|${numberDelayMs}[num]`,
-                  `[ducked][num]amix=inputs=2:duration=first:normalize=0[out_a]`,
+                  // his own audio is untouched (he is silent in the pause); the number is placed at the pause
+                  `[2:a]adelay=${numberDelayMs}|${numberDelayMs}[num]`,
+                  `[0:a][num]amix=inputs=2:duration=first:normalize=0[out_a]`,
                 ]
               : [`[0:a]acopy[out_a]`]),
           ].join(";");
@@ -5408,8 +5411,10 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       for (const f of ttsIntermediates) {
         if (fs.existsSync(f)) fs.unlinkSync(f);
       }
-      const numberTts = path.join(context.tempDir, "verdict_number.mp3");
-      if (fs.existsSync(numberTts)) fs.unlinkSync(numberTts);
+      for (const f of ["verdict_number.wav", "verdict_number_raw.mp3", "verdict_number_trim.wav"]) {
+        const numberFile = path.join(context.tempDir, f);
+        if (fs.existsSync(numberFile)) fs.unlinkSync(numberFile);
+      }
     }
   }
 
