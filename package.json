@@ -26,6 +26,7 @@
     "test:scene-composer": "ts-node tests/scene-composer.test.ts",
     "test:code-tutorial": "ts-node tests/code-tutorial.test.ts",
     "test:tts-fit": "ts-node tests/tts-fit.test.ts",
+    "test:verdict-number": "ts-node tests/verdict-number.test.ts",
     "verify": "node scripts/verify.js",
     "dm:chat": "ts-node src/instagram/dm/cli.ts chat",
     "dm:knowledge": "ts-node src/instagram/dm/cli.ts knowledge",
