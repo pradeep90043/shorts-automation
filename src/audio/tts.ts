@@ -2,11 +2,28 @@ import { EdgeTTS } from 'node-edge-tts';
 import { exec } from 'child_process';
 import { pipelineLogger } from '../utils/logger';
 import fs from 'fs';
+import { rateToTempo, retimeAudio } from './retime';
 
 /** Edge TTS speaking rate ("-10%", "+5%"): duration scales as 1 / (1 + rate), measured on en-IN-PrabhatNeural. */
 const toRate = (pct: number): string => `${pct >= 0 ? "+" : ""}${Math.round(pct)}%`;
 
 export class TTSService {
+  /**
+   * Natural-speed cloned-voice clips (src/audio/clonedVoice.ts), by channel and script. A script registered here is "spoken"
+   * from its clip: `rate` (the fitting passes of generateFittedVoiceover) becomes a pitch-preserving tempo change of the same
+   * clip, so no new cloud run is needed. null = the cloud failed: the Edge voice is used as before.
+   */
+  private cloned = new Map<string, Promise<string | null>>();
+  private clonedKey = (channelKey: string | undefined, script: string): string => `${(channelKey ?? '').toLowerCase()}|${script.trim()}`;
+
+  public registerCloned(channelKey: string, script: string, clip: Promise<string | null>): void {
+    this.cloned.set(this.clonedKey(channelKey, script), clip);
+  }
+
+  public hasCloned(channelKey: string, script: string): boolean {
+    return this.cloned.has(this.clonedKey(channelKey, script));
+  }
+
   /**
    * Generates a voiceover whose length matches `targetSec`, by re-synthesising at a different Edge TTS speaking rate.
    * The script alone decides how long the voice is, so a script that reads shorter than the video would leave the rest in
@@ -51,6 +68,16 @@ export class TTSService {
   }
 
   public async generateVoiceover(script: string, outputPath: string, channelKey?: string, rate?: string): Promise<number> {
+    const clonedClip = this.cloned.get(this.clonedKey(channelKey, script));
+    if (clonedClip) {
+      const natural = await clonedClip;
+      if (natural && fs.existsSync(natural)) {
+        const duration = await retimeAudio(natural, outputPath, rateToTempo(rate));
+        pipelineLogger.info(`Cloned-voice voiceover (${script.length} chars)${rate ? ` at ${rate}` : ''}: ${duration.toFixed(1)}s`, 'TTSService');
+        return duration;
+      }
+      pipelineLogger.warn('Cloned voice is not available for this script: using the Edge voice', 'TTSService');
+    }
     try {
       pipelineLogger.info(`Generating TTS voiceover (${script.length} chars) for channel: ${channelKey || 'default'}...`, 'TTSService');
       

@@ -147,6 +147,10 @@ export interface PipelineContext {
   originalVideoPath?: string;
   isVideo?: boolean;
   isTelegram?: boolean; // true for media originating from Telegram
+  /** CodeOrCap cloned voice: the cloud run speaking this Short's claim narration and "how it works" lines (src/audio/clonedVoice.ts) */
+  clonedVoice?: Promise<import("../audio/clonedVoice").ClonedLineSet | null>;
+  /** the how-it-works lines that run was asked to speak, in scene order, to check them against the clip that is built later */
+  clonedHowItWorksLines?: string[];
   analysis?: ImageAnalysisResult;
   brandingDetection?: BrandingDetectionResult;
   cleanedImagePath?: string;

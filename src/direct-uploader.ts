@@ -13,7 +13,7 @@ import { FacebookPublisher, FacebookUploadResult } from "./facebook/publisher";
 import { TelegramService, escapeMarkdown } from "./telegram";
 import { PipelineContext, VideoMetadata } from "./types";
 import { pipelineLogger } from "./utils/logger";
-import { renderHowItWorksClip } from "./my-video/howItWorksClip";
+import { howItWorksLines, renderHowItWorksClip } from "./my-video/howItWorksClip";
 import { FreeLlmApiClient } from "./ai/freellmapi";
 import { GeminiClient } from "./ai/gemini";
 import { parseAiJson, extractJsonArrayField } from "./utils/json";
@@ -31,6 +31,9 @@ import { JobQueue } from "./utils/queue";
 import { ImageAnalyzer } from "./image-analysis";
 import { TTSService } from "./audio/tts";
 import { prepareScoreAudio } from "./audio/verdictNumber";
+import { clonedVoiceEnabled, spokenText, startClonedLines } from "./audio/clonedVoice";
+import { buildClonedVerdictAudio } from "./audio/clonedVerdict";
+import { concatAudio } from "./audio/retime";
 import { estimateWordTimings, groupWordsIntoLines, generateASSFile } from "./audio/subtitles";
 import { buildGridPreview } from "./utils/gridPreview";
 import { TranscriptionService } from "./audio/transcription";
@@ -170,8 +173,10 @@ export class DirectUploader {
     // old 1.7 words/s "safe" rate with an "or fewer" cap made the script read ~70% of the video, then silence. The voiceover is
     // also fitted to the exact video length after synthesis (see generateFittedVoiceover), so this only has to be close.
     const fillWholeVideo = this.profile.key.toLowerCase() === "codeorcap";
-    const wordsPerSecond = fillWholeVideo ? 2.3 : 1.7; // other channels keep the cautious rate
-    const targetWords = Math.max(10, Math.min(fillWholeVideo ? 220 : 150, Math.round((duration - (fillWholeVideo ? 0.6 : 1.5)) * wordsPerSecond)));
+    // The cloned English voice (src/audio/clonedVoice.ts) reads ~3.2 words/s at natural speed (measured), the Edge voice ~2.4.
+    const cloned = fillWholeVideo && clonedVoiceEnabled(this.profile.key);
+    const wordsPerSecond = fillWholeVideo ? (cloned ? 3.0 : 2.3) : 1.7; // other channels keep the cautious rate
+    const targetWords = Math.max(10, Math.min(fillWholeVideo ? (cloned ? 300 : 220) : 150, Math.round((duration - (fillWholeVideo ? 0.6 : 1.5)) * wordsPerSecond)));
     const lengthRule = fillWholeVideo
       ? `Write a highly engaging, natural-sounding script of about ${targetWords} words (never fewer than ${Math.round(targetWords * 0.9)}). ` +
         `It MUST keep the narration going through the WHOLE ${Math.round(duration)}-second video and finish in its last second or so, ` +
@@ -2934,6 +2939,18 @@ ${this.theme.analysisRules}`;
         );
         const voiceoverFile = path.join(tempDir, "voiceover.mp3");
         const reelSeconds = context.videoDurationSeconds;
+        // CodeOrCap, one cloned voice for the whole Short: the claim narration and the how-it-works lines are spoken in ONE cloud
+        // run that starts now, while the reel is rendered. If it fails or is late, the Edge voice is used as before.
+        if (clonedVoiceEnabled(this.profile.key) && context.metadata?.voiceoverScript) {
+          const claim = context.metadata.voiceoverScript;
+          const hiw = (this.profile.watch?.outroVersion || "v2") === "v2" ? howItWorksLines(this.deriveTranscriptionWorkflow(context).explanation) : [];
+          context.clonedHowItWorksLines = hiw;
+          context.clonedVoice = startClonedLines(`short-${context.id.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 16) || Date.now()}`, [
+            { name: "claim", text: spokenText(claim) },
+            ...hiw.map((text, i) => ({ name: `hiw_${i}`, text: spokenText(text) })),
+          ]);
+          this.tts.registerCloned(this.profile.key, claim, context.clonedVoice.then((set) => set?.file("claim") ?? null));
+        }
         // CodeOrCap: fit the voice to the reel so the narration runs to the end instead of stopping early.
         ttsPromise =
           this.profile.key.toLowerCase() === "codeorcap" && reelSeconds && reelSeconds > 0
@@ -5035,8 +5052,14 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
           // fill exactly that pause with the score as a short word at his level (see audio/verdictNumber.ts).
           const gapStart = (cfg as any).numberGapStart as number;
           const gapEnd = (cfg as any).numberGapEnd as number;
-          const spoken = await prepareScoreAudio(score, tempDir, this.tts, gapEnd - gapStart, path.join(config.paths.assetsDir, "verdict-clips", "scores"));
-          const numberTtsPath = spoken?.path ?? "";
+          // One voice: when the cloned verdict assets exist, the whole audio (phrases + score) is the cloned voice, each part fitted
+          // to the moment his lips move (src/audio/clonedVerdict.ts); otherwise the recorded audio is kept and the score is placed in the pause.
+          const clonedAudio =
+            profileKey === "codeorcap" && clonedVoiceEnabled(profileKey)
+              ? await buildClonedVerdictAudio(score, path.join(tempDir, "verdict_cloned.wav"), undefined, clipDuration)
+              : null;
+          const spoken = clonedAudio ? null : await prepareScoreAudio(score, tempDir, this.tts, gapEnd - gapStart, path.join(config.paths.assetsDir, "verdict-clips", "scores"));
+          const numberTtsPath = clonedAudio ?? spoken?.path ?? "";
           const numberDelayMs = Math.round(gapStart * 1000);
 
           const { label: verdictLabel, color: verdictColor } = this.verdictCategory(
@@ -5052,7 +5075,9 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
               `:x=(w-tw)/2:y=h*0.80:shadowcolor=black:shadowx=5:shadowy=5` +
               `:box=1:boxcolor=black@0.65:boxborderw=20` +
               `:enable='between(t,0.3,${scoreShowEnd})'[out_v]`,
-            ...(hasNumberTts
+            ...(clonedAudio
+              ? [`[2:a]acopy[out_a]`] // the cloned voice is the whole audio: the recorded one is dropped
+              : hasNumberTts
               ? [
                   // his own audio is untouched (he is silent in the pause); the number is placed at the pause
                   `[2:a]adelay=${numberDelayMs}|${numberDelayMs}[num]`,
@@ -5147,13 +5172,24 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         const workflowData = this.deriveTranscriptionWorkflow(context);
         const rawExplanation = workflowData.explanation;
 
+        // One cloned voice: the lines the cloud run spoke for this clip, used only when they are exactly the lines the clip narrates now.
+        let clonedHiwFiles: string[] | undefined;
+        if (context.clonedVoice) {
+          const set = await context.clonedVoice;
+          const lines = howItWorksLines(rawExplanation);
+          const asked = context.clonedHowItWorksLines ?? [];
+          const files = lines.map((_, i) => set?.file(`hiw_${i}`));
+          if (set && lines.length === asked.length && lines.every((l, i) => l === asked[i]) && files.every(Boolean)) clonedHiwFiles = files as string[];
+          else pipelineLogger.info("Cloned how-it-works narration is not usable for this clip: the clip uses its own voice", "DirectUploader");
+        }
+
         // Preferred: build the clip with my-video (GitHub cloud render). Any problem -> the Pexels route below, as before.
         let myVideoDone = false;
         try {
           const myVideoClip = path.join(tempDir, "hiw_myvideo.mp4");
           const rendered = await renderHowItWorksClip(
             // the short's own diagram (not the generic placeholder deriveTranscriptionWorkflow invents when it is missing)
-            { explanation: rawExplanation, title: context.metadata?.title, mermaid: context.metadata?.diagramWorkflow, diagramTitle: workflowData.diagramTitle },
+            { explanation: rawExplanation, title: context.metadata?.title, mermaid: context.metadata?.diagramWorkflow, diagramTitle: workflowData.diagramTitle, narrationFiles: clonedHiwFiles },
             myVideoClip,
           );
           if (rendered) {
@@ -5180,11 +5216,13 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
 
         let ttsDuration = 3.5;
         try {
-          ttsDuration = await this.tts.generateVoiceover(
-            speechScript,
-            transitionTtsPath,
-            "codeorcap",
-          );
+          ttsDuration = clonedHiwFiles
+            ? await concatAudio(clonedHiwFiles, transitionTtsPath) // the same cloned voice, line by line
+            : await this.tts.generateVoiceover(
+                speechScript,
+                transitionTtsPath,
+                "codeorcap",
+              );
         } catch (err) {
           pipelineLogger.warn(
             `Transition TTS failed: ${err instanceof Error ? err.message : err}. Using default duration.`,
