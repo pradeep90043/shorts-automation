@@ -9,6 +9,11 @@ import { getPool } from "./utils/pgClient";
 import { getChannelCredentials, patchChannelCredentials } from "./utils/credentialStore";
 import { getAllStoredChannelConfigs, saveChannelConfig, deleteChannelConfig, StoredChannelConfig, StoredInstagramAccount, StoredYoutubeChannel } from "./utils/channelConfigStore";
 import { getAllAudienceStats } from "./utils/audienceStats";
+import {
+  authenticate, checkPassword, clearCookie, clearLoginFailures, clientIp, isSecure, loginBlocked, loginPage, makeSessionToken,
+  recordLoginFailure, safeNext, sessionCookie,
+} from "./utils/dashboardAuth";
+import { maskChannel, restoreMasked } from "./utils/channelMask";
 import { activeWatchers } from "./instagram/channelWatcher";
 import { DirectUploader } from "./direct-uploader";
 import { ViralAnalyzer } from "./utils/viral-analyzer";
@@ -1107,6 +1112,64 @@ export function startLogServer(): void {
       return;
     }
 
+    // ── Login ───────────────────────────────────────────────────────────────
+    // Everything below needs the dashboard session cookie (or `Authorization: Bearer <password>`), except the login page
+    // itself and the reel-injection endpoint, which checks its own x-inject-token.
+    const authPath = url.split("?")[0];
+    if (authPath === "/login") {
+      const secure = isSecure(req);
+      if (req.method === "POST") {
+        const ip = clientIp(req);
+        const raw = await new Promise<string>((resolve) => {
+          let b = "";
+          req.on("data", (d) => { if (b.length < 4096) b += d; });
+          req.on("end", () => resolve(b));
+        });
+        const form = new URLSearchParams(raw);
+        const next = safeNext(form.get("next"));
+        if (loginBlocked(ip)) {
+          res.writeHead(429, { "Content-Type": "text/html; charset=utf-8" });
+          res.end(loginPage(next, "Too many wrong passwords. Try again in 15 minutes."));
+          return;
+        }
+        if (!checkPassword(form.get("password") || "")) {
+          recordLoginFailure(ip);
+          pipelineLogger.warn(`Dashboard login failed from ${ip}`, "Auth");
+          res.writeHead(401, { "Content-Type": "text/html; charset=utf-8" });
+          res.end(loginPage(next, "Wrong password."));
+          return;
+        }
+        clearLoginFailures(ip);
+        res.writeHead(302, { "Set-Cookie": sessionCookie(makeSessionToken(), secure), Location: next, "Cache-Control": "no-store" });
+        res.end();
+        return;
+      }
+      const next = safeNext(new URL(url, "http://x").searchParams.get("next"));
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+      res.end(loginPage(next));
+      return;
+    }
+    if (authPath === "/logout") {
+      res.writeHead(302, { "Set-Cookie": clearCookie(isSecure(req)), Location: "/login", "Cache-Control": "no-store" });
+      res.end();
+      return;
+    }
+    if (!(req.method === "POST" && authPath === "/api/inject-reels")) {
+      const auth = authenticate(req);
+      if (!auth.ok) {
+        const wantsPage = req.method === "GET" && String(req.headers.accept || "").includes("text/html");
+        if (wantsPage) {
+          res.writeHead(302, { Location: `/login?next=${encodeURIComponent(url)}`, "Cache-Control": "no-store" });
+          res.end();
+        } else {
+          res.writeHead(401, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+          res.end(JSON.stringify({ success: false, message: "Login required" }));
+        }
+        return;
+      }
+      if (auth.renew) res.setHeader("Set-Cookie", auth.renew);
+    }
+
     // ── GET /oauth2callback ──────────────────────────────────────────────
     // Google OAuth redirect target. Served here (not only on the legacy
     // localhost:OAUTH_PORT listener) so the flow works on prod behind Caddy:
@@ -1342,11 +1405,10 @@ export function startLogServer(): void {
       (url === "/api/channels" || url.startsWith("/api/channels?"))
     ) {
       try {
-        const channels = await getAllStoredChannelConfigs();
+        const channels = (await getAllStoredChannelConfigs()).map(maskChannel);
         res.writeHead(200, {
           "Content-Type": "application/json",
           "Cache-Control": "no-store, no-cache, must-revalidate",
-          "Access-Control-Allow-Origin": "*",
         });
         res.end(JSON.stringify({ success: true, channels }));
       } catch (err: any) {
@@ -1361,7 +1423,9 @@ export function startLogServer(): void {
       (url === "/api/channels/save" || url.startsWith("/api/channels/save?"))
     ) {
       try {
-        const body = await parseJsonBody(req);
+        const posted = await parseJsonBody(req);
+        const postedKey = String(posted.key || "").toLowerCase().trim().replace(/[^a-z0-9_]/g, "_");
+        const body = restoreMasked(posted, (await getAllStoredChannelConfigs()).find((c) => c.key === postedKey));
         if (!body.key || !body.brandName || !body.handle) {
           res.writeHead(400, {
             "Content-Type": "application/json",
@@ -1494,7 +1558,7 @@ export function startLogServer(): void {
           "Content-Type": "application/json",
           "Access-Control-Allow-Origin": "*",
         });
-        res.end(JSON.stringify({ success: true, message: `Channel [${storedConfig.brandName}] configured and active.`, channel: storedConfig }));
+        res.end(JSON.stringify({ success: true, message: `Channel [${storedConfig.brandName}] configured and active.`, channel: maskChannel(storedConfig) }));
       } catch (err: any) {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ success: false, message: err.message || "Failed to save channel" }));
