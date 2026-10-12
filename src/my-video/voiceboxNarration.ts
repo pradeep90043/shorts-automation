@@ -92,7 +92,7 @@ export interface VoiceboxOptions {
   /** re-attach to this run instead of starting a new one */
   resume?: VoiceboxRunRef;
   isCancelled?: () => boolean;
-  /** speaking speed passed to the workflow (default "0.92" for English, which is slowed a little for learners, "1.0" otherwise) */
+  /** speaking speed passed to the workflow (default "1.0": natural speed) */
   speed?: string;
   /** more workflow inputs, e.g. the voice sample of another voice: { sample_path, sample_start, sample_end, sample_text, voice } */
   inputs?: Record<string, string>;
@@ -121,8 +121,9 @@ export async function generateVoiceboxNarration(opts: VoiceboxOptions): Promise<
       method: "POST",
       body: JSON.stringify({
         ref: process.env.VOICEBOX_GITHUB_REF || "main",
-        // English is slowed a little (0.92x): the turbo voice speaks about 3.2 words a second, quick for a beginner
-        inputs: { tag: opts.slug, lines: linesJson, language: opts.language, engine: english ? "chatterbox_turbo" : "chatterbox", speed: opts.speed ?? (english ? "0.92" : "1.0"), ...(opts.inputs ?? {}) },
+        // English is spoken at natural speed with no denoise: the user compared 4 variants against their own voice, and the time-stretched
+        // (0.92x) and denoised ones changed its pitch; turbo at 1.0x without denoise sounded closest
+        inputs: { tag: opts.slug, lines: linesJson, language: opts.language, engine: english ? "chatterbox_turbo" : "chatterbox", speed: opts.speed ?? "1.0", ...(english ? { denoise: "false" } : {}), ...(opts.inputs ?? {}) },
       }),
     });
     if (!res.ok) {

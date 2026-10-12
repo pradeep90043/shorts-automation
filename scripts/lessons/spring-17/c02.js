@@ -1,0 +1,104 @@
+// Chapters 3-4: the controller is doing too much, happy flow vs exception flow, Spring Boot's default handling, status code families.
+const L = require("./lib");
+const { add, ask, chapter, code, term, flow, steps, scene, quiz, alert, compare, browser, table, snap } = L;
+
+const GET_CTRL = ["@GetMapping(\"/{id}\")", "public ResponseEntity<StudentResponseDTO> getStudent(@PathVariable Long id) {", "  StudentResponseDTO student = studentService.getStudent(id);", "  if (student != null) {", "    return ResponseEntity.ok(student);", "  }", "  return ResponseEntity.status(HttpStatus.NOT_FOUND).build();", "}"];
+const GET_SERVICE = ["public StudentResponseDTO getStudent(Long id) {", "  Optional<Student> student =", "      studentRepository.findById(id);", "  if (student.isPresent()) {", "    return mapToDTO(student.get());", "  }", "  return null;", "}"];
+const BAD_SERVICE = ["public StudentResponseDTO getStudent(Long id) {", "  Optional<Student> student =", "      studentRepository.findById(id);", "  return mapToDTO(student.get());", "}"];
+const DEFAULT_ERR = ["{", "  \"timestamp\": \"2026-10-12T11:30:12\",", "  \"status\": 500,", "  \"error\": \"Internal Server Error\",", "  \"path\": \"/api/students/10000\"", "}"];
+const FAMILIES = ["1xx Information", "2xx Success", "3xx Redirect", "4xx Client error", "5xx Server error"];
+
+module.exports = () => {
+  // ═══════════════ 3 · The problem and the default behaviour ═══════════════
+  chapter("3 · The controller does too much", "office");
+  add("Look at our controller closely. It performs many checks, in almost every method.", { pose: "point", mood: "think" });
+  add("Create is simple. It calls the service, gets a response DTO, and returns it with status 201.", { pose: "present", mood: "happy" });
+  add("But get by id is different. We call the service, but we do not trust the answer.", { pose: "point", ...snap("StudentController.java", "java", GET_CTRL, { highlight: [2, 3] }) });
+  add("We first check whether it is null. If not, we return OK. If it is null, we return not found.", { pose: "present", ...snap("StudentController.java", "java", GET_CTRL, { highlight: [3, 4, 6] }) });
+  add("At least our status codes are right. We did not make the beginner mistake of sending 200 everywhere.", { pose: "smug", mood: "happy" });
+  add("But it still does not look good. We add this check in every method.", { pose: "shrug", mood: "worried" });
+  add("In get all, we check whether the list is empty. In update, we check whether the student is null.", { pose: "point" });
+  add("Delete checks whether the student is already deleted. Soft delete checks too.", { pose: "present", mood: "worried", ...alert("warning", "Checks everywhere", "Every method has its own if and else") });
+  add("Even an empty list can be returned with OK. The response is still a success, the list is just empty.", { pose: "point", mood: "think" });
+  add("Why is this a problem? A controller should not handle exceptions at all.", { pose: "present", mood: "excited" });
+  add("A null result or an empty list is an edge case. It is not the controller's job.", { pose: "point" });
+  add("The controller's job is fixed. Receive data from the client, and pass it to the service layer.", { pose: "present", ...flow(["Client", "Controller", "Service"], 1, "request") });
+  add("Then take the response from the service, and pass it back to the client. That is all.", { pose: "point", ...flow(["Service", "Controller", "Client"], 1, "response") });
+  add("If the controller also validates, it becomes bulky. And we repeat ugly if else code in every controller.", { pose: "shrug", mood: "worried" });
+  add("A better design splits the flow in two. One is the normal happy flow, handled by the controllers.", { pose: "present", mood: "happy", ...compare("versus", [{ title: "Happy flow", points: ["Controller", "Service", "Repository"] }, { title: "Exception flow", points: ["Exception classes", "Built by us"] }]) });
+  add("The other is the exception flow, handled by exception classes that we will build.", { pose: "point" });
+  add("If an exception happens, it is not the controller's duty to handle it. Another class does it.", { pose: "smug", mood: "excited" });
+  add("First, let us see how exception handling flows in Spring Boot.", { pose: "present" });
+  add("A client sends a request. It goes first to Tomcat, then the Dispatcher Servlet, and then the controller.", { pose: "point", ...flow(["Client", "Tomcat", "DispatcherServlet", "Controller"], 0, "request") });
+  add("We skip those two parts for now, and say the request reached the controller.", { pose: "present" });
+  add("From the controller it goes to the service, and from the service to the repository.", { pose: "point", ...flow(["Controller", "Service", "Repository", "Database"], 2, "request") });
+  add("An exception is most likely in the service layer, because the business logic runs there.", { pose: "present", mood: "worried" });
+  add("Right now we pass that exception from the service up to the controller, as it is.", { pose: "point", ...flow(["Repository", "Service", "Controller", "Client"], 1, "exception") });
+  add("Let me show you in the code. Look at getStudent in the service.", { pose: "present", ...snap("StudentService.java", "java", GET_SERVICE, { highlight: [0, 1, 2] }) });
+  add("We call findById, which returns an Optional. That means the data may be there, or may not be.", { pose: "point", ...snap("StudentService.java", "java", GET_SERVICE, { highlight: [1, 2] }) });
+  add("If it is present, we map it to a DTO. Otherwise we return null, with no thinking at all.", { pose: "present", ...snap("StudentService.java", "java", GET_SERVICE, { highlight: [3, 4, 6] }) });
+  add("So the controller must check again to build a response. That is the duplicate work.", { pose: "shrug", mood: "worried" });
+  add("Now let us try something. We remove the checks, and call get on the Optional directly.", { pose: "point", mood: "excited", ...snap("StudentService.java", "java", BAD_SERVICE, { highlight: [3] }) });
+  add("If the Optional is empty, calling get throws a NoSuchElementException.", { pose: "present", mood: "shocked", ...alert("error", "NoSuchElementException", "No value present") });
+  add("We do not handle it here, so it goes up to the caller. That caller is our controller method.", { pose: "point", ...flow(["Service", "Controller", "Client"], 1, "exception") });
+  add("The controller does not handle it either. So in theory, the client should see that exception.", { pose: "present", mood: "think" });
+  add("Let us run it, and fetch a student with id 10000, who does not exist.", { pose: "point", ...browser("GET /api/students/10000", "json", ["Host: localhost:8080"]) });
+  add("We get 500 Internal Server Error, with a proper body, and some headers.", { pose: "present", mood: "shocked", ...browser("500 Internal Server Error", "json", DEFAULT_ERR) });
+  add("Where did this come from? We did not write it. Spring Boot made it.", { pose: "point", mood: "confused", props: [{ type: "question" }] });
+  add("Spring Boot has a default exception handling. If you do not handle an exception, it steps in.", { pose: "present", mood: "excited" });
+  add("Before the exception reaches the client, Spring MVC packs it into a neat body.", { pose: "point", ...flow(["Service", "Controller", "Spring MVC", "Client"], 2, "wrapped") });
+  add("It puts the status 500, because we did not choose a specific status code.", { pose: "present" });
+  add("The body has four things: the time, the status, the error, and the path where it happened.", { pose: "point", ...browser("500 Internal Server Error", "json", DEFAULT_ERR) });
+  add("The real exception is in the IntelliJ console. It says NoSuchElementException, no value present.", { pose: "present", ...term(["java.util.NoSuchElementException: No value present", "    at StudentService.getStudent(StudentService.java:21)"], "Console") });
+  add("But the client did not get that message. That is for security.", { pose: "point", mood: "worried", props: [{ type: "lock" }] });
+  add("We do not want clients to learn our internal classes, or which exceptions we forgot to handle.", { pose: "smug", ...alert("warning", "Hide internals", "The client must not see class names") });
+  add("If you still want the message in the response, there is a property for it.", { pose: "present" });
+  add("Open application.properties, and set spring.web.error.include-message to always.", { pose: "point", ttsText: "Open application dot properties, and set spring dot web dot error dot include message to always.", ...snap("application.properties", "properties", ["spring.web.error.include-message=always"], { highlight: [0] }) });
+  add("Use it only for debugging on your local machine. In production, remove it.", { pose: "present", mood: "worried", ...alert("warning", "Debug only", "Never include the message in production") });
+  add("After a restart, the same request now shows the message: No value present.", { pose: "point", ...browser("500 Internal Server Error", "json", ["{", "  \"status\": 500,", "  \"error\": \"Internal Server Error\",", "  \"message\": \"No value present\",", "  \"path\": \"/api/students/10000\"", "}"]) });
+  add("So Spring Boot does handle exceptions for us by default. But how does it do it?", { pose: "think", mood: "confused" });
+  add("When an exception is not handled, Spring Boot reroutes the request to a special endpoint, slash error.", { pose: "present", mood: "excited", ttsText: "When an exception is not handled, Spring Boot reroutes the request to a special endpoint, slash error." });
+  add("If the client is Postman, it gets a JSON response. If it is a browser, it gets an HTML page.", { pose: "point", ...compare("versus", [{ title: "Postman", points: ["JSON response"] }, { title: "Browser", points: ["HTML error page"] }]) });
+  add("Open slash error in a browser, and you see the Whitelabel Error Page, with the same details.", { pose: "present", ...browser("localhost:8080/error", "page", ["Type=Internal Server Error, status=500", "No explicit mapping for /error"], "Whitelabel Error Page") });
+  add("So why should we handle exceptions ourselves, if Spring Boot already does it?", { pose: "point", mood: "think" });
+  add("Because the default is very generic. It always sends 500, and a general body.", { pose: "present", mood: "worried" });
+  add("It does not tell the client exactly what the issue was. Our API will not feel professional.", { pose: "point" });
+  add("See a validation failure. We post a student with a blank name.", { pose: "present", ...browser("POST /api/students", "json", ["{", "  \"name\": \"   \",", "  \"age\": 21,", "  \"rollNumber\": 110", "}"]) });
+  add("The create DTO has a NotBlank validation on the name, so this fails.", { pose: "point", ...snap("CreateStudentRequestDTO.java", "java", ["@NotBlank(message = \"Name cannot be null, empty or blank\")", "private String name;"], { highlight: [0, 1] }) });
+  add("We get 400 Bad Request, which is good. But again with the same generic fields.", { pose: "present", ...browser("400 Bad Request", "json", ["{", "  \"timestamp\": \"2026-10-12T11:40:02\",", "  \"status\": 400,", "  \"error\": \"Bad Request\",", "  \"path\": \"/api/students\"", "}"]) });
+  add("Our nice validation message never reached the client. We want it there.", { pose: "point", mood: "worried" });
+  add("With our own exception flow, there are two big benefits.", { pose: "present", mood: "excited" });
+  add("One, the controller becomes very simple. It receives requests and passes responses. That is all.", { pose: "point", mood: "happy", ...alert("success", "Simple controller", "Only receive, delegate, and return") });
+  add("Two, we tell the client exactly what went wrong, for example that the name cannot be blank.", { pose: "present", mood: "happy", ...alert("success", "Clear errors", "The client sees the real reason") });
+  add("Instead of the generic problem, the client can read: Student with id 100 does not exist.", { pose: "point", ...browser("404 Not Found", "json", ["{", "  \"message\": \"Student with id 100 not found\"", "}"]) });
+  add("So handling exceptions ourselves is much better than relying on the default.", { pose: "smug", mood: "happy" });
+  ask("What does Spring Boot do with an unhandled exception?", ["Crashes the app", "Sends a generic 500 error body", "Returns 200 OK", "Hides it from the console"], 1,
+    "It reroutes to the error endpoint, and sends 500 with a generic body.");
+
+  // ═══════════════ 4 · Status code families ═══════════════
+  chapter("4 · HTTP status codes", "classroom");
+  add("Before we write exception handling, let us understand status codes a little more.", { pose: "present" });
+  add("There are many HTTP status codes, and we divide them into five families.", { pose: "point", ttsText: "There are many H T T P status codes, and we divide them into five families.", ...steps(FAMILIES, 0) });
+  add("The one hundreds are informational. We will not use them here.", { pose: "present", ttsText: "The one hundreds are informational. We will not use them here.", ...steps(FAMILIES, 0) });
+  add("The two hundreds mean success. 200 OK means everything went fine.", { pose: "point", mood: "happy", ...steps(FAMILIES, 1) });
+  add("201 Created means a new resource was created. Our POST calls return 201.", { pose: "present", ...steps(FAMILIES, 1) });
+  add("The three hundreds are redirections, like 301 and 302. We do not need them now.", { pose: "point", ttsText: "The three hundreds are redirections, like three oh one and three oh two. We do not need them now.", ...steps(FAMILIES, 2) });
+  add("The four hundreds are client side errors. These are mistakes made by the client.", { pose: "present", mood: "worried", ...steps(FAMILIES, 3) });
+  add("404 means the resource was not found. The client asked for something we do not have.", { pose: "point", ...steps(FAMILIES, 3) });
+  add("400 means bad request. The client's request has a fault, maybe a wrong id, or a blank name.", { pose: "present", ...steps(FAMILIES, 3) });
+  add("And there is 409, which means conflict.", { pose: "point", ...steps(FAMILIES, 3) });
+  add("Say a client posts a new student with an email that already exists. In many apps, that is not allowed.", { pose: "present", mood: "think" });
+  add("The backend checks whether the email exists. If it does, we send 409, a conflict.", { pose: "point", ...browser("409 Conflict", "json", ["{", "  \"message\": \"Email already exists\"", "}"]) });
+  add("This is still the client's fault, so it belongs to the four hundred family.", { pose: "present" });
+  add("The five hundreds are server side errors. Something is wrong on our side.", { pose: "point", mood: "worried", ...steps(FAMILIES, 4) });
+  add("That is why you see 500 Internal Server Error when something breaks inside.", { pose: "present", ...steps(FAMILIES, 4) });
+  add("The most common codes we will use are these: 200, 201, 400, 404, 409, and 500.", { pose: "smug", mood: "excited", ...compare("versus", [{ title: "Success", points: ["200 OK", "201 Created"] }, { title: "Errors", points: ["400 Bad Request", "404 Not Found", "409 Conflict", "500 Server Error"] }]) });
+  add("There is one more, which is quite interesting: 204, no content.", { pose: "point", mood: "excited" });
+  add("When you delete a resource, you can send 204. It means there is no content left.", { pose: "present", ...browser("204 No Content", "json", ["(empty body)"]) });
+  add("Do not confuse it with 404. They sound alike, but they mean different things.", { pose: "point", mood: "confused" });
+  add("404 says: I could not find the resource, so I could not do the work. That is a failure.", { pose: "present", mood: "worried", ...compare("versus", [{ title: "404 Not Found", points: ["Failure", "Resource is missing"] }, { title: "204 No Content", points: ["Success", "Done, nothing to show"] }]) });
+  add("204 says: the work is done, and there is no content any more. That is a success.", { pose: "point", mood: "happy" });
+  add("Both are different. With this base ready, let us build our exception handling.", { pose: "celebrate", mood: "excited" });
+  ask("A client posts an email that already exists. Which code?", ["200 OK", "201 Created", "409 Conflict", "500 Server Error"], 2,
+    "It is the client's conflict with existing data, so we send 409.");
+};
