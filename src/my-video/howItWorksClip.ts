@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import os from "os";
 import { randomUUID } from "crypto";
 import { pipelineLogger } from "../utils/logger";
 import { cancelCloudRun, renderStickmanVideo, resolveMyVideoDir, type CloudRunRef, type StickmanScene, type StickmanVideoSpec } from "./myVideoService";
@@ -17,6 +18,11 @@ import { cleanScript, directBeats, diversifyVisuals, dropInventedNumbers, isThin
 
 export interface HowItWorksInput {
   explanation: string;
+  /**
+   * Ready-made narration (the cloned voice), one mp3 per scene in order: the intro line, then one per sentence
+   * (see howItWorksLines). Used only when there is exactly one existing file per scene; otherwise the clip speaks with its own voice.
+   */
+  narrationFiles?: string[];
   /** the short's title, as context for the visual director */
   title?: string;
   /** Mermaid flowchart from the short's own metadata (labels become the diagram nodes) - NOT a generated placeholder */
@@ -48,6 +54,9 @@ export function mermaidNodes(mermaid: string | undefined): string[] {
   }
   return labels.length > 5 ? [...labels.slice(0, 4), labels[labels.length - 1]] : labels;
 }
+
+/** The lines the clip narrates, in scene order: the intro, then one per sentence of the explanation. */
+export const howItWorksLines = (explanation: string): string[] => [INTRO, ...explanationBeats(explanation)];
 
 /** Narration beats: one per sentence of the explanation (list numbers removed), at most MAX_BODY_BEATS. */
 export function explanationBeats(explanation: string): string[] {
@@ -226,6 +235,17 @@ export async function renderHowItWorksClip(input: HowItWorksInput, outPath: stri
   const timeoutMs = (Number(process.env.HOWITWORKS_MYVIDEO_TIMEOUT_MIN) || 10) * 60_000;
   const directed = await directHowItWorks(input);
   const spec = buildHowItWorksSpec(input, `hiw-${randomUUID().slice(0, 8)}`, directed);
+  // ready-made narration: my-video measures these files instead of synthesising, so every scene lasts as long as its line
+  let narrationTmp: string | undefined;
+  const supplied = input.narrationFiles;
+  if (supplied && supplied.length === spec.scenes.length && supplied.every((f) => f && fs.existsSync(f))) {
+    narrationTmp = fs.mkdtempSync(path.join(os.tmpdir(), "hiw-voice-"));
+    spec.scenes.forEach((sc, i) => fs.copyFileSync(supplied[i], path.join(narrationTmp!, `segment_${i}_${sc.id}.mp3`)));
+    spec.narrationDir = narrationTmp;
+    log(`using the supplied cloned-voice narration for ${spec.scenes.length} scenes`);
+  } else if (supplied?.length) {
+    log(`supplied narration does not match the clip's ${spec.scenes.length} scenes (${supplied.length} files) -> its own voice`);
+  }
   let givenUp = false;
   let cloudRun: CloudRunRef | undefined;
   const stop = () => { if (cloudRun) void cancelCloudRun(cloudRun); };
@@ -255,5 +275,6 @@ export async function renderHowItWorksClip(input: HowItWorksInput, outPath: stri
     return false;
   } finally {
     if (timer) clearTimeout(timer);
+    if (narrationTmp) fs.rmSync(narrationTmp, { recursive: true, force: true });
   }
 }

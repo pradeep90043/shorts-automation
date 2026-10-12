@@ -92,6 +92,12 @@ export interface VoiceboxOptions {
   /** re-attach to this run instead of starting a new one */
   resume?: VoiceboxRunRef;
   isCancelled?: () => boolean;
+  /** speaking speed passed to the workflow (default "0.92" for English, which is slowed a little for learners, "1.0" otherwise) */
+  speed?: string;
+  /** more workflow inputs, e.g. the voice sample of another voice: { sample_path, sample_start, sample_end, sample_text, voice } */
+  inputs?: Record<string, string>;
+  /** how long to wait for the whole run before giving up (default 3 hours) */
+  giveUpMs?: number;
 }
 
 /** Speaks every line on GitHub Actions and returns the folder holding <name>.mp3 for each line. */
@@ -116,7 +122,7 @@ export async function generateVoiceboxNarration(opts: VoiceboxOptions): Promise<
       body: JSON.stringify({
         ref: process.env.VOICEBOX_GITHUB_REF || "main",
         // English is slowed a little (0.92x): the turbo voice speaks about 3.2 words a second, quick for a beginner
-        inputs: { tag: opts.slug, lines: linesJson, language: opts.language, engine: english ? "chatterbox_turbo" : "chatterbox", speed: english ? "0.92" : "1.0" },
+        inputs: { tag: opts.slug, lines: linesJson, language: opts.language, engine: english ? "chatterbox_turbo" : "chatterbox", speed: opts.speed ?? (english ? "0.92" : "1.0"), ...(opts.inputs ?? {}) },
       }),
     });
     if (!res.ok) {
@@ -137,7 +143,8 @@ export async function generateVoiceboxNarration(opts: VoiceboxOptions): Promise<
   const started = Date.now();
   for (;;) {
     if (opts.isCancelled?.()) throw new Error("cancelled");
-    if (Date.now() - started > GIVE_UP_MS) throw new Error(`The voice run #${runId} took longer than ${GIVE_UP_MS / 3600000} hours`);
+    const giveUp = opts.giveUpMs ?? GIVE_UP_MS;
+    if (Date.now() - started > giveUp) throw new Error(`The voice run #${runId} took longer than ${Math.round(giveUp / 60000)} minutes`);
     const run = (await (await gh(`/actions/runs/${runId}`)).json()) as any;
     const jobs = ((await (await gh(`/actions/runs/${runId}/jobs?per_page=100`)).json()) as any).jobs || [];
     const speak = jobs.filter((j: any) => String(j.name).startsWith("speak"));
