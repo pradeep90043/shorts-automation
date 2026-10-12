@@ -31,8 +31,11 @@ on:
       sample_end:
         description: Seconds where it ends (keep under 30)
         default: '7.9'
+      sample_language:
+        description: Language spoken in the sample, for the automatic transcription (hi, en; empty = detect)
+        default: ''
       sample_text:
-        description: Exactly what is said in that part of the sample
+        description: Exactly what is said in that part of the sample, or "auto" to transcribe it
         default: 'The verdict of this video is out of 10. For more info, check the caption. For tech reels, follow.'
       voice:
         description: Name of the cloned voice profile
@@ -91,7 +94,7 @@ jobs:
           printf '%s' "$LINES" > lines.json
           pip install --quiet requests
           python3 scripts/voicebox_tts.py --base http://127.0.0.1:17493 --sample sample.wav \
-            --sample-text "${{ inputs.sample_text }}" --lines lines.json --out out \
+            --sample-text "${{ inputs.sample_text }}" --sample-language "${{ inputs.sample_language }}" --lines lines.json --out out \
             --engine "${{ inputs.engine }}" --voice "${{ inputs.voice }}" --language "${{ inputs.language }}" --speed "${{ inputs.speed }}"
 
       - name: Container log (on failure)

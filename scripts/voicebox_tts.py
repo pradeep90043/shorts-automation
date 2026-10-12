@@ -53,11 +53,32 @@ def ensure_model(base, engine, wait_seconds):
         sys.exit(f"Models not downloaded in time: {todo}")
 
 
+def transcribe(base, path, language, model, wait_seconds):
+    """Voicebox's own speech recognition (Whisper): what is said in the voice sample. The first call downloads the model."""
+    end = time.time() + wait_seconds
+    while True:
+        with open(path, "rb") as f:
+            r = requests.post(
+                f"{base}/transcribe",
+                files={"file": (os.path.basename(path), f, "audio/wav")},
+                data={**({"language": language} if language else {}), "model": model},
+                timeout=600,
+            )
+        if r.ok:
+            return r.json()["text"].strip()
+        if time.time() > end:
+            sys.exit(f"transcription failed: HTTP {r.status_code} {r.text[:300]}")
+        print(f"transcription not ready yet (HTTP {r.status_code}): {r.text[:160]}", flush=True)
+        time.sleep(20)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default="http://127.0.0.1:17493")
     ap.add_argument("--sample", required=True)
-    ap.add_argument("--sample-text", required=True)
+    ap.add_argument("--sample-text", required=True, help='exactly what the sample says, or "auto" to transcribe it with Voicebox (Whisper)')
+    ap.add_argument("--sample-language", default="", help="language of the sample for the transcription (hi, en, ...); empty = detect")
+    ap.add_argument("--whisper-model", default="small", help="Whisper size used for --sample-text auto (base, small, medium, large, turbo)")
     ap.add_argument("--lines", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--engine", default="chatterbox")
@@ -73,6 +94,13 @@ def main():
     wait_health(a.base, a.startup_seconds)
     ensure_model(a.base, a.engine, a.download_seconds)
 
+    sample_text = a.sample_text
+    if sample_text.strip().lower() == "auto":
+        sample_text = transcribe(a.base, a.sample, a.sample_language or None, a.whisper_model, a.download_seconds)
+        print("sample says:", sample_text, flush=True)
+        if len(sample_text) < 8:
+            sys.exit("the sample's transcription is almost empty: is there speech in it?")
+
     r = requests.post(
         f"{a.base}/profiles",
         json={"name": a.voice, "language": a.language, "voice_type": "cloned", "default_engine": a.engine},
@@ -84,7 +112,7 @@ def main():
         r = requests.post(
             f"{a.base}/profiles/{profile_id}/samples",
             files={"file": (os.path.basename(a.sample), f, "audio/wav")},
-            data={"reference_text": a.sample_text},
+            data={"reference_text": sample_text},
             timeout=300,
         )
     r.raise_for_status()
