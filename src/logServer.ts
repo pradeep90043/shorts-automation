@@ -1806,7 +1806,8 @@ export function startLogServer(): void {
             orientation,
             resolution: Number(body.resolution) === 1080 ? 1080 : 720,
             // an edge-tts voice name like en-IN-PrabhatNeural; anything else is ignored (default Hindi voice)
-            voice: /^[a-z]{2}-[A-Z]{2}-[A-Za-z]{3,20}Neural$/.test(String(body.voice || "")) ? String(body.voice) : undefined,
+            // ("voicebox" / "voicebox-en" = the cloned voice made on GitHub Actions)
+            voice: /^([a-z]{2}-[A-Z]{2}-[A-Za-z]{3,20}Neural|voicebox(-en)?)$/.test(String(body.voice || "")) ? String(body.voice) : undefined,
             channelKey: body.channelKey ? String(body.channelKey) : undefined,
           });
           return json(200, { success: true, job: getStickmanJob(job.id) });

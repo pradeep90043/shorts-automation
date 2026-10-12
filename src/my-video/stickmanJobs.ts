@@ -13,6 +13,24 @@ import {
   sceneNotesForBeats, splitScriptIntoBeats,
 } from "./stickmanPlanner";
 import { lessonQualityReport, type QualityWarning } from "./lessonQuality";
+import { cancelVoiceboxRun, estimateVoiceboxSec, generateVoiceboxNarration, sceneLines, type VoiceboxRunRef } from "./voiceboxNarration";
+
+/** `voice: "voicebox"` = the cloned voice made on GitHub Actions (see voiceboxNarration.ts) instead of an edge-tts voice. */
+export const isVoicebox = (voice?: string): boolean => /^voicebox/i.test(voice ?? "");
+
+/** A plan-only JSON may carry its own `"voice": "voicebox"` and `"language": "hi"` next to title/description/tags. */
+function planVoice(plan: unknown): { voice?: string; language?: string } {
+  try {
+    const obj = typeof plan === "string" ? JSON.parse(plan) : plan;
+    if (obj && typeof obj === "object" && !Array.isArray(obj)) {
+      const o = obj as any;
+      return { voice: typeof o.voice === "string" ? o.voice : undefined, language: typeof o.language === "string" ? o.language : undefined };
+    }
+  } catch {
+    /* pasted text that is not plain JSON has no voice setting */
+  }
+  return {};
+}
 
 export interface StickmanJobInput {
   /** narration; with `planOnly` it is derived from the plan's scenes and may be empty */
@@ -27,8 +45,10 @@ export interface StickmanJobInput {
   /** requested video length in seconds */
   targetSec?: number;
   orientation?: "horizontal" | "vertical";
-  /** edge-tts voice for the narration, e.g. "en-IN-PrabhatNeural"; omit for my-video's default Hindi voice */
+  /** edge-tts voice for the narration, e.g. "en-IN-PrabhatNeural"; "voicebox" = the cloned voice; omit for my-video's default Hindi voice */
   voice?: string;
+  /** language code of the narration ("hi", "en"); used by the cloned voice (default "hi") */
+  language?: string;
   resolution?: 720 | 1080;
   channelKey?: string;
 }
@@ -69,6 +89,8 @@ export interface StickmanJob {
   videoPath?: string;
   /** GitHub run being watched; lets a restarted app re-attach instead of losing the render */
   cloudRun?: CloudRunRef;
+  /** the cloned-voice run (voicebox-scenes.yml) while the narration is being made */
+  voiceRun?: VoiceboxRunRef;
   /** how many times this job was (re)started after an app restart */
   restarts?: number;
   publish?: PublishState;
@@ -169,7 +191,8 @@ export function startStickmanJob(input: StickmanJobInput): StickmanJob {
     // plan-only: the pasted JSON is the whole video, its scenes' text is the narration (no script, no AI)
     if (input.plan == null || input.plan === "") throw new Error("Paste the plan JSON first");
     script = assertPlanOnly(input.plan).script;
-    input = { ...input, repairMissing: undefined };
+    const pv = planVoice(input.plan);
+    input = { ...input, repairMissing: undefined, voice: input.voice || pv.voice, language: input.language || pv.language };
   } else {
     if (!script) throw new Error("Script is empty");
     // an imported plan is checked against the script up front, so a mismatch is rejected before a job exists
@@ -239,6 +262,35 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
     job.warnings = warnings;
     for (const w of warnings.filter((x) => x.level === "warn")) log(`quality: ${w.scene ? `scene ${w.scene}: ` : ""}${w.message}`);
 
+    // cloned voice: one audio file per scene, made on GitHub Actions; the video is then built on the real audio lengths
+    let narrationDir: string | undefined;
+    const language = job.input.language || (/-en$/i.test(job.input.voice ?? "") ? "en" : "hi");
+    if (isVoicebox(job.input.voice)) {
+      const lines = sceneLines(plan.scenes);
+      const voiceSec = estimateVoiceboxSec(lines.reduce((n, l) => n + l.text.length, 0));
+      const audio = job.stages.find((s) => s.key === "audio");
+      if (audio) {
+        job.estimate.totalSec += voiceSec - audio.estSec;
+        job.estimate.stageSec.audio = voiceSec;
+        audio.estSec = voiceSec;
+      }
+      setStage(job, "audio", { status: "running", fraction: 0.01, detail: `Cloned voice for ${lines.length} scenes` });
+      const made = await generateVoiceboxNarration({
+        slug: `lv-${job.id}`,
+        lines,
+        language,
+        resume: resume ? job.voiceRun : undefined,
+        isCancelled: () => isCancelled(job),
+        onRun: (ref) => { job.voiceRun = ref; persist(); },
+        onProgress: (p) => { setStage(job, "audio", { status: "running", fraction: p.fraction, detail: p.detail }); persistSoon(); },
+      });
+      if (isCancelled(job)) return;
+      narrationDir = made.dir;
+      job.voiceRun = undefined;
+      setStage(job, "audio", { status: "done", fraction: 1, detail: "Cloned voice ready" });
+      log(`Cloned-voice narration ready: ${made.files} scenes`);
+    }
+
     const result = await renderStickmanVideo(
       {
         slug: `lv-${job.id}`,
@@ -249,7 +301,9 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
         orientation: orientation ?? "horizontal",
         resolution: resolution ?? (orientation === "vertical" ? 1080 : 720),
         rate: job.estimate.rate,
-        ...(job.input.voice ? { voice: job.input.voice, language: job.input.voice.slice(0, 2) } : {}),
+        ...(narrationDir
+          ? { narrationDir, language }
+          : job.input.voice ? { voice: job.input.voice, language: job.input.voice.slice(0, 2) } : {}),
       },
       (p) => applyProgress(job, p),
     );
@@ -275,6 +329,7 @@ function finishJob(job: StickmanJob, videoPath: string, log: (m: string) => void
   job.status = "done";
   job.finishedAt = Date.now();
   job.cloudRun = undefined;
+  job.voiceRun = undefined;
   if (job.input.plan != null) job.input.plan = "imported"; // keep the marker, free the data
   learn(job);
   log(`Done in ${Math.round((job.finishedAt - job.createdAt) / 1000)}s -> ${videoPath}`);
@@ -290,15 +345,19 @@ export async function cancelStickmanJob(id: string): Promise<StickmanJob | undef
   job.finishedAt = Date.now();
   for (const s of job.stages) if (s.status === "running") s.status = "failed";
   const ref = job.cloudRun;
+  const voiceRef = job.voiceRun;
   job.cloudRun = undefined;
+  job.voiceRun = undefined;
   persist();
   pipelineLogger.info(`[${job.id}] Cancelled by user${ref ? ` (stopping GitHub run #${ref.runId})` : ""}`, "StickmanJob");
   if (ref) await cancelCloudRun(ref);
+  if (voiceRef) await cancelVoiceboxRun(voiceRef);
   return job;
 }
 
 /** Feed measured stage timings back so the next estimate is closer. */
 function learn(job: StickmanJob): void {
+  if (isVoicebox(job.input.voice)) return;
   const sec = (k: StageKey) => job.stages.find((s) => s.key === k)?.actualSec;
   const frames = Math.round(job.estimate.videoSec * 30);
   const render = sec("render");

@@ -44,6 +44,11 @@ export interface StickmanVideoSpec {
   resolution?: 720 | 1080;
   /** Skip my-video's logo overlay (for clips that get spliced into a video that has its own branding) */
   noBranding?: boolean;
+  /**
+   * Folder with ready-made narration, one segment_<i>_<sceneId>.mp3 per scene (Voicebox). When set nothing is synthesised:
+   * the files go into the project and my-video measures them, so each scene lasts exactly as long as its audio.
+   */
+  narrationDir?: string;
 }
 
 /** Pipeline stages inside my-video, in execution order. */
@@ -158,7 +163,7 @@ const sumProgress = (slug: string): { done: number; total: number } => {
 };
 
 /** fetch with retries: a single transient network error must not fail a render that already succeeded in the cloud. */
-async function fetchRetry(url: string, init?: RequestInit, attempts = 6): Promise<Response> {
+export async function fetchRetry(url: string, init?: RequestInit, attempts = 6): Promise<Response> {
   let lastErr: unknown;
   for (let i = 0; i < attempts; i++) {
     try {
@@ -436,6 +441,19 @@ const doRender = async (spec: StickmanVideoSpec, onProgress?: ProgressCallback):
     scenes: spec.scenes,
   };
   fs.writeFileSync(path.join(projectDir, "video.json"), JSON.stringify(videoJson, null, 2));
+  if (spec.narrationDir) {
+    const audioDir = path.join(projectDir, "audio");
+    fs.mkdirSync(audioDir, { recursive: true });
+    const wanted = spec.scenes.map((sc, i) => `segment_${i}_${sc.id}`);
+    for (const base of wanted) {
+      for (const ext of [".mp3", ".words.json"]) {
+        const from = path.join(spec.narrationDir, base + ext);
+        if (fs.existsSync(from)) fs.copyFileSync(from, path.join(audioDir, base + ext));
+      }
+      if (!fs.existsSync(path.join(audioDir, `${base}.mp3`))) throw new Error(`Supplied narration is missing ${base}.mp3`);
+    }
+    logger.info(`[my-video] Using supplied narration for ${wanted.length} scenes from ${spec.narrationDir}`);
+  }
   logger.info(`[my-video] Rendering "${spec.slug}" (${vertical ? "short" : "long"}, ${spec.scenes.length} scenes)`);
 
   try {
@@ -451,7 +469,7 @@ const doRender = async (spec: StickmanVideoSpec, onProgress?: ProgressCallback):
     // Cloud runner generates TTS + merge itself (free edge-tts, no secrets), so the VM skips them.
     if (!useCloud) {
       emit({ stage: "audio", fraction: 0 });
-      await run(dir, ["run", "longform:audio", "--", ...project], (t) => {
+      await run(dir, ["run", "longform:audio", "--", ...project, ...(spec.narrationDir ? ["--external"] : [])], (t) => {
         // "  -> Scene 3: id (...)" is logged as each scene starts
         const m = [...t.matchAll(/-> Scene (\d+):/g)].pop();
         if (m) emit({ stage: "audio", fraction: Number(m[1]) / sceneCount, detail: `Scene ${Number(m[1]) + 1}/${sceneCount}` });
