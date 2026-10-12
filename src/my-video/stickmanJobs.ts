@@ -267,7 +267,7 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
     const language = job.input.language || (/-en$/i.test(job.input.voice ?? "") ? "en" : "hi");
     if (isVoicebox(job.input.voice)) {
       const lines = sceneLines(plan.scenes);
-      const voiceSec = estimateVoiceboxSec(lines.reduce((n, l) => n + l.text.length, 0));
+      const voiceSec = estimateVoiceboxSec(lines.reduce((n, l) => n + l.text.length, 0), 20, 800, language);
       const audio = job.stages.find((s) => s.key === "audio");
       if (audio) {
         job.estimate.totalSec += voiceSec - audio.estSec;

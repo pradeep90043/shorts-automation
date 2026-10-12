@@ -38,5 +38,8 @@ assert.ok(small > 600 && small < 1300, `one runner (~60 s of speech): ${small}s`
 assert.ok(twentyMin > 900 && twentyMin < 1500, `20 minutes of Hindi: ${twentyMin}s`);
 assert.ok(hour > twentyMin, "an hour needs longer than 20 minutes (capped at 20 runners)");
 assert.ok(hour < 3 * twentyMin, "but parallelism keeps it far from linear");
+// English runs on the faster turbo engine: the same text is ready sooner than in Hindi
+assert.ok(estimateVoiceboxSec(17000, 20, 800, "en") < twentyMin * 0.75, "English voice is quicker than Hindi");
+assert.strictEqual(estimateVoiceboxSec(17000), estimateVoiceboxSec(17000, 20, 800, "hi"), "Hindi stays the default");
 
 console.log("✓ voicebox narration");
