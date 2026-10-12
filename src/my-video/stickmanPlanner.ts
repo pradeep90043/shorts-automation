@@ -364,7 +364,15 @@ function sanitizePanel(v: any): Record<string, unknown> {
   const q = v?.quiz;
   const options = strList(q?.options, 4, 60);
   if (str(q?.question, 90) && options.length >= 2 && Number.isInteger(q.answer) && q.answer >= 0 && q.answer < options.length) {
-    return { quiz: { question: str(q.question, 90), options, answer: q.answer } };
+    // revealAt and revealBeforeEnd keep the timing the author chose: "pause the video" quizzes reveal just before the scene ends
+    const inRange = (x: unknown, lo: number, hi: number): number | undefined => (typeof x === "number" && Number.isFinite(x) && x >= lo && x <= hi ? x : undefined);
+    return {
+      quiz: {
+        question: str(q.question, 90), options, answer: q.answer,
+        ...(inRange(q.revealAt, 0.3, 0.95) !== undefined ? { revealAt: q.revealAt } : {}),
+        ...(inRange(q.revealBeforeEnd, 0.5, 5) !== undefined ? { revealBeforeEnd: q.revealBeforeEnd } : {}),
+      },
+    };
   }
   const num = (x: unknown): number | null => (typeof x === "number" && Number.isFinite(x) ? x : null);
   const compare = v?.compare;
@@ -1142,6 +1150,12 @@ export function planFromPlanOnly(plan: unknown, titleHint?: string): StickmanPla
   planned.scenes.forEach((sc, i) => {
     const tts = (check.scenes[i].scene as any)?.ttsText;
     if (typeof tts === "string" && speakable(tts)) sc.ttsText = speakable(tts);
+    // silence before / after the line: "pauseAfter" is the viewer's thinking time after a quiz question
+    const raw = check.scenes[i].scene as any;
+    const before = Number(raw?.pauseBefore);
+    const after = Number(raw?.pauseAfter);
+    if (Number.isFinite(before) && before > 0) sc.pauseBefore = Math.min(10, before);
+    if (Number.isFinite(after) && after > 0) sc.pauseAfter = Math.min(30, after);
   });
   return planned;
 }

@@ -21,6 +21,8 @@ export interface StickmanScene {
   /** Text sent to TTS when it should differ from the on-screen caption */
   ttsText?: string;
   pauseBefore?: number;
+  /** seconds the scene keeps going, silent, after its line (thinking time after a quiz question) */
+  pauseAfter?: number;
   /** Template visual spec, see my-video/src/stickman/schema.ts */
   visual?: unknown;
 }
