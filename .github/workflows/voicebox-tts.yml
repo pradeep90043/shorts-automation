@@ -59,8 +59,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Cut the voice sample
+        timeout-minutes: 10
         run: |
-          command -v ffmpeg >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg; }
+          bash scripts/ensure_ffmpeg.sh
           ffmpeg -hide_banner -loglevel error -y -ss "${{ inputs.sample_start }}" -to "${{ inputs.sample_end }}" -i "${{ inputs.sample_path }}" -vn -ac 1 -ar 24000 sample.wav
 
       - name: Clean the voice sample (its background hiss would be cloned with the voice)

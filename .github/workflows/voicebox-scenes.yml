@@ -100,8 +100,9 @@ jobs:
           path: plan/
 
       - name: Cut the voice sample
+        timeout-minutes: 10
         run: |
-          command -v ffmpeg >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg; }
+          bash scripts/ensure_ffmpeg.sh
           ffmpeg -hide_banner -loglevel error -y -ss "${{ inputs.sample_start }}" -to "${{ inputs.sample_end }}" -i "${{ inputs.sample_path }}" -vn -ac 1 -ar 24000 sample.wav
 
       - name: Clean the voice sample (its background hiss would be cloned with the voice)
@@ -166,8 +167,9 @@ jobs:
           path: parts/
 
       - name: Trim, convert to mp3
+        timeout-minutes: 15
         run: |
-          command -v ffmpeg >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg; }
+          bash scripts/ensure_ffmpeg.sh
           mkdir -p final
           # denoise (when asked), trim the silence around the speech, convert: scripts/voice_finish_scene.sh
           [ "${{ inputs.denoise }}" = "true" ] && curl -fsSL --retry 3 -o bd.rnnn "https://raw.githubusercontent.com/GregorR/rnnoise-models/master/beguiling-drafter-2018-08-30/bd.rnnn"
