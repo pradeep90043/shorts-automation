@@ -64,8 +64,15 @@ def transcribe(base, path, language, model, wait_seconds):
                 data={**({"language": language} if language else {}), "model": model},
                 timeout=600,
             )
-        if r.ok:
-            return r.json()["text"].strip()
+        # 200 with the text is the answer; while the Whisper model downloads Voicebox answers 202 "being downloaded, try again"
+        # (also a 2xx), so success means: the body really has the text
+        if r.status_code == 200:
+            try:
+                body = r.json()
+            except ValueError:
+                body = {}
+            if isinstance(body, dict) and isinstance(body.get("text"), str):
+                return body["text"].strip()
         if time.time() > end:
             sys.exit(f"transcription failed: HTTP {r.status_code} {r.text[:300]}")
         print(f"transcription not ready yet (HTTP {r.status_code}): {r.text[:160]}", flush=True)
