@@ -37,6 +37,9 @@ on:
       voice:
         description: Name of the cloned voice profile
         default: codeorcap
+      denoise:
+        description: Remove background hiss from the voice sample and from every generated scene (the sample has it, the clone repeats it)
+        default: 'true'
 
 permissions:
   contents: read
@@ -53,6 +56,12 @@ jobs:
         run: |
           command -v ffmpeg >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg; }
           ffmpeg -hide_banner -loglevel error -y -ss "${{ inputs.sample_start }}" -to "${{ inputs.sample_end }}" -i "${{ inputs.sample_path }}" -vn -ac 1 -ar 24000 sample.wav
+
+      - name: Clean the voice sample (its background hiss would be cloned with the voice)
+        if: inputs.denoise == 'true'
+        run: |
+          MODEL="$PWD/bd.rnnn" bash scripts/voice_denoise.sh sample.wav sample-clean.wav
+          mv sample-clean.wav sample.wav
           ls -l sample.wav
 
       - name: Restore model cache
