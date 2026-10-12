@@ -83,9 +83,12 @@ jobs:
           printf '%s\n' "${PRODUCTION_COOKIES}" > cookies.txt
           # Enables offloading long-video renders to GitHub Actions (my-video repo)
           if [ -n "${RENDER_GITHUB_TOKEN}" ]; then printf 'GITHUB_TOKEN=%s\n' "${RENDER_GITHUB_TOKEN}" >> .env; fi
+          # The dashboard login password. Appended last, so it wins over any older DASHBOARD_PASSWORD line inside PRODUCTION_ENV.
+          if [ -n "${DASHBOARD_PASSWORD}" ]; then printf 'DASHBOARD_PASSWORD=%s\n' "${DASHBOARD_PASSWORD}" >> .env; fi
         env:
           PRODUCTION_ENV: ${{ secrets.PRODUCTION_ENV }}
           RENDER_GITHUB_TOKEN: ${{ secrets.RENDER_GITHUB_TOKEN }}
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
           PRODUCTION_COOKIES: ${{ secrets.PRODUCTION_COOKIES }}
 
       - name: Rsync runtime files to VM
