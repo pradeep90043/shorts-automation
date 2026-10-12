@@ -1588,6 +1588,10 @@ ${this.theme.analysisRules}`;
           `⚠️ *Facebook upload FAILED* — check logs`,
         );
       }
+      // Nothing reached any platform (e.g. expired YouTube OAuth): that is a failed job, not a completed one
+      const allUploadsFailed =
+        expectedYt + expectedIg + expectedFb > 0 &&
+        results.length + instaResults.length + (fbResult ? 1 : 0) === 0;
       const failBlock = failLines.length ? failLines.join("\n") + "\n\n" : "";
       const headline =
         failLines.length === 0
@@ -1624,8 +1628,11 @@ ${this.theme.analysisRules}`;
       });
 
       this.db.updateJob(id, {
-        status: "completed",
-        currentStep: "Short uploaded to all configured platforms successfully",
+        status: allUploadsFailed ? "failed" : "completed",
+        error: allUploadsFailed ? "Upload failed on every configured platform (check YouTube/Instagram credentials)" : undefined,
+        currentStep: allUploadsFailed
+          ? "Upload failed on every platform"
+          : "Short uploaded to all configured platforms successfully",
         youtubeUrl: results[0]?.url,
         instagramUrl: instaResults[0]?.url,
         facebookUrl: fbResult?.url,
@@ -1828,6 +1835,7 @@ ${this.theme.analysisRules}`;
     this.db.updateJob(id, {
       status: "failed",
       currentStep: "Upload cancelled by user",
+      error: "Upload cancelled by user",
       context: pending.context,
     });
 
@@ -2113,6 +2121,7 @@ ${this.theme.analysisRules}`;
       this.db.updateJob(id, {
         status: "failed",
         currentStep: "Generation cancelled by user during settings review",
+        error: "Generation cancelled by user during settings review",
         context: entry.context,
       });
       entry.resolve("cancel");
@@ -2792,6 +2801,7 @@ ${this.theme.analysisRules}`;
           this.db.updateJob(id, {
             status: "failed",
             currentStep: `Auto-routed to ${targetUploader.profile.brandName} based on mood "${mood}"`,
+            error: `Auto-routed to ${targetUploader.profile.brandName} (mood "${mood}")`,
             context,
           });
           this.resolveJob(id);
@@ -4137,9 +4147,9 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         .replace(/:/g, "\\:")
         .replace(/'/g, "'\\\\''");
       const outPath = path.join(tempDir, "video_raw_captioned.mp4");
-      const cmd = `${config.binaries.ffmpeg} -y -i "${inputPath}" -vf "subtitles='${escapedAssPath}'" -c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p -c:a copy "${outPath}"`;
+      const cmd = `${config.binaries.ffmpeg} -y -loglevel error -i "${inputPath}" -vf "subtitles='${escapedAssPath}'" -c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p -c:a copy "${outPath}"`;
       await new Promise<void>((resolve, reject) => {
-        exec(cmd, (error) => (error ? reject(error) : resolve()));
+        exec(cmd, { maxBuffer: 64 * 1024 * 1024 }, (error) => (error ? reject(error) : resolve()));
       });
       pipelineLogger.info("Burned timed captions onto video.", "DirectUploader");
       return outPath;
@@ -4542,6 +4552,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       this.db.updateJob(job.id, {
         status: "failed",
         currentStep: "Cancelled due to server restart",
+        error: "Cancelled due to server restart",
       });
       pipelineLogger.info(
         `Cancelled old job ${job.id} on startup.`,

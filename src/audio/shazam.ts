@@ -1,4 +1,5 @@
-import { execFile } from "child_process";
+import { execFile, execFileSync } from "child_process";
+import os from "os";
 import fs from "fs";
 import path from "path";
 import { config } from "../config";
@@ -36,12 +37,24 @@ export async function identifyAudio(filePath: string): Promise<ShazamResult> {
     "Shazam",
   );
 
+  // Video/odd containers made the Shazam decoder log "invalid mpeg audio header" and fail: hand it a clean 20s mono WAV.
+  let target = filePath;
+  let tmpWav: string | undefined;
+  try {
+    tmpWav = path.join(os.tmpdir(), `shazam-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.wav`);
+    execFileSync(config.binaries.ffmpeg, ["-y", "-loglevel", "error", "-i", filePath, "-vn", "-t", "20", "-ac", "1", "-ar", "16000", tmpWav], { timeout: 30000 });
+    if (fs.existsSync(tmpWav) && fs.statSync(tmpWav).size > 1000) target = tmpWav;
+  } catch {
+    /* no audio stream or ffmpeg failure: fall back to the original file */
+  }
+
   return new Promise((resolve) => {
     execFile(
       PYTHON3,
-      [SCRIPT_PATH, filePath],
+      [SCRIPT_PATH, target],
       { timeout: 25000, maxBuffer: 5 * 1024 * 1024 },
       (error, stdout, stderr) => {
+        if (tmpWav) fs.rmSync(tmpWav, { force: true });
         if (error) {
           const errMsg = stderr.trim() || error.message;
           pipelineLogger.warn(
