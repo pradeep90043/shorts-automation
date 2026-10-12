@@ -26,6 +26,19 @@ assert.strictEqual(planned.scenes[0].ttsText, "डिस्पैचर सर�
 assert.strictEqual(planned.scenes[1].ttsText, undefined, "no ttsText: the caption is spoken");
 assert.deepStrictEqual(sceneLines(planned.scenes).map((l) => l.text), ["डिस्पैचर सर्वलेट सारी रिक्वेस्ट्स लेता है।", "Tomcat पोर्ट 8080 पर सुनता है।"]);
 
+// "pause the video" quizzes: the thinking time and the reveal timing survive planning
+const quizPlan = planFromPlanOnly({
+  title: "t", description: "d", tags: [],
+  scenes: [
+    { i: 0, text: "Pause the video and choose your answer.", pauseAfter: 9.5, quiz: { question: "Which one?", options: ["A", "B", "C"], answer: 1, revealBeforeEnd: 1.5 } },
+    { i: 1, text: "The answer is B.", pauseAfter: 999, pauseBefore: -3 },
+  ],
+});
+assert.strictEqual(quizPlan.scenes[0].pauseAfter, 9.5);
+assert.strictEqual((quizPlan.scenes[0].visual as any).quiz.revealBeforeEnd, 1.5, "the reveal timing is kept");
+assert.strictEqual(quizPlan.scenes[1].pauseAfter, 30, "capped at 30 s");
+assert.strictEqual(quizPlan.scenes[1].pauseBefore, undefined, "a negative pause is ignored");
+
 // the cloned voice is chosen by name, never confused with an edge-tts voice
 assert.ok(isVoicebox("voicebox") && isVoicebox("Voicebox-hi"));
 assert.ok(!isVoicebox("hi-IN-MadhurNeural") && !isVoicebox(undefined) && !isVoicebox(""));
