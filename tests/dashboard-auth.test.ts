@@ -41,6 +41,17 @@ import type { IncomingMessage } from "http";
   a.clearLoginFailures(ip);
   assert.ok(!a.loginBlocked(ip));
 
+  // machine-to-machine routes cannot carry a cookie; everything else needs the login
+  assert.ok(a.isMachineRoute("GET", "/api/longvideo/bundle/lv-abc123"), "cloud renderer downloads the bundle");
+  assert.ok(a.isMachineRoute("POST", "/api/longvideo/progress"), "cloud renderer reports progress");
+  assert.ok(a.isMachineRoute("POST", "/api/inject-reels"));
+  assert.ok(a.isMachineRoute("GET", "/api/dm/webhook") && a.isMachineRoute("POST", "/api/dm/webhook"), "Meta webhook");
+  assert.ok(!a.isMachineRoute("POST", "/api/longvideo/bundle/lv-abc123"), "bundle is GET only");
+  assert.ok(!a.isMachineRoute("GET", "/api/longvideo/progress"));
+  for (const p of ["/api/channels", "/api/dashboard", "/api/longvideo/start", "/api/longvideo/job", "/api/channels/save", "/api/video-preview"]) {
+    assert.ok(!a.isMachineRoute("GET", p) && !a.isMachineRoute("POST", p), `${p} needs the login`);
+  }
+
   // redirect target stays on this site
   assert.strictEqual(a.safeNext("/dashboard?x=1"), "/dashboard?x=1");
   assert.strictEqual(a.safeNext("//evil.com"), "/");
