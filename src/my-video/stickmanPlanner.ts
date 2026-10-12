@@ -1136,7 +1136,14 @@ export function assertPlanOnly(plan: unknown): PlanOnlyCheck {
 export function planFromPlanOnly(plan: unknown, titleHint?: string): StickmanPlan {
   const check = assertPlanOnly(plan);
   const beats = check.scenes.map((s) => s.text);
-  return finalizePlan(beats, check.scenes.map((s) => s.scene), check.meta, check.script, titleHint);
+  const planned = finalizePlan(beats, check.scenes.map((s) => s.scene), check.meta, check.script, titleHint);
+  // a scene may say its words differently from how they are captioned (class names on screen, their Devanagari spelling
+  // for a Hindi voice): "ttsText" is what the voice speaks, "text" stays the caption
+  planned.scenes.forEach((sc, i) => {
+    const tts = (check.scenes[i].scene as any)?.ttsText;
+    if (typeof tts === "string" && speakable(tts)) sc.ttsText = speakable(tts);
+  });
+  return planned;
 }
 
 /** What to give ChatGPT (with the transcript underneath) to get a plan-only JSON, in parts of `chunk` scenes. */
