@@ -91,11 +91,21 @@ def main():
 
     for line in lines:
         t0 = time.time()
-        r = requests.post(
-            f"{a.base}/v1/audio/speech",
-            json={"model": a.engine, "voice": a.voice, "input": line["text"], "response_format": "wav"},
-            timeout=900,
-        )
+        for attempt in range(1, 4):
+            r = requests.post(
+                f"{a.base}/v1/audio/speech",
+                json={"model": a.engine, "voice": a.voice, "input": line["text"], "response_format": "wav"},
+                timeout=900,
+            )
+            if r.ok:
+                break
+            print(f"{line['name']}: attempt {attempt} HTTP {r.status_code} {r.text[:400]}", flush=True)
+            # The chatterbox download can end with a progress-bar error in the library although the files are complete.
+            # Asking again finds them cached, so the model loads without downloading.
+            for m in model_entries(a.base):
+                if a.engine.replace("_", "-") in m["model_name"].replace("_", "-"):
+                    requests.post(f"{a.base}/models/download", json={"model_name": m["model_name"]}, timeout=60)
+            time.sleep(45 * attempt)
         if not r.ok:
             sys.exit(f"{line['name']}: HTTP {r.status_code} {r.text[:400]}")
         path = os.path.join(a.out, f"{line['name']}.wav")
