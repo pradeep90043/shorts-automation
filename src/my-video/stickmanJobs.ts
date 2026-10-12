@@ -481,11 +481,22 @@ function restartFromScratch(job: StickmanJob): void {
   job.error = undefined;
   job.finishedAt = undefined;
   job.cloudRun = undefined;
+  job.voiceRun = undefined;
   job.stages = STAGE_ORDER.map((key) => ({
     key, label: STAGE_LABELS[key], status: "pending", fraction: 0, estSec: estimate.stageSec[key],
   }));
   persist();
   void run(job);
+}
+
+/**
+ * What to do with a job that was running when the app restarted: re-attach to its render run, re-attach to its cloned-voice run
+ * (the voice stage is ~10 minutes of GitHub time on 20 runners: starting it again throws that away), or start over.
+ */
+export function interruptedJobAction(job: Pick<StickmanJob, "cloudRun" | "voiceRun">): "render" | "voice" | "scratch" {
+  if (job.cloudRun) return "render";
+  if (job.voiceRun) return "voice";
+  return "scratch";
 }
 
 export function recoverInterruptedJobs(): void {
@@ -502,8 +513,9 @@ export function recoverInterruptedJobs(): void {
       job.finishedAt = Date.now();
       continue;
     }
-    if (job.cloudRun) {
-      pipelineLogger.info(`[${job.id}] Re-attaching to GitHub run #${job.cloudRun.runId}`, "StickmanJob");
+    const action = interruptedJobAction(job);
+    if (action !== "scratch") {
+      pipelineLogger.info(`[${job.id}] Re-attaching to GitHub ${action === "voice" ? "voice" : "render"} run #${(job.cloudRun ?? job.voiceRun)!.runId}`, "StickmanJob");
       void run(job, true).then(() => {
         // the run was cancelled/lost: start the whole job again once rather than leave it failed
         if (job.status === "failed" && job.restarts! <= MAX_RESTARTS) restartFromScratch(job);

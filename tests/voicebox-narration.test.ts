@@ -1,6 +1,6 @@
 import assert from "assert";
 import { estimateVoiceboxSec, sceneLines } from "../src/my-video/voiceboxNarration";
-import { isVoicebox } from "../src/my-video/stickmanJobs";
+import { interruptedJobAction, isVoicebox } from "../src/my-video/stickmanJobs";
 import { planFromPlanOnly } from "../src/my-video/stickmanPlanner";
 
 // each scene becomes one line named the way my-video names a scene's audio file: segment_<index>_<id>
@@ -38,6 +38,12 @@ assert.strictEqual(quizPlan.scenes[0].pauseAfter, 9.5);
 assert.strictEqual((quizPlan.scenes[0].visual as any).quiz.revealBeforeEnd, 1.5, "the reveal timing is kept");
 assert.strictEqual(quizPlan.scenes[1].pauseAfter, 30, "capped at 30 s");
 assert.strictEqual(quizPlan.scenes[1].pauseBefore, undefined, "a negative pause is ignored");
+
+// after an app restart a job re-attaches to its GitHub run instead of starting over (the voice stage is ~10 minutes on 20 runners)
+assert.strictEqual(interruptedJobAction({ cloudRun: { runId: 1, repo: "r", token: "t" } }), "render");
+assert.strictEqual(interruptedJobAction({ voiceRun: { runId: 2, repo: "r" } }), "voice");
+assert.strictEqual(interruptedJobAction({ cloudRun: { runId: 1, repo: "r", token: "t" }, voiceRun: { runId: 2, repo: "r" } }), "render", "the render is the later stage");
+assert.strictEqual(interruptedJobAction({}), "scratch");
 
 // the cloned voice is chosen by name, never confused with an edge-tts voice
 assert.ok(isVoicebox("voicebox") && isVoicebox("Voicebox-hi"));
