@@ -47,6 +47,9 @@ on:
       voice:
         description: Name of the cloned voice profile
         default: codeorcap
+      denoise:
+        description: Remove background hiss from the voice sample and from every generated scene (the sample has it, the clone repeats it)
+        default: 'true'
 
 permissions:
   contents: read
@@ -103,6 +106,12 @@ jobs:
           command -v ffmpeg >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg; }
           ffmpeg -hide_banner -loglevel error -y -ss "${{ inputs.sample_start }}" -to "${{ inputs.sample_end }}" -i "${{ inputs.sample_path }}" -vn -ac 1 -ar 24000 sample.wav
 
+      - name: Clean the voice sample (its background hiss would be cloned with the voice)
+        if: inputs.denoise == 'true'
+        run: |
+          MODEL="$PWD/bd.rnnn" bash scripts/voice_denoise.sh sample.wav sample-clean.wav
+          mv sample-clean.wav sample.wav
+
       - name: Restore model cache
         id: cache
         uses: actions/cache/restore@v4
@@ -151,6 +160,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           pattern: part-${{ github.run_id }}-*
@@ -160,6 +171,10 @@ jobs:
       - name: Join in script order
         run: |
           command -v ffmpeg >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg; }
+          if [ "${{ inputs.denoise }}" = "true" ]; then
+            curl -fsSL --retry 3 -o bd.rnnn "https://raw.githubusercontent.com/GregorR/rnnoise-models/master/beguiling-drafter-2018-08-30/bd.rnnn"
+            for f in parts/*.wav; do MODEL="$PWD/bd.rnnn" bash scripts/voice_denoise.sh "$f" "$f.clean.wav" && mv "$f.clean.wav" "$f"; done
+          fi
           ls parts | wc -l
           ffmpeg -hide_banner -loglevel error -y -f lavfi -i "anullsrc=r=24000:cl=mono" -t "$(awk "BEGIN{print ${{ inputs.gap_ms }}/1000}")" -c:a pcm_s16le gap.wav
           : > list.txt
