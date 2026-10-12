@@ -17,8 +17,8 @@ on:
         required: true
         default: '[{"name":"codeorcap_1","text":"One."},{"name":"codeorcap_2","text":"Two."},{"name":"codeorcap_3","text":"Three."},{"name":"codeorcap_4","text":"Four."},{"name":"codeorcap_5","text":"Five."},{"name":"codeorcap_6","text":"Six."},{"name":"codeorcap_7","text":"Seven."},{"name":"codeorcap_8","text":"Eight."},{"name":"codeorcap_9","text":"Nine."},{"name":"codeorcap_10","text":"Ten."}]'
       engine:
-        description: Voicebox engine (chatterbox, chatterbox_turbo, qwen, kokoro, luxtts, tada)
-        default: chatterbox
+        description: Voicebox engine. chatterbox_turbo is English only and verified; chatterbox is multilingual (Hindi etc.)
+        default: chatterbox_turbo
       language:
         description: Language code of the lines
         default: en
