@@ -40,7 +40,8 @@ export function startClonedLines(slug: string, lines: VoiceboxLine[]): Promise<C
   const timeoutMin = Number(process.env.CLONED_VOICE_TIMEOUT_MIN) || 20;
   const started = Date.now();
   pipelineLogger.info(`Cloned voice: ${lines.length} line(s) -> GitHub Actions (give up after ${timeoutMin} min)`, "ClonedVoice");
-  return generateVoiceboxNarration({ slug, lines, language: "en", speed: "1.0", giveUpMs: timeoutMin * 60_000 })
+  // no denoise: the user compared 4 variants against their own voice and the undenoised one (turbo, 1.0x) sounded closest
+  return generateVoiceboxNarration({ slug, lines, language: "en", speed: "1.0", inputs: { denoise: "false" }, giveUpMs: timeoutMin * 60_000 })
     .then((r) => {
       pipelineLogger.info(`Cloned voice ready in ${Math.round((Date.now() - started) / 1000)}s`, "ClonedVoice");
       return {
