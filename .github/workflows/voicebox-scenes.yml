@@ -43,6 +43,9 @@ on:
       voice:
         description: Name of the cloned voice profile
         default: codeorcap
+      speed:
+        description: Speaking speed (1.0 = natural, 0.92 = slightly slower and clearer for learners)
+        default: '1.0'
       denoise:
         description: Remove background hiss from the voice sample and from every generated scene (the sample has it, the clone repeats it)
         default: 'true'
@@ -127,7 +130,7 @@ jobs:
           pip install --quiet requests
           python3 scripts/voicebox_tts.py --base http://127.0.0.1:17493 --sample sample.wav \
             --sample-text "${{ inputs.sample_text }}" --lines plan/shard-${{ matrix.shard }}.json --out out \
-            --engine "${{ inputs.engine }}" --voice "${{ inputs.voice }}" --language "${{ inputs.language }}"
+            --engine "${{ inputs.engine }}" --voice "${{ inputs.voice }}" --language "${{ inputs.language }}" --speed "${{ inputs.speed }}"
 
       - name: Save model cache
         if: matrix.shard == 0 && steps.cache.outputs.cache-hit != 'true'

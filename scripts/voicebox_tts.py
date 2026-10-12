@@ -63,6 +63,7 @@ def main():
     ap.add_argument("--engine", default="chatterbox")
     ap.add_argument("--voice", default="cloned-voice")
     ap.add_argument("--language", default="en")
+    ap.add_argument("--speed", type=float, default=1.0, help="speaking speed, 0.25-4.0 (pitch-preserving time stretch); below 1 is slower")
     ap.add_argument("--startup-seconds", type=int, default=240)
     ap.add_argument("--download-seconds", type=int, default=1500)
     a = ap.parse_args()
@@ -94,7 +95,7 @@ def main():
         for attempt in range(1, 4):
             r = requests.post(
                 f"{a.base}/v1/audio/speech",
-                json={"model": a.engine, "voice": a.voice, "input": line["text"], "response_format": "wav"},
+                json={"model": a.engine, "voice": a.voice, "input": line["text"], "response_format": "wav", **({"speed": a.speed} if a.speed != 1.0 else {})},
                 timeout=900,
             )
             if r.ok:

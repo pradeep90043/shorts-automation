@@ -49,7 +49,7 @@ export function sceneLines(scenes: { id: string; text: string; ttsText?: string 
 export function estimateVoiceboxSec(chars: number, maxShards = 20, shardChars = 800, language = "hi"): number {
   const english = language.toLowerCase().startsWith("en");
   const shards = Math.max(1, Math.min(maxShards, Math.ceil(chars / shardChars)));
-  const speechSec = chars / (english ? 14 : 13) / shards;
+  const speechSec = chars / (english ? 16 : 13) / shards;
   return Math.round(300 + speechSec * (english ? 4 : 9) * 1.2 + 60);
 }
 
@@ -115,7 +115,8 @@ export async function generateVoiceboxNarration(opts: VoiceboxOptions): Promise<
       method: "POST",
       body: JSON.stringify({
         ref: process.env.VOICEBOX_GITHUB_REF || "main",
-        inputs: { tag: opts.slug, lines: linesJson, language: opts.language, engine: english ? "chatterbox_turbo" : "chatterbox" },
+        // English is slowed a little (0.92x): the turbo voice speaks about 3.2 words a second, quick for a beginner
+        inputs: { tag: opts.slug, lines: linesJson, language: opts.language, engine: english ? "chatterbox_turbo" : "chatterbox", speed: english ? "0.92" : "1.0" },
       }),
     });
     if (!res.ok) {
