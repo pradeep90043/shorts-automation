@@ -19,13 +19,9 @@ for (const s of scenes) {
 }
 
 // Scenes cut to land on about 20 minutes (they repeat a point made by a neighbouring scene). A cut scene's chapter title moves to the next one.
-const DROP = [
-  "First, why DTOs exist, by looking", "Then we build them, one request at a time", "The request then moves to the service, where", "In a tiny project, this works fine",
-  "Then we generate the getters and setters", "That avoids a mismatch between starters", "Valid tells Spring to apply every rule", "Until we customize how errors are handled",
-  "Later, we will also see the Builder pattern", "The three most common are easy to mix up", "If streams are new to you", "Delete and soft delete need no DTO",
-  "Under the hood, Spring uses the Jackson library", "They record when a record was created", "Why should a React app know", "It leaves out createdAt, just to show you",
-  "The database row changed too", "Both mapping methods are private", "Reload Maven, and the validation starter appears", "The three most common are easy to mix up",
-];
+// Nothing is cut: the cloned English voice speaks at 0.92x (about 2.9 words a second), so the full script plus the thinking
+// time after each quiz question lands on about 20 minutes. Put the opening words of a scene here to cut it.
+const DROP = [];
 for (let k = scenes.length - 1; k >= 0; k--) {
   if (!DROP.some((d) => scenes[k].text.startsWith(d))) continue;
   if (scenes[k].chapter && scenes[k + 1] && !scenes[k + 1].chapter) scenes[k + 1].chapter = scenes[k].chapter;
@@ -37,8 +33,10 @@ const words = scenes.reduce((n, s) => n + s.text.trim().split(/\s+/).length, 0);
 const spoken = scenes.reduce((n, s) => n + s.ttsText.trim().split(/\s+/).length, 0);
 const chars = scenes.reduce((n, s) => n + s.ttsText.length, 0);
 const longest = scenes.reduce((m, s) => Math.max(m, s.text.trim().split(/\s+/).length), 0);
-// English is spoken at about 2.5 words per second by the cloned voice (measured: 683 characters in 55 s for Hindi; English is a little faster)
-const estMin = spoken / 2.5 / 60;
+// The cloned English voice speaks 3.18 words a second (measured on 12 scenes), and the pipeline slows it to 0.92x for learners;
+// every quiz adds its thinking time (pauseAfter).
+const thinking = scenes.reduce((n, s) => n + (s.pauseAfter || 0), 0);
+const estMin = (spoken / (3.18 * 0.92) + thinking) / 60;
 
 const plan = {
   title: "DTOs & Validations in Spring Boot: Make Your REST API Professional | Spring Boot Full Course #16",
@@ -60,4 +58,4 @@ const plan = {
 
 const out = process.argv[2] || "spring16-plan.json";
 fs.writeFileSync(out, JSON.stringify(plan, null, 1));
-console.log(`scenes=${scenes.length} words=${words} spoken words=${spoken} (longest scene ${longest} words) speech chars=${chars} => about ${estMin.toFixed(1)} min of speech -> ${out}`);
+console.log(`scenes=${scenes.length} words=${words} spoken words=${spoken} (longest scene ${longest} words) speech chars=${chars} => about ${estMin.toFixed(1)} min with the thinking time -> ${out}`);
