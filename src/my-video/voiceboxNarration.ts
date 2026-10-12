@@ -41,14 +41,16 @@ export function sceneLines(scenes: { id: string; text: string; ttsText?: string 
 }
 
 /**
- * Seconds the voice stage takes: runners start in parallel (~5 min: image pull, model, sample), then each speaks its share
- * at about 8-10x real time (measured: 96.7 s of Hindi in 8.5-13 min on 2 runners), plus the join. About 13 characters are
- * spoken per second.
+ * Seconds the voice stage takes: runners start in parallel (~5 min: image pull, model, sample), then each speaks its share,
+ * plus the join. Measured on CPU runners: Hindi (multilingual engine) ~13 characters spoken per second of audio and about
+ * 8-10x real time (96.7 s in 8.5-13 min on 2 runners; the 211-scene lecture took 21 min); English (turbo engine) is about
+ * 3.4x real time (13.8 s in 46.5 s including the model load).
  */
-export function estimateVoiceboxSec(chars: number, maxShards = 20, shardChars = 800): number {
+export function estimateVoiceboxSec(chars: number, maxShards = 20, shardChars = 800, language = "hi"): number {
+  const english = language.toLowerCase().startsWith("en");
   const shards = Math.max(1, Math.min(maxShards, Math.ceil(chars / shardChars)));
-  const speechSec = chars / 13 / shards;
-  return Math.round(300 + speechSec * 9 * 1.2 + 60);
+  const speechSec = chars / (english ? 14 : 13) / shards;
+  return Math.round(300 + speechSec * (english ? 4 : 9) * 1.2 + 60);
 }
 
 const authHeaders = (token: string) => ({
