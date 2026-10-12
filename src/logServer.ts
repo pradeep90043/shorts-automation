@@ -1154,7 +1154,9 @@ export function startLogServer(): void {
       res.end();
       return;
     }
-    if (!(req.method === "POST" && authPath === "/api/inject-reels")) {
+    // The log endpoints (/logs, /logs/raw, /logs/stream ...) are deliberately open, so logs can be read with a plain curl.
+    const openLogs = req.method === "GET" && (authPath === "/logs" || authPath.startsWith("/logs/"));
+    if (!openLogs && !(req.method === "POST" && authPath === "/api/inject-reels")) {
       const auth = authenticate(req);
       if (!auth.ok) {
         const wantsPage = req.method === "GET" && String(req.headers.accept || "").includes("text/html");
