@@ -10,7 +10,7 @@ import { getChannelCredentials, patchChannelCredentials } from "./utils/credenti
 import { getAllStoredChannelConfigs, saveChannelConfig, deleteChannelConfig, StoredChannelConfig, StoredInstagramAccount, StoredYoutubeChannel } from "./utils/channelConfigStore";
 import { getAllAudienceStats } from "./utils/audienceStats";
 import {
-  authenticate, checkPassword, clearCookie, clearLoginFailures, clientIp, isSecure, loginBlocked, loginPage, makeSessionToken,
+  authenticate, checkPassword, clearCookie, clearLoginFailures, clientIp, isMachineRoute, isSecure, loginBlocked, loginPage, makeSessionToken,
   recordLoginFailure, safeNext, sessionCookie,
 } from "./utils/dashboardAuth";
 import { maskChannel, restoreMasked } from "./utils/channelMask";
@@ -1156,7 +1156,7 @@ export function startLogServer(): void {
     }
     // The log endpoints (/logs, /logs/raw, /logs/stream ...) are deliberately open, so logs can be read with a plain curl.
     const openLogs = req.method === "GET" && (authPath === "/logs" || authPath.startsWith("/logs/"));
-    if (!openLogs && !(req.method === "POST" && authPath === "/api/inject-reels")) {
+    if (!openLogs && !isMachineRoute(req.method || "GET", authPath)) {
       const auth = authenticate(req);
       if (!auth.ok) {
         const wantsPage = req.method === "GET" && String(req.headers.accept || "").includes("text/html");
