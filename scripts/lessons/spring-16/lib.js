@@ -51,6 +51,23 @@ function add(text, vis = {}) {
 }
 const chapter = (name, setting) => { chapterPending = name; curSetting = setting; };
 
+/**
+ * A "pause the video" quiz, in four beats: (the first time) say how it works; ask the question and tell the viewer to pause and
+ * think, with the options on screen; hold still while a countdown runs (pauseAfter, the thinking time) and turn the answer
+ * green just before the scene ends (revealBeforeEnd); then say and explain the answer. The countdown starts when the narrator
+ * stops talking (my-video quizTiming.ts).
+ */
+let quizzes = 0;
+const LETTERS = ["A", "B", "C", "D"];
+function ask(question, options, answer, explanation, thinkSeconds = 9.5) {
+  if (quizzes++ === 0) {
+    add("Here is your first quick quiz. Pause the video, choose an answer, then press play to check it.", { pose: "present", mood: "excited" });
+  }
+  const cue = options.length >= 4 ? "Is it A, B, C, or D?" : options.length === 3 ? "Is it A, B, or C?" : "Is it A or B?";
+  add(`Pause the video, and think. ${question} ${cue}`, { pose: "point", mood: "excited", pauseAfter: thinkSeconds, quiz: { question, options, answer, revealBeforeEnd: 1.5 } });
+  add(`The answer is ${LETTERS[answer]}. ${explanation}`, { pose: "celebrate", mood: "happy", ...alert("success", `Answer: ${LETTERS[answer]}`, options[answer].slice(0, 48)) });
+}
+
 const code = (title, language, lines, o = {}) => ({ code: { title, language, lines, ...o } });
 const term = (lines, title = "Run") => ({ terminal: { title, lines } });
 const flow = (nodes, active, packet) => ({ flow: { nodes, active, packet } });
@@ -72,4 +89,4 @@ function snap(title, language, lines, o = {}) {
   return code(title, language, lines, { revealFrom: Math.min(k, lines.length - 1), animate: "type", ...o });
 }
 
-module.exports = { scenes, add, chapter, code, term, flow, steps, scene, quiz, alert, compare, browser, table, snap, speak };
+module.exports = { ask, scenes, add, chapter, code, term, flow, steps, scene, quiz, alert, compare, browser, table, snap, speak };

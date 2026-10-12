@@ -1,6 +1,6 @@
 // Chapters 13-17: why validations, the starter, the annotations and @Valid, the demo (and its honest ending), the recap.
 const L = require("./lib");
-const { add, chapter, code, term, flow, steps, scene, quiz, alert, compare, browser, table, snap } = L;
+const { add, ask, chapter, code, term, flow, steps, scene, quiz, alert, compare, browser, table, snap } = L;
 
 const BAD = ["{", "  \"name\": \"   \",", "  \"age\": 4,", "  \"email\": \"abc\",", "  \"rollNumber\": 0,", "  \"subject\": \"\"", "}"];
 const POM = ["<dependency>", "  <groupId>org.springframework.boot</groupId>", "  <artifactId>spring-boot-starter-validation</artifactId>", "</dependency>"];
@@ -43,16 +43,15 @@ module.exports = () => {
   add("NotNull only checks for null. An empty text, or a text of spaces, still passes.", { pose: "present", ...table("Which values are rejected?", ["Annotation", "null", "empty text", "only spaces"], [["NotNull", "rejected", "allowed", "allowed"], ["NotEmpty", "rejected", "rejected", "allowed"], ["NotBlank", "rejected", "rejected", "rejected"]], 0) });
   add("NotEmpty rejects null and empty text, but spaces still pass.", { pose: "point", ...table("Which values are rejected?", ["Annotation", "null", "empty text", "only spaces"], [["NotNull", "rejected", "allowed", "allowed"], ["NotEmpty", "rejected", "rejected", "allowed"], ["NotBlank", "rejected", "rejected", "rejected"]], 1) });
   add("NotBlank rejects all three. So for text, prefer NotBlank.", { pose: "smug", mood: "happy", ...table("Which values are rejected?", ["Annotation", "null", "empty text", "only spaces"], [["NotNull", "rejected", "allowed", "allowed"], ["NotEmpty", "rejected", "rejected", "allowed"], ["NotBlank", "rejected", "rejected", "rejected"]], 2) });
-  add("Quick check. Which one rejects null, empty text, and only spaces?", { pose: "think" });
-  add("Which annotation rejects all three?", { pose: "point", ...quiz("Which annotation rejects null, empty text, and only spaces?", ["NotNull", "NotEmpty", "NotBlank", "Size"], 2) });
-  add("Correct. NotBlank is the strictest of the three, and the best choice for text.", { pose: "celebrate", mood: "happy" });
+  ask("Which annotation rejects null, empty text, and only spaces?", ["NotNull", "NotEmpty", "NotBlank", "Size"], 2,
+    "NotBlank is the strictest of the three, and the best choice for text.");
   add("Numbers need a small fix. A primitive int can never be null.", { pose: "present", mood: "worried" });
   add("So for age and roll number, we use the wrapper type Integer, with a capital I, and NotNull.", { pose: "point", ...snap("CreateStudentRequestDTO.java", "java", ["@NotNull", "@Min(value = 18)", "private Integer age;", "", "@NotNull", "private Integer rollNumber;"], { highlight: [0, 2, 4, 5] }) });
   add("Now the important part. Nothing happens yet. We must also add Valid in the controller.", { pose: "point", mood: "excited", ...alert("warning", "Not enough yet", "The annotations do nothing without Valid") });
   add("We put Valid before the request body parameter.", { pose: "present", ...snap("StudentController.java", "java", ["public ResponseEntity<CreateStudentResponseDTO> create(", "    @Valid @RequestBody CreateStudentRequestDTO request) {", "  // ...", "}"], { highlight: [1] }) });
   add("Valid tells Spring to apply every rule on the DTO. Without it, no validation runs.", { pose: "smug" });
-  add("Which annotation switches the rules on?", { pose: "point", ...quiz("What must you add to the controller parameter so the rules actually run?", ["Valid", "Validate", "Check", "Nothing, it is automatic"], 0) });
-  add("Valid, exactly. You can add the same rules to the update DTO, in the same way.", { pose: "celebrate", mood: "happy" });
+  ask("What must you add to the controller parameter so the rules actually run?", ["Valid", "Validate", "Check", "Nothing, it is automatic"], 0,
+    "Valid switches the rules on. You can add the same rules to the update DTO, in the same way.");
 
   // ═══════════════ 16 · The demo and the honest ending ═══════════════
   chapter("16 · The demo", "office");
@@ -70,9 +69,8 @@ module.exports = () => {
   add("Why? The validation works, and the request is rejected. But Spring Boot's default error response is used.", { pose: "point", mood: "think", props: [{ type: "question" }] });
   add("Until we customize how errors are handled, the same generic response always goes out.", { pose: "present" });
   add("Customizing that is called exception handling, and it is the topic of the next video.", { pose: "smug", mood: "excited", props: [{ type: "rocket" }] });
-  add("One last question. Why does Postman still show only a generic four hundred?", { pose: "think" });
-  add("Why only a generic 400?", { pose: "point", ...quiz("Why does the response still show only a generic 400 Bad Request?", ["The validations are broken", "Spring's default error response is used until we customize it", "Postman hides the messages", "The database is down"], 1) });
-  add("Yes. The validation works. The messages need exception handling, which comes next.", { pose: "celebrate", mood: "happy" });
+  ask("Why does the response still show only a generic 400 Bad Request?", ["The validations are broken", "Spring's default error response is used until we customize it", "Postman hides the messages", "The database is down"], 1,
+    "The validation works. The messages need exception handling, which comes next.");
   add("Finally, fix the body: a real name, an age of nineteen, and a valid email. The request is accepted.", { pose: "present", mood: "excited", ...browser("201 Created", "json", ["{", "  \"id\": 2,", "  \"name\": \"Aditya\",", "  \"age\": 19,", "  \"email\": \"adi@gmail.com\",", "  \"message\": \"Student saved successfully\"", "}"]) });
 
   // ═══════════════ 17 · Recap and next ═══════════════

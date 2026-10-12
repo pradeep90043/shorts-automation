@@ -23,7 +23,8 @@ const DROP = [
   "First, why DTOs exist, by looking", "Then we build them, one request at a time", "The request then moves to the service, where", "In a tiny project, this works fine",
   "Then we generate the getters and setters", "That avoids a mismatch between starters", "Valid tells Spring to apply every rule", "Until we customize how errors are handled",
   "Later, we will also see the Builder pattern", "The three most common are easy to mix up", "If streams are new to you", "Delete and soft delete need no DTO",
-  "Quick check. Why is using the entity as the request body risky?", "Quick check. Which one rejects null", "One last question. Why does Postman", "One question to check. Why does the update DTO",
+  "Under the hood, Spring uses the Jackson library", "They record when a record was created", "Why should a React app know", "It leaves out createdAt, just to show you",
+  "The database row changed too", "Both mapping methods are private", "Reload Maven, and the validation starter appears", "The three most common are easy to mix up",
 ];
 for (let k = scenes.length - 1; k >= 0; k--) {
   if (!DROP.some((d) => scenes[k].text.startsWith(d))) continue;

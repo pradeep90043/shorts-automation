@@ -1,6 +1,6 @@
 // Chapters 5-7: the response leaks internals, tight coupling and the API contract, what a DTO is.
 const L = require("./lib");
-const { add, chapter, code, term, flow, steps, scene, quiz, alert, compare, browser, table, snap } = L;
+const { add, ask, chapter, code, term, flow, steps, scene, quiz, alert, compare, browser, table, snap } = L;
 
 const PROBLEMS = ["One class, too many jobs", "Client tied to our internals", "Client can send sensitive data", "We can send sensitive data", "Checks forgotten in the service"];
 const LEAKY = ["{", "  \"id\": 1,", "  \"name\": \"Ayesha\",", "  \"age\": 25,", "  \"email\": \"ayesha@gmail.com\",", "  \"deleted\": false,", "  \"createdAt\": \"2026-10-12\"", "}"];
@@ -34,9 +34,8 @@ module.exports = () => {
   add("The client can send sensitive data, and we can send sensitive data back.", { pose: "point", ...steps(PROBLEMS, 3) });
   add("And we need many checks in the service layer. If we forget one, bad data is stored.", { pose: "present", mood: "worried", ...steps(PROBLEMS, 4) });
   add("We do not want to give the client the power to send our internal keys.", { pose: "smug", mood: "angry" });
-  add("Quick check. Why is using the entity as the request body risky?", { pose: "think" });
-  add("Why is the entity risky as a request body?", { pose: "point", ...quiz("Why is the entity risky as a request body?", ["It is slower", "The client can send fields like deleted or createdAt", "It cannot be saved", "JSON cannot map to it"], 1) });
-  add("Exactly. The client can send fields that only the server should set.", { pose: "celebrate", mood: "happy" });
+  ask("Why is the entity risky as a request body?", ["It is slower", "The client can send fields like deleted or createdAt", "It cannot be saved", "JSON cannot map to it"], 1,
+    "The client can send fields that only the server should set.");
 
   // ═══════════════ 7 · What is a DTO ═══════════════
   chapter("7 · What is a DTO?", "classroom");

@@ -1,6 +1,6 @@
 // Chapter 12: separate DTOs for create and update, the update demo, converting the GET endpoints.
 const L = require("./lib");
-const { add, chapter, code, term, flow, steps, scene, quiz, alert, compare, browser, table, snap } = L;
+const { add, ask, chapter, code, term, flow, steps, scene, quiz, alert, compare, browser, table, snap } = L;
 
 const UPDATE_REQ = ["public class UpdateStudentRequestDTO {", "  private String name;", "  private int age;", "  private int rollNumber;", "  private String subject;", "  // getters and setters", "}"];
 const UPDATE_RES = ["public class UpdateStudentResponseDTO {", "  private Long id;", "  private String name;", "  private int age;", "  private String email;", "  private int rollNumber;", "  private String subject;", "  private String message;", "  private LocalDateTime updatedAt;", "}"];
@@ -37,7 +37,6 @@ module.exports = () => {
   add("If streams are new to you, a simple for loop does the same job.", { pose: "shrug", mood: "happy" });
   add("Delete and soft delete need no DTO. They take no entity, and return no entity.", { pose: "point" });
   add("The takeaway: DTOs make your application scalable, and keep the outside and inside worlds apart.", { pose: "smug", mood: "excited" });
-  add("One question to check. Why does the update DTO have no email?", { pose: "think" });
-  add("Why no email in the update DTO?", { pose: "point", ...quiz("Why does UpdateStudentRequestDTO have no email?", ["Email is not a valid field", "A business rule: email cannot change after creation", "Email is generated automatically", "DTOs cannot hold strings"], 1) });
-  add("Right. It is a business rule, and the DTO makes the rule impossible to break.", { pose: "celebrate", mood: "happy" });
+  ask("Why does UpdateStudentRequestDTO have no email?", ["Email is not a valid field", "A business rule: email cannot change after creation", "Email is generated automatically", "DTOs cannot hold strings"], 1,
+    "It is a business rule, and the DTO makes the rule impossible to break.");
 };

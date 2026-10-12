@@ -1,6 +1,6 @@
 // Chapters 1-4: the hook, the entity that does too many jobs, the code before DTOs, the first problem (fields the client must not send).
 const L = require("./lib");
-const { add, chapter, code, term, flow, steps, scene, quiz, alert, compare, browser, table, snap } = L;
+const { add, ask, chapter, code, term, flow, steps, scene, quiz, alert, compare, browser, table, snap } = L;
 
 const LAYERS = ["Client", "Controller", "Service", "Repository", "Database"];
 const ROADMAP = ["The problem with entities", "What a DTO is", "Building DTOs", "Validations"];
@@ -41,9 +41,8 @@ module.exports = () => {
   add("That is four jobs for one class. Too many responsibilities.", { pose: "shrug", mood: "worried", ...alert("warning", "Too many responsibilities", "One class, four jobs") });
   add("In a tiny project, this works fine. In a growing project, it causes real trouble.", { pose: "point", props: [{ type: "warning" }] });
   add("The fix is a DTO, short for Data Transfer Object. It takes some jobs away from the entity.", { pose: "smug", mood: "excited", props: [{ type: "bulb" }] });
-  add("Before we see it, one quick question. Think about it.", { pose: "think" });
-  add("What should the entity be responsible for?", { pose: "point", ...quiz("What should the entity class be responsible for?", ["Taking the client's JSON", "Mapping data to the database table", "Sending the HTTP response", "Validating email addresses"], 1) });
-  add("Right. Database mapping, and nothing else. Everything else belongs to other classes.", { pose: "celebrate", mood: "happy" });
+  ask("What should the entity class be responsible for?", ["Taking the client's JSON", "Mapping data to the database table", "Sending the HTTP response", "Validating email addresses"], 1,
+    "Database mapping, and nothing else. Everything else belongs to other classes.");
 
   // ═══════════════ 3 · Before DTO ═══════════════
   chapter("3 · Before DTOs: the entity everywhere", "office");
