@@ -52,7 +52,7 @@ jobs:
       - name: Cut the voice sample
         run: |
           command -v ffmpeg >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg; }
-          ffmpeg-hide_banner -loglevel error -y -ss "${{ inputs.sample_start }}" -to "${{ inputs.sample_end }}" -i "${{ inputs.sample_path }}" -vn -ac 1 -ar 24000 sample.wav
+          ffmpeg -hide_banner -loglevel error -y -ss "${{ inputs.sample_start }}" -to "${{ inputs.sample_end }}" -i "${{ inputs.sample_path }}" -vn -ac 1 -ar 24000 sample.wav
           ls -l sample.wav
 
       - name: Restore model cache
