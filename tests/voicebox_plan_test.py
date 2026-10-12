@@ -42,4 +42,17 @@ assert " ".join(l["text"] for sh in huge for l in sh).split() == (text * 10).spl
 sizes = [sum(len(l["text"]) for l in sh) for sh in huge]
 assert min(sizes) > 0 and max(sizes) <= 2 * (sum(sizes) / len(sizes)), sizes
 
+# video mode: one line per scene is kept exactly (never merged, split or renamed) and shared out in order
+from voicebox_plan import plan_lines  # noqa: E402
+
+scene_lines = [{"name": f"segment_{i}_s{i + 1:02d}", "text": ("शब्द " * (6 + i % 7)).strip()} for i in range(330)]
+shared = plan_lines(scene_lines, max_shards=20, shard_chars=800)
+assert 1 < len(shared) <= 20, len(shared)
+flat = [l for sh in shared for l in sh]
+assert flat == scene_lines, "every scene, once, in order, untouched"
+sizes = [sum(len(l["text"]) for l in sh) for sh in shared]
+assert min(sizes) > 0 and max(sizes) <= 2 * (sum(sizes) / len(sizes)), sizes
+assert len(plan_lines(scene_lines[:3], 20, 800)) == 1, "a handful of scenes stays on one runner"
+assert len(plan_lines(scene_lines, 4, 800)) == 4, "capped by max_shards"
+
 print("✓ voicebox plan")

@@ -1,0 +1,167 @@
+name: Voicebox scenes
+
+# Narration for a VIDEO in the cloned voice: one audio file per scene, spoken on up to 20 runners at once.
+# The app (src/my-video/voiceboxNarration.ts) dispatches it with the scenes as lines named segment_<i>_<sceneId>, waits,
+# downloads the `voicebox-<tag>` artifact and drops the mp3 files into the my-video project, where
+# `longform:audio --external` measures them so every scene lasts exactly as long as its narration (see my-video render.yml).
+#   plan  -> shares the scene lines, in order, across the shards (a scene is never split or merged)
+#   speak -> one runner per shard: starts Voicebox, clones the voice, speaks its scenes
+#   join  -> trims the silence around each scene, converts to mp3, uploads voicebox-<tag>
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Name of this batch (artifact is voicebox-<tag>); the app uses the video slug
+        required: true
+      lines:
+        description: 'JSON list of {"name","text"}, one per scene; each becomes <name>.mp3'
+        required: true
+      engine:
+        description: chatterbox is multilingual (Hindi etc.); chatterbox_turbo is English only
+        default: chatterbox
+      language:
+        description: Language code
+        default: hi
+      max_shards:
+        description: How many runners at most (GitHub allows 20 at a time on the free plan)
+        default: '20'
+      shard_chars:
+        description: Characters of narration per runner (about 13 per second of Hindi speech)
+        default: '800'
+      sample_path:
+        description: Audio or video file in this repo used as the voice sample
+        default: assets/verdict-clips/codeorcap_verdict_bg.mp4
+      sample_start:
+        default: '0.4'
+        description: Seconds where the clean speech starts
+      sample_end:
+        default: '7.9'
+        description: Seconds where it ends (under 30)
+      sample_text:
+        description: Exactly what is said in that part of the sample
+        default: 'The verdict of this video is out of 10. For more info, check the caption. For tech reels, follow.'
+      voice:
+        description: Name of the cloned voice profile
+        default: codeorcap
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      shards: ${{ steps.plan.outputs.shards }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Share the scenes across shards
+        id: plan
+        env:
+          LINES: ${{ inputs.lines }}
+        run: |
+          printf '%s' "$LINES" > lines.json
+          python3 -c "import json; d=json.load(open('lines.json')); print(len(d), 'scenes,', sum(len(x['text']) for x in d), 'characters')"
+          shards=$(python3 scripts/voicebox_plan.py --lines lines.json --out plan --max-shards "${{ inputs.max_shards }}" --shard-chars "${{ inputs.shard_chars }}")
+          echo "shards=$shards" >> "$GITHUB_OUTPUT"
+          echo "shards: $shards"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plan-${{ github.run_id }}
+          path: plan/
+
+  speak:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: plan-${{ github.run_id }}
+          path: plan/
+
+      - name: Cut the voice sample
+        run: |
+          command -v ffmpeg >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg; }
+          ffmpeg -hide_banner -loglevel error -y -ss "${{ inputs.sample_start }}" -to "${{ inputs.sample_end }}" -i "${{ inputs.sample_path }}" -vn -ac 1 -ar 24000 sample.wav
+
+      - name: Restore model cache
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/vb-hf
+          key: voicebox-hf-${{ inputs.engine }}-v1
+
+      - name: Start Voicebox
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          mkdir -p ~/vb-hf && chmod -R 777 ~/vb-hf
+          docker run -d --name voicebox -p 127.0.0.1:17493:17493 \
+            -v "$HOME/vb-hf:/home/voicebox/.cache/huggingface" \
+            -e LOG_LEVEL=info -e NUMBA_CACHE_DIR=/tmp/numba_cache \
+            ghcr.io/pradeep90043/voicebox-cpu:latest
+
+      - name: Speak this shard
+        run: |
+          pip install --quiet requests
+          python3 scripts/voicebox_tts.py --base http://127.0.0.1:17493 --sample sample.wav \
+            --sample-text "${{ inputs.sample_text }}" --lines plan/shard-${{ matrix.shard }}.json --out out \
+            --engine "${{ inputs.engine }}" --voice "${{ inputs.voice }}" --language "${{ inputs.language }}"
+
+      - name: Save model cache
+        if: matrix.shard == 0 && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/vb-hf
+          key: voicebox-hf-${{ inputs.engine }}-v1
+
+      - name: Container log (on failure)
+        if: failure()
+        run: docker logs voicebox 2>&1 | tail -150
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: part-${{ github.run_id }}-${{ matrix.shard }}
+          path: out/*.wav
+          if-no-files-found: error
+
+  join:
+    needs: speak
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: part-${{ github.run_id }}-*
+          merge-multiple: true
+          path: parts/
+
+      - name: Trim, convert to mp3
+        run: |
+          command -v ffmpeg >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg; }
+          mkdir -p final
+          # keep at most ~0.1 s of silence at both ends: the scene length is the audio length, so long tails would be dead air
+          TRIM="silenceremove=start_periods=1:start_threshold=-50dB:start_silence=0.08"
+          ls parts/*.wav | xargs -P 4 -I{} sh -c 'f="{}"; b=$(basename "$f" .wav); ffmpeg -hide_banner -loglevel error -y -i "$f" -af "'"$TRIM"',areverse,'"$TRIM"',areverse" -ar 44100 -ac 1 -codec:a libmp3lame -q:a 2 "final/$b.mp3"'
+          echo "scenes: $(ls parts | wc -l) -> mp3: $(ls final | wc -l)"
+          [ "$(ls parts | wc -l)" = "$(ls final | wc -l)" ]
+          total=0; for f in final/*.mp3; do d=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$f"); total=$(awk "BEGIN{print $total+$d}"); done
+          echo "total narration seconds: $total"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voicebox-${{ inputs.tag }}
+          path: final/*.mp3
+          if-no-files-found: error

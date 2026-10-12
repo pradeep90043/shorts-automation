@@ -4,6 +4,10 @@ runners at once (like the my-video cloud render). Chunks are whole sentences (ne
 each, and stay in order: shard files are named s<shard>_c<chunk>.wav and sort back into the script.
 
   python3 scripts/voicebox_plan.py --script script.txt --out plan [--max-shards 20] [--shard-chars 1000] [--chunk-chars 240]
+  python3 scripts/voicebox_plan.py --lines lines.json  --out plan [--max-shards 20] [--shard-chars 1000]
+
+--lines is for a video: lines.json is [{"name": "segment_0_s01", "text": "..."}, ...], one line per scene. The lines are NOT
+re-chunked (a scene is one audio file whose length sets the scene length); they are only shared out, in order, across shards.
 
 Writes plan/shard-<n>.json (a list of {"name","text"}) and prints the shard indexes as JSON for the workflow matrix.
 """
@@ -61,15 +65,15 @@ def chunk(text, chunk_chars):
     return out
 
 
-def shard(chunks, max_shards, shard_chars):
+def shard(chunks, max_shards, shard_chars, size_of=len):
     """Consecutive runs of chunks, balanced by characters; as many shards as the text needs, capped at `max_shards`."""
-    total = sum(len(c) for c in chunks)
+    total = sum(size_of(c) for c in chunks)
     n = max(1, min(max_shards, len(chunks), math.ceil(total / shard_chars)))
     target = total / n
     shards, cur, size = [], [], 0
     for i, c in enumerate(chunks):
         cur.append(c)
-        size += len(c)
+        size += size_of(c)
         left_chunks = len(chunks) - i - 1
         left_shards = n - len(shards) - 1
         if len(shards) < n - 1 and (size >= target or left_chunks == left_shards):
@@ -85,15 +89,26 @@ def plan(text, max_shards=20, shard_chars=1000, chunk_chars=240):
     return [[{"name": f"s{si:02d}_c{ci:03d}", "text": t} for ci, t in enumerate(sh)] for si, sh in enumerate(shards)]
 
 
+def plan_lines(lines, max_shards=20, shard_chars=1000):
+    """Explicit {"name","text"} lines (one per video scene), kept as they are and shared out in order."""
+    return shard(lines, max_shards, shard_chars, size_of=lambda l: len(l["text"]))
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--script", required=True)
+    ap.add_argument("--script")
+    ap.add_argument("--lines")
     ap.add_argument("--out", required=True)
     ap.add_argument("--max-shards", type=int, default=20)
     ap.add_argument("--shard-chars", type=int, default=1000)
     ap.add_argument("--chunk-chars", type=int, default=240)
     a = ap.parse_args()
-    shards = plan(open(a.script, encoding="utf-8").read(), a.max_shards, a.shard_chars, a.chunk_chars)
+    if a.lines:
+        shards = plan_lines(json.load(open(a.lines, encoding="utf-8")), a.max_shards, a.shard_chars)
+    elif a.script:
+        shards = plan(open(a.script, encoding="utf-8").read(), a.max_shards, a.shard_chars, a.chunk_chars)
+    else:
+        ap.error("give --script or --lines")
     os.makedirs(a.out, exist_ok=True)
     for i, lines in enumerate(shards):
         with open(os.path.join(a.out, f"shard-{i}.json"), "w", encoding="utf-8") as f:
