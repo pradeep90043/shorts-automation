@@ -164,4 +164,35 @@ try {
   console.log("  (renderer schema check skipped: my-video/zod not available)");
 }
 
-console.log("✓ stickman planner/estimator");
+// snapshot and continueStickmanJob canContinue verification
+import { snapshot, type StickmanJob } from "../src/my-video/stickmanJobs";
+const baseJob: StickmanJob = {
+  id: "test1234",
+  status: "cancelled",
+  createdAt: Date.now() - 5000,
+  input: { script: "Hello world" },
+  estimate: estimateStickman("Hello world", 60),
+  stages: [
+    { key: "plan", label: "Plan", status: "pending", fraction: 0, estSec: 10 },
+    { key: "audio", label: "Audio", status: "pending", fraction: 0, estSec: 10 },
+    { key: "render", label: "Render", status: "pending", fraction: 0, estSec: 30 },
+  ],
+};
+
+const snapPending = snapshot(baseJob);
+assert.strictEqual(snapPending.canContinue, false, "canContinue must be false when no stages are done and no plan is saved");
+
+const jobWithDoneStage: StickmanJob = {
+  ...baseJob,
+  stages: [
+    { key: "plan", label: "Plan", status: "done", fraction: 1, estSec: 10 },
+    { key: "audio", label: "Audio", status: "failed", fraction: 0.5, estSec: 10 },
+    { key: "render", label: "Render", status: "pending", fraction: 0, estSec: 30 },
+  ],
+  plan: { title: "T", description: "D", tags: [], scenes: [], aiVisuals: false },
+};
+
+const snapDone = snapshot(jobWithDoneStage);
+assert.strictEqual(snapDone.canContinue, true, "canContinue must be true when a stage is done or plan is cached");
+
+console.log("✓ stickman planner/estimator & continue logic");

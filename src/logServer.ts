@@ -23,7 +23,7 @@ import { MultiSceneGenerator } from "./video/multiSceneGenerator";
 import { YouTubeService } from "./youtube";
 import { estimateStickman } from "./my-video/stickmanEstimate";
 import { buildImportPrompts, buildPlanOnlyPrompt, checkImportedPlan, checkPlanOnly, PlanImportError } from "./my-video/stickmanPlanner";
-import { cancelStickmanJob, getStickmanJob, getStickmanJobForPoll, listStickmanJobs, resetPublish, restartStickmanJob, startPublish, startStickmanJob } from "./my-video/stickmanJobs";
+import { cancelStickmanJob, continueStickmanJob, getStickmanJob, getStickmanJobForPoll, listStickmanJobs, resetPublish, restartStickmanJob, startPublish, startStickmanJob } from "./my-video/stickmanJobs";
 import { recordCloudProgress, resolveMyVideoDir } from "./my-video/myVideoService";
 import { pipelineLogger } from "./utils/logger";
 import { buildActivityFeed, loadJobSummaries, jobsFileFor } from "./utils/activityFeed";
@@ -1792,6 +1792,15 @@ export function startLogServer(): void {
             return json(200, { success: true, job: getStickmanJob(restarted.id) });
           } catch (e: any) {
             return json(400, { success: false, message: e.message || "Restart failed" });
+          }
+        }
+        if (req.method === "POST" && route === "/api/longvideo/continue") {
+          const body = await parseJsonBody(req);
+          try {
+            const continued = continueStickmanJob(String(body.id || ""));
+            return json(200, { success: true, job: getStickmanJob(continued.id) });
+          } catch (e: any) {
+            return json(400, { success: false, message: e.message || "Continue failed" });
           }
         }
         if (req.method === "POST" && route === "/api/longvideo/start") {

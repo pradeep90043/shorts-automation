@@ -10,7 +10,7 @@ import {
 } from "./stickmanEstimate";
 import {
   assertImportablePlan, assertPlanOnly, cleanScript, fitScriptToDuration, importStickmanPlan, planFromPlanOnly, planStickmanVideo,
-  sceneNotesForBeats, splitScriptIntoBeats,
+  sceneNotesForBeats, splitScriptIntoBeats, type StickmanPlan,
 } from "./stickmanPlanner";
 import { lessonQualityReport, type QualityWarning } from "./lessonQuality";
 import { cancelVoiceboxRun, estimateVoiceboxSec, generateVoiceboxNarration, sceneLines, type VoiceboxRunRef } from "./voiceboxNarration";
@@ -94,6 +94,10 @@ export interface StickmanJob {
   /** how many times this job was (re)started after an app restart */
   restarts?: number;
   publish?: PublishState;
+  /** Persisted StickmanPlan so a cancelled/failed job can continue without re-running LLM planning */
+  plan?: StickmanPlan;
+  /** Directory with generated narration audio if cloned voice succeeded */
+  narrationDir?: string;
 }
 
 export interface PublishState {
@@ -227,68 +231,82 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
       finishJob(job, result.videoPath, log);
       return;
     }
-    const planOnly = !!job.input.planOnly;
-    const imported = job.input.plan != null;
-    setStage(job, "plan", { status: "running", fraction: 0.1, detail: imported ? "Checking imported plan" : "Fitting script to length" });
-    // an imported plan lines up with the script's own beats, so the script is never rewritten to fit a length
-    const fit = planOnly
-      ? { script, note: "Plan-only import: narration taken from the pasted plan, no AI used" }
-      : imported
-        ? { script: cleanScript(script), note: "Imported plan: script kept exactly as written (no length rewrite)" }
-        : await fitScriptToDuration(cleanScript(script), job.input.targetSec);
-    if (isCancelled(job)) return;
-    job.finalScript = fit.script;
-    job.adjustNote = fit.note;
-    log(fit.note);
-    // re-estimate for the final script: voice rate and stage times follow its real length
-    const fitted = estimateStickman(fit.script, job.input.targetSec, job.input.resolution ?? 720, true, planOnly);
-    job.estimate = fitted;
-    for (const s of job.stages) s.estSec = fitted.stageSec[s.key];
-    setStage(job, "plan", { fraction: 0.5, detail: imported ? "Applying imported visuals" : "Choosing visuals" });
-    // the author's Stickman/Remotion-visual sections steer the director, but only while the narration is still their script
-    const notes = !planOnly && fit.script === cleanScript(script) ? sceneNotesForBeats(script, splitScriptIntoBeats(fit.script)) : null;
-    if (notes) log(`Structured script: narrating only the Voiceover sections; ${notes.notes.filter(Boolean).length} section(s) of visual directions passed to the director`);
-    const plan = planOnly
-      ? planFromPlanOnly(job.input.plan, title)
-      : imported
-        ? await importStickmanPlan(fit.script, job.input.plan, { repair: job.input.repairMissing, titleHint: title, notes })
-        : await planStickmanVideo(fit.script, title, notes);
-    if (isCancelled(job)) return;
-    Object.assign(job, { title: plan.title, description: plan.description, tags: plan.tags, scenes: plan.scenes.length, aiVisuals: plan.aiVisuals });
-    setStage(job, "plan", { status: "done", fraction: 1 });
-    log(`Planned ${plan.scenes.length} scenes (${planOnly ? "imported plan, no AI" : plan.aiVisuals ? "AI" : "rule-based"} visuals)`);
-    // lesson-quality gate: warnings only, shown in the dashboard and kept on the job
-    const warnings = lessonQualityReport(plan.scenes.map((s) => ({ text: s.text, visual: s.visual }))).slice(0, 15);
-    job.warnings = warnings;
-    for (const w of warnings.filter((x) => x.level === "warn")) log(`quality: ${w.scene ? `scene ${w.scene}: ` : ""}${w.message}`);
+    let plan: StickmanPlan;
+    const planStageDone = job.stages.find((s) => s.key === "plan")?.status === "done";
+    if (resume && job.plan && planStageDone) {
+      plan = job.plan;
+      log(`Reusing planned video: ${plan.scenes.length} scenes`);
+    } else {
+      const planOnly = !!job.input.planOnly;
+      const imported = job.input.plan != null;
+      setStage(job, "plan", { status: "running", fraction: 0.1, detail: imported ? "Checking imported plan" : "Fitting script to length" });
+      // an imported plan lines up with the script's own beats, so the script is never rewritten to fit a length
+      const fit = planOnly
+        ? { script, note: "Plan-only import: narration taken from the pasted plan, no AI used" }
+        : imported
+          ? { script: cleanScript(script), note: "Imported plan: script kept exactly as written (no length rewrite)" }
+          : await fitScriptToDuration(cleanScript(script), job.input.targetSec);
+      if (isCancelled(job)) return;
+      job.finalScript = fit.script;
+      job.adjustNote = fit.note;
+      log(fit.note);
+      // re-estimate for the final script: voice rate and stage times follow its real length
+      const fitted = estimateStickman(fit.script, job.input.targetSec, job.input.resolution ?? 720, true, planOnly);
+      job.estimate = fitted;
+      for (const s of job.stages) s.estSec = fitted.stageSec[s.key];
+      setStage(job, "plan", { fraction: 0.5, detail: imported ? "Applying imported visuals" : "Choosing visuals" });
+      // the author's Stickman/Remotion-visual sections steer the director, but only while the narration is still their script
+      const notes = !planOnly && fit.script === cleanScript(script) ? sceneNotesForBeats(script, splitScriptIntoBeats(fit.script)) : null;
+      if (notes) log(`Structured script: narrating only the Voiceover sections; ${notes.notes.filter(Boolean).length} section(s) of visual directions passed to the director`);
+      plan = planOnly
+        ? planFromPlanOnly(job.input.plan, title)
+        : imported
+          ? await importStickmanPlan(fit.script, job.input.plan, { repair: job.input.repairMissing, titleHint: title, notes })
+          : await planStickmanVideo(fit.script, title, notes);
+      if (isCancelled(job)) return;
+      job.plan = plan;
+      Object.assign(job, { title: plan.title, description: plan.description, tags: plan.tags, scenes: plan.scenes.length, aiVisuals: plan.aiVisuals });
+      setStage(job, "plan", { status: "done", fraction: 1 });
+      log(`Planned ${plan.scenes.length} scenes (${planOnly ? "imported plan, no AI" : plan.aiVisuals ? "AI" : "rule-based"} visuals)`);
+      // lesson-quality gate: warnings only, shown in the dashboard and kept on the job
+      const warnings = lessonQualityReport(plan.scenes.map((s) => ({ text: s.text, visual: s.visual }))).slice(0, 15);
+      job.warnings = warnings;
+      for (const w of warnings.filter((x) => x.level === "warn")) log(`quality: ${w.scene ? `scene ${w.scene}: ` : ""}${w.message}`);
+    }
 
     // cloned voice: one audio file per scene, made on GitHub Actions; the video is then built on the real audio lengths
-    let narrationDir: string | undefined;
+    let narrationDir: string | undefined = job.narrationDir;
     const language = job.input.language || (/-en$/i.test(job.input.voice ?? "") ? "en" : "hi");
+    const audioStageDone = job.stages.find((s) => s.key === "audio")?.status === "done";
     if (isVoicebox(job.input.voice)) {
-      const lines = sceneLines(plan.scenes);
-      const voiceSec = estimateVoiceboxSec(lines.reduce((n, l) => n + l.text.length, 0), 20, 800, language);
-      const audio = job.stages.find((s) => s.key === "audio");
-      if (audio) {
-        job.estimate.totalSec += voiceSec - audio.estSec;
-        job.estimate.stageSec.audio = voiceSec;
-        audio.estSec = voiceSec;
+      if (resume && narrationDir && audioStageDone && fs.existsSync(narrationDir)) {
+        log(`Reusing cloned-voice narration from ${narrationDir}`);
+      } else {
+        const lines = sceneLines(plan.scenes);
+        const voiceSec = estimateVoiceboxSec(lines.reduce((n, l) => n + l.text.length, 0), 20, 800, language);
+        const audio = job.stages.find((s) => s.key === "audio");
+        if (audio) {
+          job.estimate.totalSec += voiceSec - audio.estSec;
+          job.estimate.stageSec.audio = voiceSec;
+          audio.estSec = voiceSec;
+        }
+        setStage(job, "audio", { status: "running", fraction: 0.01, detail: `Cloned voice for ${lines.length} scenes` });
+        const made = await generateVoiceboxNarration({
+          slug: `lv-${job.id}`,
+          lines,
+          language,
+          resume: resume ? job.voiceRun : undefined,
+          isCancelled: () => isCancelled(job),
+          onRun: (ref) => { job.voiceRun = ref; persist(); },
+          onProgress: (p) => { setStage(job, "audio", { status: "running", fraction: p.fraction, detail: p.detail }); persistSoon(); },
+        });
+        if (isCancelled(job)) return;
+        narrationDir = made.dir;
+        job.narrationDir = narrationDir;
+        job.voiceRun = undefined;
+        setStage(job, "audio", { status: "done", fraction: 1, detail: "Cloned voice ready" });
+        log(`Cloned-voice narration ready: ${made.files} scenes`);
       }
-      setStage(job, "audio", { status: "running", fraction: 0.01, detail: `Cloned voice for ${lines.length} scenes` });
-      const made = await generateVoiceboxNarration({
-        slug: `lv-${job.id}`,
-        lines,
-        language,
-        resume: resume ? job.voiceRun : undefined,
-        isCancelled: () => isCancelled(job),
-        onRun: (ref) => { job.voiceRun = ref; persist(); },
-        onProgress: (p) => { setStage(job, "audio", { status: "running", fraction: p.fraction, detail: p.detail }); persistSoon(); },
-      });
-      if (isCancelled(job)) return;
-      narrationDir = made.dir;
-      job.voiceRun = undefined;
-      setStage(job, "audio", { status: "done", fraction: 1, detail: "Cloned voice ready" });
-      log(`Cloned-voice narration ready: ${made.files} scenes`);
     }
 
     const result = await renderStickmanVideo(
@@ -370,8 +388,44 @@ export function restartStickmanJob(id: string): StickmanJob {
   job.publish = undefined;
   job.warnings = undefined;
   job.restarts = 0;
+  job.plan = undefined;
+  job.narrationDir = undefined;
   restartFromScratch(job);
   pipelineLogger.info(`[${job.id}] Restarted by user from scratch`, "StickmanJob");
+  return job;
+}
+
+/** Continues a cancelled (or failed) job from the last completed stage. */
+export function continueStickmanJob(id: string): StickmanJob {
+  const job = jobs.get(id);
+  if (!job) throw new Error("Job not found");
+  if (isStickmanBusy()) throw new Error("A video is already being created - wait for it to finish.");
+  if (job.status !== "cancelled" && job.status !== "failed") {
+    throw new Error(`Cannot continue job in '${job.status}' state`);
+  }
+  const hasProgress = job.stages.some((s) => s.status === "done") || job.plan != null;
+  if (!hasProgress) {
+    throw new Error("No steps have completed yet - use restart instead.");
+  }
+  job.status = "running";
+  job.error = undefined;
+  job.finishedAt = undefined;
+  job.videoPath = undefined;
+  job.publish = undefined;
+  job.cloudRun = undefined;
+  job.voiceRun = undefined;
+  for (const s of job.stages) {
+    if (s.status !== "done") {
+      s.status = "pending";
+      s.fraction = 0;
+      s.detail = undefined;
+      s.startedAt = undefined;
+      s.actualSec = undefined;
+    }
+  }
+  persist();
+  pipelineLogger.info(`[${job.id}] Continuing from last step`, "StickmanJob");
+  void run(job, true);
   return job;
 }
 
@@ -392,6 +446,8 @@ export interface JobSnapshot extends StickmanJob {
   progress: number;
   elapsedSec: number;
   etaSec: number | null;
+  /** True when the job has at least one completed stage or saved plan, so it can be continued from the last step */
+  canContinue: boolean;
 }
 
 export function snapshot(job: StickmanJob): JobSnapshot {
@@ -411,9 +467,10 @@ export function snapshot(job: StickmanJob): JobSnapshot {
   } else if (job.status === "done") {
     etaSec = 0;
   }
+  const canContinue = job.stages.some((s) => s.status === "done") || job.plan != null;
   // the imported plan can be hundreds of KB: the dashboard only needs to know there was one
   const input = job.input.plan != null ? { ...job.input, plan: "imported" } : job.input;
-  return { ...job, input, progress, elapsedSec, etaSec };
+  return { ...job, input, progress, elapsedSec, etaSec, canContinue };
 }
 
 export const getStickmanJob = (id: string): JobSnapshot | undefined => {
