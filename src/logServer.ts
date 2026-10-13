@@ -18,7 +18,7 @@ import { MultiSceneGenerator } from "./video/multiSceneGenerator";
 import { YouTubeService } from "./youtube";
 import { estimateStickman } from "./my-video/stickmanEstimate";
 import { buildImportPrompts, buildPlanOnlyPrompt, checkImportedPlan, checkPlanOnly, PlanImportError } from "./my-video/stickmanPlanner";
-import { cancelStickmanJob, getStickmanJob, getStickmanJobForPoll, listStickmanJobs, resetPublish, startPublish, startStickmanJob } from "./my-video/stickmanJobs";
+import { cancelStickmanJob, getStickmanJob, getStickmanJobForPoll, listStickmanJobs, resetPublish, restartStickmanJob, startPublish, startStickmanJob } from "./my-video/stickmanJobs";
 import { recordCloudProgress, resolveMyVideoDir } from "./my-video/myVideoService";
 import { pipelineLogger } from "./utils/logger";
 import { buildActivityFeed, loadJobSummaries, jobsFileFor } from "./utils/activityFeed";
@@ -1042,8 +1042,8 @@ async function getChannelDetails(pKey: string) {
 
 function resolveHtmlPath(): string {
   const candidates = [
-    path.join(process.cwd(), "src", "dashboard.html"),
     path.join(process.cwd(), "public", "dashboard.html"),
+    path.join(process.cwd(), "src", "dashboard.html"),
     path.join(__dirname, "dashboard.html"),
     path.join(__dirname, "..", "public", "dashboard.html"),
   ];
@@ -1718,6 +1718,15 @@ export function startLogServer(): void {
           const cancelled = await cancelStickmanJob(String(body.id || ""));
           if (!cancelled) return json(404, { success: false, message: "Job not found" });
           return json(200, { success: true, job: getStickmanJob(cancelled.id) });
+        }
+        if (req.method === "POST" && route === "/api/longvideo/restart") {
+          const body = await parseJsonBody(req);
+          try {
+            const restarted = restartStickmanJob(String(body.id || ""));
+            return json(200, { success: true, job: getStickmanJob(restarted.id) });
+          } catch (e: any) {
+            return json(400, { success: false, message: e.message || "Restart failed" });
+          }
         }
         if (req.method === "POST" && route === "/api/longvideo/start") {
           const body = await parseJsonBody(req);

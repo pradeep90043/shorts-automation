@@ -1349,6 +1349,7 @@
       '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;"><div style="flex:1;height:10px;background:#21262d;border-radius:5px;overflow:hidden;"><div style="height:100%;width:' + pct + '%;background:' + color + ';transition:width .4s;"></div></div><div style="font-size:12px;font-family:var(--font-mono);color:#fff;width:40px;text-align:right;">' + pct + '%</div></div>' +
       stages + result + lvWarningsHtml(j.warnings) +
       (running ? '<div style="margin-top:12px;"><button id="lv-cancel-btn" class="btn-primary" style="background:#3a1d1d;border:1px solid var(--danger);color:#ff7b72;padding:7px 16px;font-size:12px;" onclick="lvCancel()">🛑 Cancel creation</button></div>' : '') +
+      (!running && (j.status === 'cancelled' || j.status === 'failed') ? '<div style="margin-top:12px;display:flex;gap:10px;"><button id="lv-restart-btn" class="btn-primary" style="padding:7px 16px;font-size:12px;" onclick="lvRestart(\'' + lvEsc(j.id) + '\')">🔄 Restart video creation</button></div>' : '') +
       (!running && j.finalScript ? '<details style="margin-top:12px;"><summary style="cursor:pointer;font-size:12px;color:var(--text-muted);">Final narration used (' + j.finalScript.split(/\s+/).length + ' words)</summary><div style="margin-top:8px;padding:10px;background:#161b22;border:1px solid #21262d;border-radius:6px;font-size:12px;line-height:1.6;color:#c9d1d9;white-space:pre-wrap;max-height:240px;overflow:auto;">' + lvEsc(j.finalScript) + '</div></details>' : '');
   }
 
@@ -1369,6 +1370,41 @@
     } catch (e) {
       if (btn) { btn.disabled = false; btn.textContent = '🛑 Cancel creation'; }
       showToast('Cancel failed: ' + (e.message || e), 'err');
+    }
+  }
+
+  async function lvRestart(id) {
+    const targetId = id || (lvJob && lvJob.id);
+    if (!targetId) return;
+    if (lvJob && lvJob.status === 'running') {
+      showToast('A video is already being created', 'err');
+      return;
+    }
+    const btn = document.getElementById('lv-restart-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Restarting…'; }
+    try {
+      const r = await fetch(BASE_URL + '/api/longvideo/restart', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: targetId }),
+      });
+      const d = await r.json();
+      if (!d.success) throw new Error(d.message || 'Restart failed');
+      lvJob = d.job;
+      lvJobFetchedAt = Date.now();
+      const startBtn = document.getElementById('lv-start-btn');
+      if (startBtn) startBtn.disabled = true;
+      lvBadge(true);
+      lvRender();
+      clearInterval(lvPollTimer);
+      clearInterval(lvTickTimer);
+      lvPollTimer = setInterval(lvPoll, 3000);
+      lvTickTimer = setInterval(lvRender, 1000);
+      lvLoadHistory();
+      showToast('🔄 Video creation restarted', 'ok');
+    } catch (e) {
+      if (btn) { btn.disabled = false; btn.textContent = '🔄 Restart video creation'; }
+      showToast('Restart failed: ' + (e.message || e), 'err');
     }
   }
 
@@ -1488,9 +1524,12 @@
       const el = document.getElementById('lv-history');
       window._lvJobs = d.jobs;
       el.innerHTML = d.jobs.length ? d.jobs.map((j, i) =>
-        '<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-top:1px solid #21262d;cursor:pointer;" onclick="lvOpenJob(' + i + ')">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 0;border-top:1px solid #21262d;cursor:pointer;" onclick="lvOpenJob(' + i + ')">' +
           '<span style="color:#fff;">' + (j.status === 'done' ? '✅' : j.status === 'cancelled' ? '🛑' : j.status === 'failed' ? '❌' : '⏳') + ' ' + lvEsc(j.title || j.input.script.slice(0, 60)) + '</span>' +
-          '<span style="font-family:var(--font-mono);">' + new Date(j.createdAt).toLocaleString() + ' &middot; ' + lvFmt(j.elapsedSec) + '</span></div>').join('') : 'No videos yet.';
+          '<div style="display:flex;align-items:center;gap:8px;">' +
+            ((j.status === 'cancelled' || j.status === 'failed') ? '<button class="btn-primary" style="padding:2px 8px;font-size:11px;" onclick="event.stopPropagation();lvRestart(\'' + lvEsc(j.id) + '\')">🔄 Restart</button>' : '') +
+            '<span style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);">' + new Date(j.createdAt).toLocaleString() + ' &middot; ' + lvFmt(j.elapsedSec) + '</span>' +
+          '</div></div>').join('') : 'No videos yet.';
       return d.jobs;
     } catch (e) {}
   }
