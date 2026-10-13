@@ -355,6 +355,26 @@ export async function cancelStickmanJob(id: string): Promise<StickmanJob | undef
   return job;
 }
 
+/** Restarts a cancelled (or failed) job from scratch with its original inputs. */
+export function restartStickmanJob(id: string): StickmanJob {
+  const job = jobs.get(id);
+  if (!job) throw new Error("Job not found");
+  if (isStickmanBusy()) throw new Error("A video is already being created - wait for it to finish.");
+  if (job.status !== "cancelled" && job.status !== "failed") {
+    throw new Error(`Cannot restart job in '${job.status}' state`);
+  }
+  job.createdAt = Date.now();
+  job.finishedAt = undefined;
+  job.error = undefined;
+  job.videoPath = undefined;
+  job.publish = undefined;
+  job.warnings = undefined;
+  job.restarts = 0;
+  restartFromScratch(job);
+  pipelineLogger.info(`[${job.id}] Restarted by user from scratch`, "StickmanJob");
+  return job;
+}
+
 /** Feed measured stage timings back so the next estimate is closer. */
 function learn(job: StickmanJob): void {
   if (isVoicebox(job.input.voice)) return;
