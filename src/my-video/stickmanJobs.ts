@@ -13,6 +13,7 @@ import {
   sceneNotesForBeats, splitScriptIntoBeats,
 } from "./stickmanPlanner";
 import { lessonQualityReport, type QualityWarning } from "./lessonQuality";
+import { clonedVoiceProfile } from "../audio/clonedVoice";
 import { cancelVoiceboxRun, estimateVoiceboxSec, generateVoiceboxNarration, sceneLines, type VoiceboxRunRef } from "./voiceboxNarration";
 
 /** `voice: "voicebox"` = the cloned voice made on GitHub Actions (see voiceboxNarration.ts) instead of an edge-tts voice. */
@@ -279,6 +280,8 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
         slug: `lv-${job.id}`,
         lines,
         language,
+        // Storiyum videos are spoken in the Storiyum voice (its own sample), everything else in the default cloned voice
+        inputs: job.input.channelKey?.toLowerCase() === "storiyum" ? clonedVoiceProfile("storiyum")?.inputs : undefined,
         resume: resume ? job.voiceRun : undefined,
         isCancelled: () => isCancelled(job),
         onRun: (ref) => { job.voiceRun = ref; persist(); },

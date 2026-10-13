@@ -5,7 +5,7 @@ import path from "path";
 import { execFileSync, spawnSync } from "child_process";
 import { config } from "../src/config";
 import { audioDuration, rateToTempo, retimeAudio } from "../src/audio/retime";
-import { spokenText } from "../src/audio/clonedVoice";
+import { clonedVoiceEnabled, clonedVoiceProfile, spokenText } from "../src/audio/clonedVoice";
 import { VERDICT_WINDOWS, buildClonedVerdictAudio, clonedVerdictAvailable, verdictNumber, verdictTempo } from "../src/audio/clonedVerdict";
 import { TTSService } from "../src/audio/tts";
 import { buildHowItWorksSpec, howItWorksLines } from "../src/my-video/howItWorksClip";
@@ -24,6 +24,14 @@ import { buildHowItWorksSpec, howItWorksLines } from "../src/my-video/howItWorks
     assert.strictEqual(verdictNumber(0.2), 1);
     assert.strictEqual(verdictNumber(6.6), 7);
     assert.strictEqual(verdictNumber(42), 10);
+
+    // ── Storiyum speaks Hindi with its own sample; CodeOrCap keeps the default one ──
+    process.env.GITHUB_TOKEN = process.env.GITHUB_TOKEN || "x";
+    assert.ok(clonedVoiceEnabled("storiyum") && clonedVoiceEnabled("codeorcap") && !clonedVoiceEnabled("other"));
+    assert.strictEqual(clonedVoiceProfile("Storiyum")?.language, "hi");
+    assert.strictEqual(clonedVoiceProfile("storiyum")?.inputs.sample_path, "assets/voice-samples/storiyum_female.mp3");
+    assert.ok(fs.existsSync(path.join(config.paths.assetsDir, "voice-samples", "storiyum_female.mp3")), "the sample ships in the repo");
+    assert.strictEqual(clonedVoiceProfile("codeorcap")?.inputs.sample_path, undefined);
 
     // ── text for the voice ──
     assert.strictEqual(spokenText("Wow 🔥 check https://x.co/a now #AI @bob **bold**"), "Wow check now bold");
