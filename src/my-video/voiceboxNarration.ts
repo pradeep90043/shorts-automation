@@ -109,6 +109,15 @@ export async function generateVoiceboxNarration(opts: VoiceboxOptions): Promise<
   const gh = async (url: string, init?: RequestInit) => fetchRetry(`https://api.github.com/repos/${repo}${url}`, { ...init, headers: { ...authHeaders(token), ...(init?.headers || {}) } });
 
   let runId = opts.resume?.runId ?? null;
+  if (runId) {
+    // a run that was cancelled or failed has no audio to download: speak again
+    try {
+      const prev = (await (await gh(`/actions/runs/${runId}`)).json()) as any;
+      if (prev.status === "completed" && prev.conclusion !== "success") runId = null;
+    } catch {
+      /* keep re-attaching: the poll loop below reports the real problem */
+    }
+  }
   if (!runId) {
     const linesJson = JSON.stringify(opts.lines);
     if (linesJson.length > MAX_INPUT_CHARS) {

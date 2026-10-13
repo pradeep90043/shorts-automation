@@ -233,7 +233,9 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
     }
     let plan: StickmanPlan;
     const planStageDone = job.stages.find((s) => s.key === "plan")?.status === "done";
+    let planReused = false;
     if (resume && job.plan && planStageDone) {
+      planReused = true;
       plan = job.plan;
       log(`Reusing planned video: ${plan.scenes.length} scenes`);
     } else {
@@ -275,11 +277,13 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
     }
 
     // cloned voice: one audio file per scene, made on GitHub Actions; the video is then built on the real audio lengths
-    let narrationDir: string | undefined = job.narrationDir;
+    // jobs made before narrationDir was saved: the narration folder has a fixed name
+    let narrationDir: string | undefined = job.narrationDir ?? (isVoicebox(job.input.voice) ? path.join(config.paths.outputDir, `voicebox-lv-${job.id}`) : undefined);
     const language = job.input.language || (/-en$/i.test(job.input.voice ?? "") ? "en" : "hi");
     const audioStageDone = job.stages.find((s) => s.key === "audio")?.status === "done";
     if (isVoicebox(job.input.voice)) {
-      if (resume && narrationDir && audioStageDone && fs.existsSync(narrationDir)) {
+      // only reuse the audio when the scenes are the ones it was spoken for (the plan was reused, not re-made)
+      if (resume && planReused && audioStageDone && narrationDir && fs.existsSync(narrationDir)) {
         log(`Reusing cloned-voice narration from ${narrationDir}`);
       } else {
         const lines = sceneLines(plan.scenes);
@@ -413,7 +417,7 @@ export function continueStickmanJob(id: string): StickmanJob {
   job.videoPath = undefined;
   job.publish = undefined;
   job.cloudRun = undefined;
-  job.voiceRun = undefined;
+  // job.voiceRun is kept: a voice run that already finished is re-attached and downloaded instead of re-spoken
   for (const s of job.stages) {
     if (s.status !== "done") {
       s.status = "pending";
