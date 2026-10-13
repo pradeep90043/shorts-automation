@@ -3,6 +3,7 @@ import { exec } from 'child_process';
 import { pipelineLogger } from '../utils/logger';
 import fs from 'fs';
 import { rateToTempo, retimeAudio } from './retime';
+import { stripVoiceTags } from './voiceTags';
 
 /** Edge TTS speaking rate ("-10%", "+5%"): duration scales as 1 / (1 + rate), measured on en-IN-PrabhatNeural. */
 const toRate = (pct: number): string => `${pct >= 0 ? "+" : ""}${Math.round(pct)}%`;
@@ -78,6 +79,8 @@ export class TTSService {
       }
       pipelineLogger.warn('Cloned voice is not available for this script: using the Edge voice', 'TTSService');
     }
+    // the fallback voices would read "[chuckle]" aloud (only the cloned voice acts it out)
+    script = stripVoiceTags(script);
     try {
       pipelineLogger.info(`Generating TTS voiceover (${script.length} chars) for channel: ${channelKey || 'default'}...`, 'TTSService');
       

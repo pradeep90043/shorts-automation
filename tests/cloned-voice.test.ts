@@ -7,6 +7,7 @@ import { config } from "../src/config";
 import { audioDuration, rateToTempo, retimeAudio } from "../src/audio/retime";
 import { spokenText } from "../src/audio/clonedVoice";
 import { VERDICT_WINDOWS, buildClonedVerdictAudio, clonedVerdictAvailable, verdictNumber, verdictTempo } from "../src/audio/clonedVerdict";
+import { stripVoiceTags } from "../src/audio/voiceTags";
 import { TTSService } from "../src/audio/tts";
 import { buildHowItWorksSpec, howItWorksLines } from "../src/my-video/howItWorksClip";
 
@@ -24,6 +25,11 @@ import { buildHowItWorksSpec, howItWorksLines } from "../src/my-video/howItWorks
     assert.strictEqual(verdictNumber(0.2), 1);
     assert.strictEqual(verdictNumber(6.6), 7);
     assert.strictEqual(verdictNumber(42), 10);
+
+    // ── acting tags never reach the Edge voice or the captions ──
+    assert.strictEqual(stripVoiceTags("Honestly, [chuckle] it's a bit of both."), "Honestly, it's a bit of both.");
+    assert.strictEqual(stripVoiceTags("No tags here."), "No tags here.");
+    assert.strictEqual(spokenText("Honestly, [chuckle] it works"), "Honestly, [chuckle] it works", "the cloned voice still gets the tag");
 
     // ── text for the voice ──
     assert.strictEqual(spokenText("Wow 🔥 check https://x.co/a now #AI @bob **bold**"), "Wow check now bold");

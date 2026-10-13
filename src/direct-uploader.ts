@@ -32,6 +32,7 @@ import { ImageAnalyzer } from "./image-analysis";
 import { TTSService } from "./audio/tts";
 import { prepareScoreAudio } from "./audio/verdictNumber";
 import { clonedVoiceEnabled, spokenText, startClonedLines } from "./audio/clonedVoice";
+import { stripVoiceTags } from "./audio/voiceTags";
 import { buildClonedVerdictAudio } from "./audio/clonedVerdict";
 import { concatAudio } from "./audio/retime";
 import { estimateWordTimings, groupWordsIntoLines, generateASSFile } from "./audio/subtitles";
@@ -173,10 +174,10 @@ export class DirectUploader {
     // old 1.7 words/s "safe" rate with an "or fewer" cap made the script read ~70% of the video, then silence. The voiceover is
     // also fitted to the exact video length after synthesis (see generateFittedVoiceover), so this only has to be close.
     const fillWholeVideo = this.profile.key.toLowerCase() === "codeorcap";
-    // The cloned English voice (src/audio/clonedVoice.ts) reads ~3.2 words/s at natural speed (measured), the Edge voice ~2.4.
+    // The cloned English voice (src/audio/clonedVoice.ts) reads ~3.0 words/s of plain text but ~2.6 words/s of conversational text with pauses (measured), the Edge voice ~2.4.
     const cloned = fillWholeVideo && clonedVoiceEnabled(this.profile.key);
-    const wordsPerSecond = fillWholeVideo ? (cloned ? 3.0 : 2.3) : 1.7; // other channels keep the cautious rate
-    const targetWords = Math.max(10, Math.min(fillWholeVideo ? (cloned ? 300 : 220) : 150, Math.round((duration - (fillWholeVideo ? 0.6 : 1.5)) * wordsPerSecond)));
+    const wordsPerSecond = fillWholeVideo ? (cloned ? 2.6 : 2.3) : 1.7; // other channels keep the cautious rate
+    const targetWords = Math.max(10, Math.min(fillWholeVideo ? (cloned ? 260 : 220) : 150, Math.round((duration - (fillWholeVideo ? 0.6 : 1.5)) * wordsPerSecond)));
     const lengthRule = fillWholeVideo
       ? `Write a highly engaging, natural-sounding script of about ${targetWords} words (never fewer than ${Math.round(targetWords * 0.9)}). ` +
         `It MUST keep the narration going through the WHOLE ${Math.round(duration)}-second video and finish in its last second or so, ` +
@@ -184,8 +185,13 @@ export class DirectUploader {
       : `Write a highly engaging, natural-sounding script of exactly or fewer than ${targetWords} words. ` +
         `It MUST finish speaking about 1.5 to 2 seconds before the end of the ${Math.round(duration)}-second video ` +
         `so that the voice is never cut off in the middle of a sentence. It should be concise and well-paced. `;
+    // the cloned voice sounds human when the text is spoken language, not written language (listening test, 2026-10-13)
+    const spokenStyle = cloned
+      ? `Write it the way a person talks, not the way they write: short sentences, contractions (it's, here's, don't), a rhetorical question or two ("Sounds amazing, right?"), a pause marked with "..." before the catch, and at most ONE "[chuckle]" tag where a real person would chuckle. No other bracketed tags. `
+      : "";
     return (
       lengthRule +
+      spokenStyle +
       `CRITICAL: The script is a voiceover spoken to the audience. You MUST NEVER mention frame numbers (e.g. 'frame 1', 'frame 2', 'first frame'), 'slide', 'image', 'picture', or refer to the visual layout stages. Narrate the story or explain the code naturally as a single continuous flow of speech.`
     );
   }
@@ -4229,7 +4235,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     }
 
     let subtitlesFilter = "";
-    const script = context.metadata?.voiceoverScript;
+    const script = context.metadata?.voiceoverScript ? stripVoiceTags(context.metadata.voiceoverScript) : undefined;
     if (script && includeCaptions) {
       try {
         const assPath = path.join(tempDir, "subtitles.ass");
