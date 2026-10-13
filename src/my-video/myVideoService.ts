@@ -429,7 +429,7 @@ const doRender = async (spec: StickmanVideoSpec, onProgress?: ProgressCallback):
   const videoJson = {
     format: "longform",
     template: "stickman",
-    theme: spec.theme ?? "light",
+    theme: spec.theme ?? "dark",
     composition: "StickmanVideo",
     orientation: spec.orientation ?? "horizontal",
     fps: spec.fps ?? 30,

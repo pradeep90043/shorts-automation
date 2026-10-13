@@ -321,6 +321,7 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
         tags: plan.tags,
         scenes: plan.scenes,
         orientation: orientation ?? "horizontal",
+        theme: "dark", // developers prefer a dark screen: code panels and the CodeOrCap brand are built for it
         resolution: resolution ?? (orientation === "vertical" ? 1080 : 720),
         rate: job.estimate.rate,
         ...(narrationDir

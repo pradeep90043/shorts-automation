@@ -508,6 +508,34 @@ export function diversifyVisuals(scenes: StickmanScene[]): void {
   }
 }
 
+/** Panels that keep explaining while the narration stays on the same example (a quiz or a news clipping is a one-beat moment). */
+const CARRY_KEYS = ["code", "terminal", "browser", "table", "steps", "flow", "compare", "container", "scene"];
+const MAX_CARRY = 3;
+
+/**
+ * An example is rarely explained in one 5-second beat. The director is told to vary panels, so the beats that
+ * continue an example come back with only the stickman and a callout: the viewer hears about the code but sees
+ * nothing. A beat with no panel (and no new chapter) therefore keeps the previous beat's panel, up to MAX_CARRY beats.
+ */
+export function carryPanelsForward(scenes: StickmanScene[]): number {
+  let carried = 0, run = 0;
+  for (let i = 1; i < scenes.length; i++) {
+    const prev = scenes[i - 1].visual as any, cur = scenes[i].visual as any;
+    if (PANEL_KEYS.some((k) => cur[k])) { run = 0; continue; }
+    const key = CARRY_KEYS.find((k) => prev[k]);
+    if (!key || cur.chapter || run >= MAX_CARRY || cur.hideFigure) { run = 0; continue; }
+    const panel = JSON.parse(JSON.stringify(prev[key]));
+    // already on screen: show it whole, without typing / revealing it again
+    if (key === "code") { delete panel.revealFrom; panel.animate = "lines"; }
+    cur[key] = panel;
+    delete cur.props;
+    delete cur.callouts;
+    run++;
+    carried++;
+  }
+  return carried;
+}
+
 /** Edge-TTS Hindi/Hinglish speaks about this many words per second at the default rate. */
 export const WORDS_PER_SEC = 2.4;
 /** Share of the target length left for narration (the rest is pauses between scenes). */
@@ -688,7 +716,9 @@ STORY: the video follows HOOK -> PROBLEM -> CONTEXT -> EXPLANATION -> EXAMPLE ->
 
 POSES (map the intent): pointing at something -> point; explaining -> present; thinking/reading/planning -> think; confused or "I don't know" -> shrug; surprised -> shocked; mistake -> facepalm; worry/risk -> worried; success -> celebrate; moving/progress -> walk; sure of himself -> smug. Pair the pose with a fitting mood. Do not use the same pose three beats in a row. Use "flip": true now and then so he points toward the other side. "look": left/right/up/down/camera only when it supports the line.
 
-PANELS (right side of the frame, at most ONE per beat, never the same panel type twice in a row, and no callouts/props on a panel beat). Pick the panel that matches what is being said:
+EXAMPLES MUST BE SEEN: whenever the narration gives an example, a case, a scenario or "for instance", put that example on screen (the exact code / config / values / a "scene" or "flow" of the situation) BEFORE or WHILE it is spoken, and keep it there for every beat that talks about it. Never describe an example with only the stickman and callouts. A beat that continues the previous beat's example repeats the SAME panel (move "highlight" to the line now being explained) instead of dropping it.
+
+PANELS (right side of the frame, at most ONE per beat, vary the panel type between DIFFERENT ideas - but the same panel on consecutive beats is right while one example is still being explained - and no callouts/props on a panel beat). Pick the panel that matches what is being said:
 - "steps": roadmaps, timelines, checklists, stages. {"items":["Core Java","Spring Boot","Database","Production"],"current":1}. 2-8 labels (max 48 chars); "current" = the step being discussed, earlier ones show as done. Reuse the SAME items for consecutive beats of one topic and move "current" forward.
 - "flow": architecture / request flow, animated packet travelling through the nodes. {"nodes":["Controller","Service","Repository","Database"],"packet":"GET /users"} (2-5 nodes, max 24 chars; optional "active" = node index the packet stops at).
 - "code": whenever the narration talks about code, a class, an annotation, a method or a config file - show that code. Realistic, technically correct, real names from the script, up to 14 lines of max 56 chars: {"title":"UserController.java","language":"java","lines":["@GetMapping(\"/users\")","public List<User> getUsers() {","    return userService.getUsers();","}"],"highlight":[2]}. "title" is the file name; "language" is java, properties, yaml, bash, xml or text (config files: properties / yaml). "highlight" = 0-based lines being explained right now. To build a file over several beats REPEAT the earlier lines and set "revealFrom" (0-based) to the first new line, so only the new lines appear. "animate":"type" types the new lines out (use it when important code first appears).
@@ -902,6 +932,8 @@ function finalizePlan(beats: string[], visuals: any[], meta: any, script: string
     visual: sanitizeVisual(visuals[i], i),
   }));
   diversifyVisuals(scenes);
+  const carried = carryPanelsForward(scenes);
+  if (carried) pipelineLogger.info(`Kept the previous panel on ${carried} beat(s) that continue the same example`, "StickmanPlanner");
   const invented = dropInventedNumbers(scenes, script);
   if (invented) pipelineLogger.info(`Dropped ${invented} number panel(s) whose figures are not in the script`, "StickmanPlanner");
 

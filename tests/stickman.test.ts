@@ -196,3 +196,17 @@ const snapDone = snapshot(jobWithDoneStage);
 assert.strictEqual(snapDone.canContinue, true, "canContinue must be true when a stage is done or plan is cached");
 
 console.log("✓ stickman planner/estimator & continue logic");
+
+// an example that continues over several beats keeps its panel on screen
+{
+  const { carryPanelsForward } = require("../src/my-video/stickmanPlanner");
+  const code = { title: "application.yml", lines: ["spring:", "  profiles:", "    active: dev"], highlight: [2], revealFrom: 1, animate: "type", language: "yaml" };
+  const sc = (visual: any) => ({ id: "s", text: "t", visual });
+  const scenes = [sc({ code }), sc({ callouts: ["DEV PROFILE"] }), sc({ chapter: "2 · Prod" }), sc({}), sc({ quiz: { question: "q", options: ["a", "b"], answer: 0 } })];
+  const n = carryPanelsForward(scenes);
+  assert.strictEqual(n, 1, "only the bare beat of the same example gets the panel");
+  assert.deepStrictEqual((scenes[1].visual as any).code.lines, code.lines);
+  assert.strictEqual((scenes[1].visual as any).code.revealFrom, undefined);
+  assert.strictEqual((scenes[1].visual as any).callouts, undefined);
+  assert.strictEqual((scenes[2].visual as any).code, undefined, "a new chapter starts clean");
+}
