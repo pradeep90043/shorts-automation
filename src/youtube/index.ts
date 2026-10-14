@@ -168,6 +168,45 @@ export class YouTubeService {
     }
   }
 
+  /** Number of channels with a refresh token (a cloud runner uploads to exactly one, so it needs this to be 1). */
+  public get connectedChannelCount(): number {
+    return this.ytConfig.channels.filter((c) => !!c.refreshToken).length;
+  }
+
+  private oauthFor(channel: YoutubeChannel) {
+    const { clientId, clientSecret, redirectUri } = this.ytConfig;
+    if (!clientId || !clientSecret || !channel.refreshToken) {
+      throw new Error("YouTube OAuth credentials or channel refresh token missing.");
+    }
+    const oauth2 = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+    oauth2.setCredentials({ refresh_token: channel.refreshToken });
+    return oauth2;
+  }
+
+  /**
+   * A short-lived (about 1 hour) access token for the one connected channel. A cloud runner uploads the video
+   * itself with it, so the refresh token and client secret never leave this server.
+   */
+  public async mintAccessToken(): Promise<{ accessToken: string; channelName: string }> {
+    const channel = this.ytConfig.channels.find((c) => !!c.refreshToken);
+    if (!channel) throw new Error("No YouTube channel connected.");
+    const { token } = await this.oauthFor(channel).getAccessToken();
+    if (!token) throw new Error("Google returned no access token.");
+    return { accessToken: token, channelName: channel.name };
+  }
+
+  /** Change a video's visibility (e.g. a private upload from the cloud runner becomes public). */
+  public async setPrivacy(videoId: string, privacyStatus: "private" | "unlisted" | "public"): Promise<void> {
+    const channel = this.ytConfig.channels.find((c) => !!c.refreshToken);
+    if (!channel) throw new Error("No YouTube channel connected.");
+    const yt = google.youtube({ version: "v3", auth: this.oauthFor(channel) });
+    // videos.update replaces the whole status part, so keep the other fields as they are
+    const cur = await yt.videos.list({ part: ["status"], id: [videoId] });
+    const status = cur.data.items?.[0]?.status;
+    if (!status) throw new Error("Video not found on YouTube.");
+    await yt.videos.update({ part: ["status"], requestBody: { id: videoId, status: { ...status, privacyStatus } } });
+  }
+
   // Upload to ALL configured channels in parallel
   public async uploadToAllChannels(
     videoPath: string,

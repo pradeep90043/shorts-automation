@@ -3,7 +3,15 @@ import path from "path";
 import { randomUUID } from "crypto";
 import { config } from "../config";
 import { pipelineLogger } from "../utils/logger";
-import { cancelCloudRun, renderStickmanVideo, resumeCloudRender, type CloudRunRef, type RenderProgress } from "./myVideoService";
+import { cancelCloudRun, renderStickmanVideo, resumeCloudRender, type CloudRunRef, type RemoteVideo, type RenderProgress, type RunnerGrant } from "./myVideoService";
+
+/**
+ * Supplied by the server: builds the YouTube upload grant for a job's channel, or null when the runner cannot
+ * upload (no channel, several channels, no token) and the video must be downloaded the usual way.
+ */
+type RunnerPublishProvider = (job: StickmanJob) => Promise<RunnerGrant | null>;
+let runnerPublishProvider: RunnerPublishProvider | undefined;
+export const setRunnerPublishProvider = (fn: RunnerPublishProvider): void => { runnerPublishProvider = fn; };
 import {
   estimateStickman, recordTimings, STAGE_LABELS, STAGE_ORDER,
   type StageKey, type StickmanEstimate,
@@ -94,6 +102,8 @@ export interface StickmanJob {
   /** how many times this job was (re)started after an app restart */
   restarts?: number;
   publish?: PublishState;
+  /** Set when the cloud runner uploaded the finished video straight to YouTube (no local file) */
+  remote?: RemoteVideo & { channelKey?: string };
   /** Persisted StickmanPlan so a cancelled/failed job can continue without re-running LLM planning */
   plan?: StickmanPlan;
   /** Directory with generated narration audio if cloned voice succeeded */
@@ -228,7 +238,7 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
     if (resume && job.cloudRun) {
       log(`Resuming GitHub run #${job.cloudRun.runId} after restart`);
       const result = await resumeCloudRender(`lv-${job.id}`, job.cloudRun, (p) => applyProgress(job, p));
-      finishJob(job, result.videoPath, log);
+      finishJob(job, result.videoPath, log, result.remote);
       return;
     }
     let plan: StickmanPlan;
@@ -322,6 +332,7 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
         scenes: plan.scenes,
         orientation: orientation ?? "horizontal",
         theme: "dark", // developers prefer a dark screen: code panels and the CodeOrCap brand are built for it
+        runnerPublish: runnerPublishProvider && job.input.channelKey ? () => runnerPublishProvider!(job) : undefined,
         resolution: resolution ?? (orientation === "vertical" ? 1080 : 720),
         rate: job.estimate.rate,
         ...(narrationDir
@@ -331,7 +342,7 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
       (p) => applyProgress(job, p),
     );
 
-    finishJob(job, result.videoPath, log);
+    finishJob(job, result.videoPath, log, result.remote);
   } catch (err: any) {
     if (isCancelled(job)) return; // the render was stopped on purpose; keep the cancelled state
     const running = job.stages.find((s) => s.status === "running");
@@ -345,17 +356,32 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
   }
 }
 
-function finishJob(job: StickmanJob, videoPath: string, log: (m: string) => void): void {
+function finishJob(job: StickmanJob, videoPath: string, log: (m: string) => void, remote?: RemoteVideo): void {
   if (isCancelled(job)) return;
   for (const s of job.stages) if (s.status !== "done") setStage(job, s.key, { status: "done", fraction: 1 });
-  job.videoPath = videoPath;
+  if (remote) {
+    // the runner put it on YouTube (private by default): there is no local file to preview or download
+    job.remote = { ...remote, channelKey: job.input.channelKey };
+    videoPath = "";
+  }
+  job.videoPath = videoPath || undefined;
   job.status = "done";
   job.finishedAt = Date.now();
   job.cloudRun = undefined;
   job.voiceRun = undefined;
   if (job.input.plan != null) job.input.plan = "imported"; // keep the marker, free the data
   learn(job);
-  log(`Done in ${Math.round((job.finishedAt - job.createdAt) / 1000)}s -> ${videoPath}`);
+  log(`Done in ${Math.round((job.finishedAt - job.createdAt) / 1000)}s -> ${remote ? `${remote.url} (${remote.privacy}, uploaded by the runner)` : videoPath}`);
+}
+
+/** The runner uploaded the video privately; the user made it public from the dashboard. */
+export function markRemotePublic(jobId: string, urlForChannel: { channelName: string; url: string }): PublishState | undefined {
+  const job = jobs.get(jobId);
+  if (!job?.remote) return undefined;
+  job.remote.privacy = "public";
+  job.publish = { status: "done", startedAt: Date.now(), finishedAt: Date.now(), channelKey: job.remote.channelKey, url: urlForChannel.url, urls: [urlForChannel], pct: 100 };
+  persist();
+  return job.publish;
 }
 
 /** Forcefully stops a running job: marks it cancelled and cancels its GitHub run so no more minutes are spent. */

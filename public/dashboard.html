@@ -1325,16 +1325,15 @@
     }).join('');
 
     let result = '';
-    if (j.status === 'done' && j.videoPath) {
-      const file = j.videoPath.split('/').pop();
-      const src = '/output/' + encodeURIComponent(file);
+    if (j.status === 'done' && (j.videoPath || j.remote)) {
+      const src = j.videoPath ? '/output/' + encodeURIComponent(j.videoPath.split('/').pop()) : '';
       const vertical = j.input.orientation === 'vertical';
       result = '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:14px;padding-top:14px;border-top:1px solid #21262d;">' +
         '<div style="flex:1;min-width:240px;">' +
           '<div style="font-size:15px;font-weight:800;color:#fff;margin-bottom:6px;">' + lvEsc(j.title) + '</div>' +
           '<div style="font-size:11px;color:var(--text-muted);margin-bottom:12px;">' + j.scenes + ' scenes &middot; created in <b>' + lvFmt(elapsed) + '</b> (estimated ' + lvFmt(estTotal) + ')' + (j.aiVisuals === false ? ' &middot; visuals assigned by rule (AI unavailable)' : '') + '</div>' +
           '<div style="display:flex;gap:10px;flex-wrap:wrap;">' +
-            '<a href="' + src + '" download class="btn-primary" style="padding:7px 14px;font-size:12px;text-decoration:none;">⬇️ Download MP4</a>' +
+            (src ? '<a href="' + src + '" download class="btn-primary" style="padding:7px 14px;font-size:12px;text-decoration:none;">⬇️ Download MP4</a>' : '') +
             lvPublishArea(j) +
           '</div></div>' +
         '</div>';
@@ -1525,6 +1524,12 @@
   function lvPublishArea(j) {
     const p = j.publish;
     const btn = 'class="btn-primary" style="background:#e53e3e;border-color:#fc8181;padding:7px 14px;font-size:12px;"';
+    if (j.remote && !j.videoPath && !(p && p.status === 'done')) {
+      // the cloud runner already uploaded it to YouTube as private: review it, then make it public
+      return '<a href="' + lvEsc(j.remote.url) + '" target="_blank" class="btn-primary" style="background:#238636;border-color:#2ea043;padding:7px 14px;font-size:12px;text-decoration:none;">▶ Review on YouTube (' + lvEsc(j.remote.privacy) + ')</a>' +
+        (p && p.status === 'failed' ? '<span style="font-size:12px;color:var(--danger);align-self:center;max-width:260px;">❌ ' + lvEsc((p.error || 'Failed').slice(0, 160)) + '</span>' : '') +
+        '<button ' + btn + ' id="lv-publish-btn" onclick="lvPublish()">🌍 Make public</button>';
+    }
     if (p && p.status === 'running') {
       return '<span style="font-size:12px;color:var(--primary);align-self:center;">⏳ Publishing to YouTube… ' + (p.pct || 0) + '% <span style="color:var(--text-muted);">(safe to close this page)</span></span>';
     }
@@ -1537,7 +1542,7 @@
 
   async function lvPublish() {
     const j = lvJob;
-    if (!j || !j.videoPath) return;
+    if (!j || !(j.videoPath || j.remote)) return;
     const btn = document.getElementById('lv-publish-btn');
     btn.disabled = true; btn.innerText = '⏳ Starting…';
     try {

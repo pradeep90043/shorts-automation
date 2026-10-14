@@ -23,8 +23,8 @@ import { MultiSceneGenerator } from "./video/multiSceneGenerator";
 import { YouTubeService } from "./youtube";
 import { estimateStickman } from "./my-video/stickmanEstimate";
 import { buildImportPrompts, buildPlanOnlyPrompt, checkImportedPlan, checkPlanOnly, PlanImportError } from "./my-video/stickmanPlanner";
-import { cancelStickmanJob, continueStickmanJob, getStickmanJob, getStickmanJobForPoll, listStickmanJobs, resetPublish, restartStickmanJob, startPublish, startStickmanJob } from "./my-video/stickmanJobs";
-import { recordCloudProgress, resolveMyVideoDir } from "./my-video/myVideoService";
+import { cancelStickmanJob, continueStickmanJob, getStickmanJob, getStickmanJobForPoll, listStickmanJobs, markRemotePublic, resetPublish, restartStickmanJob, setRunnerPublishProvider, startPublish, startStickmanJob } from "./my-video/stickmanJobs";
+import { handleRunnerPublish, recordCloudProgress, resolveMyVideoDir } from "./my-video/myVideoService";
 import { pipelineLogger } from "./utils/logger";
 import { buildActivityFeed, loadJobSummaries, jobsFileFor } from "./utils/activityFeed";
 import { dmStore, dmKnowledgeBase, inboundDmManager, outboundDmManager, aiDmBrain, getPersona } from "./instagram/dm";
@@ -1094,7 +1094,38 @@ function buildHTML(html: string): string {
 
 let lvJobsCache: { at: number; body: string } | null = null;
 
+/** A YouTubeService for one dashboard channel profile, or null when no YouTube channel is connected to it. */
+async function youtubeServiceFor(channelKey: string): Promise<YouTubeService | null> {
+  const stored = (await getAllStoredChannelConfigs()).find((c) => c.key === channelKey);
+  const ytChannels = stored?.youtubeChannels || [];
+  if (ytChannels.length === 0 && !stored?.youtubeRefreshToken) return null;
+  return new YouTubeService({
+    clientId: stored?.youtubeClientId || process.env.YOUTUBE_CLIENT_ID || "",
+    clientSecret: stored?.youtubeClientSecret || process.env.YOUTUBE_CLIENT_SECRET || "",
+    redirectUri: stored?.youtubeRedirectUri || OAUTH_REDIRECT_URI,
+    channels: ytChannels.length > 0 ? ytChannels : [{ name: stored?.brandName || channelKey, refreshToken: stored?.youtubeRefreshToken || "" }],
+  });
+}
+
 export function startLogServer(): void {
+  // Long videos: the cloud runner uploads the finished video to YouTube itself (private) with a short-lived token
+  // from here, so this server does not have to download and unpack it. Needs exactly one connected channel.
+  setRunnerPublishProvider(async (job) => {
+    if (process.env.LONGVIDEO_RUNNER_UPLOAD === "0") return null;
+    const key = String(job.input.channelKey || "").toLowerCase().trim();
+    const yt = key ? await youtubeServiceFor(key) : null;
+    if (!yt || yt.connectedChannelCount !== 1) return null;
+    const { accessToken, channelName } = await yt.mintAccessToken();
+    return {
+      accessToken,
+      channelName,
+      title: job.title || "Video",
+      description: job.description || "",
+      tags: job.tags || ["tech", "coding", "tutorial"],
+      privacy: "private",
+    };
+  });
+
   const server = http.createServer(async (req, res) => {
     const url = req.url || "/";
 
@@ -1836,11 +1867,29 @@ export function startLogServer(): void {
           const ok = recordCloudProgress(String(body.slug || ""), String(body.token || ""), Number(body.done), Number(body.total), Number(body.chunk) || 0);
           return json(ok ? 200 : 403, { success: ok });
         }
+        if (req.method === "POST" && route === "/api/longvideo/yt-token") {
+          // Called by the GitHub runner after the render; authenticated by the job's progress token.
+          const body = await parseJsonBody(req);
+          const out = await handleRunnerPublish(String(body.slug || ""), String(body.token || ""), body);
+          return json(out.status, out.body);
+        }
         if (req.method === "POST" && route === "/api/longvideo/publish") {
           const body = await parseJsonBody(req);
           const job = getStickmanJob(String(body.jobId || ""));
           if (!job) return json(404, { success: false, message: "Job not found" });
           const channelKey = String(body.channelKey || job.input.channelKey || "codeorcap").toLowerCase().trim();
+          if (job.remote && !job.videoPath) {
+            // the runner already uploaded it (private): publishing means making it public
+            const yt = await youtubeServiceFor(String(job.remote.channelKey || channelKey).toLowerCase().trim());
+            if (!yt) return json(400, { success: false, message: `No YouTube channel connected for ${channelKey}` });
+            try {
+              await yt.setPrivacy(job.remote.videoId, "public");
+            } catch (e: any) {
+              return json(400, { success: false, message: `Could not make the video public: ${e?.message || e}` });
+            }
+            const state = markRemotePublic(job.id, { channelName: job.remote.channelName || channelKey, url: job.remote.url });
+            return json(200, { success: true, publish: state });
+          }
           const storedConfig = (await getAllStoredChannelConfigs()).find((c) => c.key === channelKey);
           const ytChannels = storedConfig?.youtubeChannels || [];
           if (ytChannels.length === 0 && !storedConfig?.youtubeRefreshToken) {

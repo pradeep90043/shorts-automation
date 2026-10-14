@@ -103,10 +103,10 @@ export const clearLoginFailures = (ip: string): void => void fails.delete(ip);
 /**
  * Routes called by machines, not by a browser, so they cannot carry the login cookie. Each one has its own check:
  * the reel injector sends x-inject-token, the cloud renderer's bundle download and progress callback are keyed by an
- * unguessable job slug (+ a per-job token for progress), and Meta's DM webhook is verified by its verify token.
+ * unguessable job slug (+ a per-job token for progress and for the runner's YouTube-upload token), and Meta's DM webhook is verified by its verify token.
  */
 export function isMachineRoute(method: string, pathname: string): boolean {
-  if (method === "POST" && (pathname === "/api/inject-reels" || pathname === "/api/longvideo/progress" || pathname === "/api/dm/webhook")) return true;
+  if (method === "POST" && (pathname === "/api/inject-reels" || pathname === "/api/longvideo/progress" || pathname === "/api/longvideo/yt-token" || pathname === "/api/dm/webhook")) return true;
   if (method === "GET" && (pathname.startsWith("/api/longvideo/bundle/") || pathname === "/api/dm/webhook")) return true;
   return false;
 }

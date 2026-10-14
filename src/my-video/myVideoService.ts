@@ -51,6 +51,11 @@ export interface StickmanVideoSpec {
    * the files go into the project and my-video measures them, so each scene lasts exactly as long as its audio.
    */
   narrationDir?: string;
+  /**
+   * When set, the cloud runner uploads the finished video straight to YouTube (it asks this for a short-lived
+   * token) and the server skips downloading it. Return null when that is not possible: the video is downloaded.
+   */
+  runnerPublish?: () => Promise<RunnerGrant | null>;
 }
 
 /** Pipeline stages inside my-video, in execution order. */
@@ -91,8 +96,10 @@ export async function cancelCloudRun(ref: CloudRunRef): Promise<void> {
 export type ProgressCallback = (p: RenderProgress) => void;
 
 export interface MyVideoRenderResult {
+  /** The mp4 on this server. Empty when the runner uploaded it straight to YouTube (see `remote`). */
   videoPath: string;
   slug: string;
+  remote?: RemoteVideo;
 }
 
 export const resolveMyVideoDir = (): string => {
@@ -158,6 +165,66 @@ export const recordCloudProgress = (slug: string, token: string, done: number, t
   return true;
 };
 
+// ── Upload from the cloud runner ─────────────────────────────────────────────
+// The runner asks for a short-lived YouTube token (POST /api/longvideo/yt-token, authenticated with the
+// job's progress token), uploads the finished video itself and reports the URL back. The refresh token and
+// client secret stay on this server and nothing has to be downloaded and unpacked here afterwards.
+
+/** What a runner needs to upload: an access token plus the video's metadata. */
+export interface RunnerGrant {
+  accessToken: string;
+  title: string;
+  description?: string;
+  tags?: string[];
+  privacy?: "private" | "unlisted" | "public";
+  channelName?: string;
+}
+
+/** A video the runner uploaded to YouTube. */
+export interface RemoteVideo {
+  videoId: string;
+  url: string;
+  privacy: string;
+  channelName?: string;
+}
+
+const runnerPublish = new Map<string, { grant: () => Promise<RunnerGrant | null>; channelName?: string; remote?: RemoteVideo; error?: string }>();
+
+/** Handles the runner's calls. Returns the HTTP status and JSON body. */
+export async function handleRunnerPublish(
+  slug: string,
+  token: string,
+  body: { action?: string; videoId?: string; url?: string; privacy?: string; error?: string },
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const progress = cloudProgress.get(slug);
+  const entry = runnerPublish.get(slug);
+  if (!progress || progress.token !== token || !entry) return { status: 403, body: { success: false } };
+  if (body.action === "token") {
+    try {
+      const grant = await entry.grant();
+      if (!grant) return { status: 409, body: { success: false, message: "publishing from the runner is not available" } };
+      entry.channelName = grant.channelName;
+      return { status: 200, body: { success: true, ...grant } };
+    } catch (err: any) {
+      logger.warn(`[my-video] runner token request for ${slug} failed: ${err?.message || err}`);
+      return { status: 500, body: { success: false, message: "could not mint an upload token" } };
+    }
+  }
+  if (body.action === "done") {
+    const videoId = String(body.videoId || "");
+    if (!/^[\w-]{6,20}$/.test(videoId)) return { status: 400, body: { success: false } };
+    entry.remote = { videoId, url: `https://youtu.be/${videoId}`, privacy: String(body.privacy || "private"), channelName: entry.channelName };
+    logger.info(`[my-video] ${slug} uploaded to YouTube by the runner: ${entry.remote.url} (${entry.remote.privacy})`);
+    return { status: 200, body: { success: true } };
+  }
+  if (body.action === "failed") {
+    entry.error = String(body.error || "unknown").slice(0, 300);
+    logger.warn(`[my-video] ${slug}: the runner could not upload to YouTube (${entry.error}); the video is downloaded instead`);
+    return { status: 200, body: { success: true } };
+  }
+  return { status: 400, body: { success: false } };
+}
+
 const sumProgress = (slug: string): { done: number; total: number } => {
   let done = 0, total = 0;
   for (const c of cloudProgress.get(slug)?.chunks.values() ?? []) { done += c.done; total += c.total; }
@@ -186,7 +253,7 @@ async function renderViaGithubActions(
   renderedPath: string,
   emit: (p: RenderProgress) => void,
   resume?: CloudRunRef,
-): Promise<void> {
+): Promise<RemoteVideo | undefined> {
   const ghToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
   if (!ghToken) throw new Error("No GITHUB_TOKEN configured for cloud rendering");
 
@@ -195,6 +262,7 @@ async function renderViaGithubActions(
   const bundleUrl = `${publicUrl}/api/longvideo/bundle/${spec.slug}`;
   const progressToken = resume?.token ?? randomBytes(12).toString("hex");
   cloudProgress.set(spec.slug, { token: progressToken, chunks: new Map() });
+  if (spec.runnerPublish) runnerPublish.set(spec.slug, { grant: spec.runnerPublish });
   const vertical = spec.orientation === "vertical";
   const resolution = String(spec.resolution ?? (vertical ? 1080 : 720));
 
@@ -222,6 +290,8 @@ async function renderViaGithubActions(
           bundle_url: bundleUrl,
           progress_url: `${publicUrl}/api/longvideo/progress`,
           progress_token: progressToken,
+          // the runner uploads the finished video to YouTube itself with a short-lived token from this server
+          ...(spec.runnerPublish ? { publish_url: `${publicUrl}/api/longvideo/yt-token` } : {}),
         // parallel runners; the workflow only splits when there are enough frames per runner
         chunks: process.env.MY_VIDEO_RENDER_CHUNKS || "16",
           resolution,
@@ -309,6 +379,13 @@ async function renderViaGithubActions(
     }
   }
 
+  // The runner already put the video on YouTube: nothing to download or unpack here.
+  const remote = runnerPublish.get(spec.slug)?.remote;
+  if (remote) {
+    emit({ stage: "finalize", fraction: 1, detail: "Uploaded to YouTube from the cloud runner" });
+    return remote;
+  }
+
   // Fetch artifact
   emit({ stage: "finalize", fraction: 0.7, detail: "Downloading rendered video from GitHub Cloud..." });
   const artifactsRes = await fetchRetry(`https://api.github.com/repos/${repo}/actions/runs/${runId}/artifacts`, {
@@ -356,6 +433,7 @@ async function renderViaGithubActions(
   if (mp4 && path.join(outDir, mp4) !== renderedPath) {
     fs.renameSync(path.join(outDir, mp4), renderedPath);
   }
+  return undefined;
 }
 
 // Renders are CPU/RAM heavy: run one at a time, queue the rest.
@@ -394,8 +472,9 @@ export const resumeCloudRender = (
     const renderedPath = path.join(dir, "out", `${slug}.mp4`);
     const emit = (p: RenderProgress) => onProgress?.(p);
     try {
-      await renderViaGithubActions(dir, { slug } as StickmanVideoSpec, renderedPath, emit, ref);
+      const remote = await renderViaGithubActions(dir, { slug } as StickmanVideoSpec, renderedPath, emit, ref);
       emit({ stage: "finalize", fraction: 1 });
+      if (remote) return { videoPath: "", slug, remote };
       if (!fs.existsSync(renderedPath)) throw new Error(`cloud render finished but ${renderedPath} is missing`);
       fs.mkdirSync(config.paths.outputDir, { recursive: true });
       const videoPath = path.join(config.paths.outputDir, `stickman-${slug}.mp4`);
@@ -403,6 +482,7 @@ export const resumeCloudRender = (
       return { videoPath, slug };
     } finally {
       cloudProgress.delete(slug);
+      runnerPublish.delete(slug);
       fs.rmSync(path.join(dir, "public", "content", slug), { recursive: true, force: true });
       const outDir = path.dirname(renderedPath);
       for (const f of fs.existsSync(outDir) ? fs.readdirSync(outDir) : []) {
@@ -466,6 +546,7 @@ const doRender = async (spec: StickmanVideoSpec, onProgress?: ProgressCallback):
     const ghToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
     const forceLocal = process.env.RENDER_LOCAL === "true";
     let totalFrames: number | undefined;
+    let remote: RemoteVideo | undefined;
     const useCloud = Boolean(ghToken) && !forceLocal;
 
     // Cloud runner generates TTS + merge itself (free edge-tts, no secrets), so the VM skips them.
@@ -486,7 +567,7 @@ const doRender = async (spec: StickmanVideoSpec, onProgress?: ProgressCallback):
 
     if (useCloud) {
       logger.info(`[my-video] Dispatching Remotion render to GitHub Cloud Runner (7GB RAM)...`);
-      await renderViaGithubActions(dir, spec, renderedPath, emit);
+      remote = await renderViaGithubActions(dir, spec, renderedPath, emit);
     } else {
       logger.info(`[my-video] Running local Remotion render (concurrency=${RENDER_CONCURRENCY})...`);
       emit({ stage: "bundle", fraction: 0 });
@@ -524,6 +605,7 @@ const doRender = async (spec: StickmanVideoSpec, onProgress?: ProgressCallback):
     }
 
     emit({ stage: "finalize", fraction: 1, totalFrames });
+    if (remote) return { videoPath: "", slug: spec.slug, remote };
     if (!fs.existsSync(renderedPath)) throw new Error(`my-video finished but ${renderedPath} is missing`);
 
     fs.mkdirSync(config.paths.outputDir, { recursive: true });
@@ -532,6 +614,7 @@ const doRender = async (spec: StickmanVideoSpec, onProgress?: ProgressCallback):
     return { videoPath, slug: spec.slug };
   } finally {
     cloudProgress.delete(spec.slug);
+    runnerPublish.delete(spec.slug);
     fs.rmSync(projectDir, { recursive: true, force: true });
     // my-video leaves the mp4 plus a QA stamp (<slug>.mp4.qa.json) in out/
     const outDir = path.dirname(renderedPath);
