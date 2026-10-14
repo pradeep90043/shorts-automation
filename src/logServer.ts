@@ -1099,22 +1099,34 @@ async function youtubeServiceFor(channelKey: string): Promise<YouTubeService | n
   const stored = (await getAllStoredChannelConfigs()).find((c) => c.key === channelKey);
   const ytChannels = stored?.youtubeChannels || [];
   if (ytChannels.length === 0 && !stored?.youtubeRefreshToken) return null;
+
+  // Deduplicate channels by name so multiple/duplicate tokens for the same channel count as 1
+  const deduped: StoredYoutubeChannel[] = [];
+  const seen = new Set<string>();
+  for (const c of ytChannels) {
+    const nameKey = (c.name || channelKey).toLowerCase().trim();
+    if (c.refreshToken && !seen.has(nameKey)) {
+      seen.add(nameKey);
+      deduped.push(c);
+    }
+  }
+
   return new YouTubeService({
     clientId: stored?.youtubeClientId || process.env.YOUTUBE_CLIENT_ID || "",
     clientSecret: stored?.youtubeClientSecret || process.env.YOUTUBE_CLIENT_SECRET || "",
     redirectUri: stored?.youtubeRedirectUri || OAUTH_REDIRECT_URI,
-    channels: ytChannels.length > 0 ? ytChannels : [{ name: stored?.brandName || channelKey, refreshToken: stored?.youtubeRefreshToken || "" }],
+    channels: deduped.length > 0 ? deduped : [{ name: stored?.brandName || channelKey, refreshToken: stored?.youtubeRefreshToken || "" }],
   });
 }
 
 export function startLogServer(): void {
   // Long videos: the cloud runner uploads the finished video to YouTube itself (private) with a short-lived token
-  // from here, so this server does not have to download and unpack it. Needs exactly one connected channel.
+  // from here, so this server does not have to download and unpack it. Needs at least one connected channel.
   setRunnerPublishProvider(async (job) => {
     if (process.env.LONGVIDEO_RUNNER_UPLOAD === "0") return null;
     const key = String(job.input.channelKey || "").toLowerCase().trim();
     const yt = key ? await youtubeServiceFor(key) : null;
-    if (!yt || yt.connectedChannelCount !== 1) return null;
+    if (!yt || yt.connectedChannelCount < 1) return null;
     const { accessToken, channelName } = await yt.mintAccessToken();
     return {
       accessToken,
