@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { pipelineLogger } from "../utils/logger";
 import { generateVoiceboxNarration, type VoiceboxLine } from "../my-video/voiceboxNarration";
+import { voiceInputsFor } from "../my-video/voiceProfiles";
 
 /**
  * One cloned English voice for a whole CodeOrCap Short: the claim narration, the "how it works" lines and (from fixed assets)
@@ -41,7 +42,7 @@ export function startClonedLines(slug: string, lines: VoiceboxLine[]): Promise<C
   const started = Date.now();
   pipelineLogger.info(`Cloned voice: ${lines.length} line(s) -> GitHub Actions (give up after ${timeoutMin} min)`, "ClonedVoice");
   // no denoise: the user compared 4 variants against their own voice and the undenoised one (turbo, 1.0x) sounded closest
-  return generateVoiceboxNarration({ slug, lines, language: "en", speed: "1.0", inputs: { denoise: "false" }, giveUpMs: timeoutMin * 60_000 })
+  return generateVoiceboxNarration({ slug, lines, language: "en", speed: "1.0", inputs: { ...voiceInputsFor("codeorcap"), denoise: "false" }, giveUpMs: timeoutMin * 60_000 })
     .then((r) => {
       pipelineLogger.info(`Cloned voice ready in ${Math.round((Date.now() - started) / 1000)}s`, "ClonedVoice");
       return {

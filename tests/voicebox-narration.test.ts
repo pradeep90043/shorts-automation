@@ -2,6 +2,7 @@ import assert from "assert";
 import { estimateVoiceboxSec, sceneLines } from "../src/my-video/voiceboxNarration";
 import { interruptedJobAction, isVoicebox } from "../src/my-video/stickmanJobs";
 import { planFromPlanOnly } from "../src/my-video/stickmanPlanner";
+import { voiceInputsFor } from "../src/my-video/voiceProfiles";
 
 // each scene becomes one line named the way my-video names a scene's audio file: segment_<index>_<id>
 const lines = sceneLines([
@@ -62,3 +63,16 @@ assert.ok(estimateVoiceboxSec(17000, 20, 800, "en") < twentyMin * 0.75, "English
 assert.strictEqual(estimateVoiceboxSec(17000), estimateVoiceboxSec(17000, 20, 800, "hi"), "Hindi stays the default");
 
 console.log("✓ voicebox narration");
+
+// per-channel cloned voice: Storiyum speaks as paki1 (the Pakizah sample); a channel with no entry keeps the workflow defaults
+const storiyum = voiceInputsFor("Storiyum");
+assert.strictEqual(storiyum.voice, "paki1");
+assert.strictEqual(storiyum.sample_path, "assets/voice-samples/pakizah.mp3");
+assert.ok(Number(storiyum.sample_end) - Number(storiyum.sample_start) < 30, "the sample window stays under 30 s");
+const codeorcap = voiceInputsFor("codeorcap");
+assert.strictEqual(codeorcap.voice, "paddy1");
+assert.strictEqual(codeorcap.sample_path, "assets/voice-samples/paddy1.mp3");
+assert.ok(require("fs").existsSync(codeorcap.sample_path), "the sample file is committed in the repo");
+assert.ok(require("fs").existsSync(storiyum.sample_path), "the Storiyum sample file is committed in the repo");
+assert.notStrictEqual(codeorcap.voice, storiyum.voice, "the two channels have different voices");
+assert.deepStrictEqual(voiceInputsFor(undefined), {});

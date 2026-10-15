@@ -52,6 +52,9 @@ on:
       denoise:
         description: Remove background hiss from the voice sample and from every generated scene (the sample has it, the clone repeats it)
         default: 'true'
+      strip_noise:
+        description: Mute the noise the model keeps generating after a sentence ends (loud, no pitch; found by its missing pitch)
+        default: 'true'
 
 permissions:
   contents: read
@@ -173,7 +176,8 @@ jobs:
           mkdir -p final
           # denoise (when asked), trim the silence around the speech, convert: scripts/voice_finish_scene.sh
           [ "${{ inputs.denoise }}" = "true" ] && curl -fsSL --retry 3 -o bd.rnnn "https://raw.githubusercontent.com/GregorR/rnnoise-models/master/beguiling-drafter-2018-08-30/bd.rnnn"
-          ls parts/*.wav | OUT_DIR=final DENOISE="${{ inputs.denoise }}" MODEL="$PWD/bd.rnnn" xargs -P 4 -n 1 bash scripts/voice_finish_scene.sh
+          python3 -m pip install --quiet numpy
+          ls parts/*.wav | OUT_DIR=final DENOISE="${{ inputs.denoise }}" STRIP_NOISE="${{ inputs.strip_noise }}" MODEL="$PWD/bd.rnnn" xargs -P 4 -n 1 bash scripts/voice_finish_scene.sh
           echo "scenes: $(ls parts | wc -l) -> mp3: $(ls final | wc -l)"
           [ "$(ls parts | wc -l)" = "$(ls final | wc -l)" ]
           total=0; for f in final/*.mp3; do d=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$f"); total=$(awk "BEGIN{print $total+$d}"); done
