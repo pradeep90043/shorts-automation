@@ -19,13 +19,15 @@ export interface ScoredReel {
 // niche key → mood key → hashtag list
 // "default" is used when the requested mood has no specific entry.
 const HASHTAG_MAP: Record<string, Record<string, string[]>> = {
-  // CodeOrCap — tech/AI info + claim verification (fact-check, myth-busting, explainers)
+  // CodeOrCap — anything tech: coding, dev careers, AI, security, cloud, gadgets, tech facts and explainers.
+  // Broad, high-volume tags come first: the Puppeteer fallback only visits the first 5 hashtags.
   tech: {
     default: [
-      "techfacts", "factcheck", "mythbusted", "didyouknow", "techexplained",
-      "techtips", "aifacts", "artificialintelligence", "aitools", "chatgpt",
-      "machinelearning", "programming", "coding", "softwareengineering", "cybersecurity",
-      "techshorts", "learnai", "developer", "techtrivia", "aiexplained",
+      "programming", "coding", "technology", "artificialintelligence", "softwareengineer",
+      "developer", "aitools", "chatgpt", "techtips", "webdevelopment",
+      "python", "javascript", "cybersecurity", "machinelearning", "cloudcomputing",
+      "devops", "learntocode", "techshorts", "techfacts", "techexplained",
+      "techcareers", "codinglife", "gadgets", "didyouknow", "mythbusted",
     ],
     funny: [
       "programminghumor", "developerhumor", "codingjokes", "techmemes", "techhumor",

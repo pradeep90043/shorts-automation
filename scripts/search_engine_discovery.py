@@ -12,6 +12,7 @@ import sys
 import json
 import re
 import time
+import random
 import argparse
 import urllib.parse
 import urllib.request
@@ -19,17 +20,41 @@ import urllib.request
 REEL_REGEX = re.compile(r"instagram\.com/reel/([A-Za-z0-9_-]+)")
 
 NICHE_KEYWORDS = {
-    # tech/AI info + claim verification
+    # anything tech: coding, dev careers, AI, security, cloud, gadgets, tech news and facts.
+    # (Used to be only fact-check / myth-busting queries, which kept returning the same few reels.)
     "codeorcap": [
-        "tech fact check",
-        "tech myth busted",
-        "ai facts did you know",
-        "chatgpt tips",
-        "ai tools explained",
-        "cybersecurity facts",
-        "programming myths",
-        "software engineer facts",
+        # coding + dev craft
+        "programming tips",
+        "coding tips for beginners",
+        "software developer life",
+        "web development tips",
+        "javascript tips and tricks",
+        "python tricks",
+        "java spring boot",
+        "react js tips",
+        "backend development explained",
+        "system design explained",
+        "data structures and algorithms",
+        "github tips",
+        "linux terminal tips",
+        # AI
+        "ai tools you should know",
+        "chatgpt prompts",
+        "artificial intelligence explained",
         "machine learning explained",
+        "ai agents explained",
+        # security, cloud, infra
+        "cybersecurity tips",
+        "ethical hacking basics",
+        "cloud computing explained",
+        "devops explained",
+        # careers, news, facts
+        "tech career advice",
+        "software engineer interview tips",
+        "tech news today",
+        "new gadgets tech",
+        "tech facts did you know",
+        "tech myth busted",
         "tech explained",
     ],
     # any story: movies, series, cartoons, anime, short films
@@ -194,10 +219,20 @@ def search_via_bing_html(keyword: str, max_results: int = 10) -> list[dict]:
     return reels
 
 
-def discover_reels(keywords: list[str], limit: int = 10, timelimit: str | None = None) -> list[dict]:
-    """Iterate through keywords until limit reels are discovered."""
+def discover_reels(
+    keywords: list[str], limit: int = 10, timelimit: str | None = None, spread: bool = False,
+) -> list[dict]:
+    """Iterate through keywords until limit reels are discovered.
+
+    spread=True is for broad niches (e.g. tech): the keywords are visited in random order and each one may
+    contribute only a few reels, so one run covers several topics instead of filling up on the first query.
+    """
     all_reels = []
     seen_codes = set()
+
+    if spread:
+        keywords = random.sample(keywords, len(keywords))
+    per_keyword = max(2, -(-limit // 3)) if spread else limit  # ceil(limit / 3), at least 2
 
     for kw in keywords:
         if len(all_reels) >= limit:
@@ -210,11 +245,13 @@ def discover_reels(keywords: list[str], limit: int = 10, timelimit: str | None =
         if not batch:
             batch = search_via_bing_html(kw, max_results=limit)
 
+        taken = 0
         for r in batch:
             if r["shortcode"] not in seen_codes:
                 seen_codes.add(r["shortcode"])
                 all_reels.append(r)
-                if len(all_reels) >= limit:
+                taken += 1
+                if len(all_reels) >= limit or taken >= per_keyword:
                     break
 
         # Polite interval between queries
@@ -232,6 +269,7 @@ def main():
 
     kw_list = []
     timelimit = None
+    spread = False
     if args.keywords:
         kw_list = [k.strip() for k in args.keywords.split(",") if k.strip()]
     elif args.profile:
@@ -243,10 +281,12 @@ def main():
             print(f"WARN: unknown profile '{p_key}', using codeorcap keywords", file=sys.stderr)
         kw_list = NICHE_KEYWORDS.get(p_key, NICHE_KEYWORDS["codeorcap"])
         timelimit = RECENCY.get(p_key)
+        spread = p_key == "codeorcap"  # broad tech niche: sample many topics per run
     else:
         kw_list = NICHE_KEYWORDS["codeorcap"]
+        spread = True
 
-    reels = discover_reels(kw_list, limit=args.limit, timelimit=timelimit)
+    reels = discover_reels(kw_list, limit=args.limit, timelimit=timelimit, spread=spread)
 
     for r in reels:
         print(json.dumps(r))
