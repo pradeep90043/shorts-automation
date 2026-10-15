@@ -19,4 +19,4 @@ if [ "${DENOISE:-true}" = "true" ]; then
   src="$tmp/clean.wav"
 fi
 TRIM="silenceremove=start_periods=1:start_threshold=-50dB:start_silence=0.08"
-ffmpeg -hide_banner -loglevel error -y -i "$src" -af "$TRIM,areverse,$TRIM,areverse,alimiter=limit=0.9" -ar 44100 -ac 1 -codec:a libmp3lame -q:a 2 "${OUT_DIR:-final}/$name.mp3"
+ffmpeg -hide_banner -loglevel error -y -i "$src" -af "$TRIM,areverse,$TRIM,areverse,alimiter=limit=0.84" -ar 44100 -ac 1 -codec:a libmp3lame -q:a 2 "${OUT_DIR:-final}/$name.mp3"
