@@ -1095,7 +1095,7 @@ function buildHTML(html: string): string {
 let lvJobsCache: { at: number; body: string } | null = null;
 
 /** A YouTubeService for one dashboard channel profile, or null when no YouTube channel is connected to it. */
-async function youtubeServiceFor(channelKey: string): Promise<YouTubeService | null> {
+export async function youtubeServiceFor(channelKey: string): Promise<YouTubeService | null> {
   const stored = (await getAllStoredChannelConfigs()).find((c) => c.key === channelKey);
   const ytChannels = stored?.youtubeChannels || [];
   if (ytChannels.length === 0 && !stored?.youtubeRefreshToken) return null;

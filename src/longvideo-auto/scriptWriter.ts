@@ -66,7 +66,7 @@ export function outlinePrompt(r: ScriptRequest, n: number): string {
 export function chapterPrompt(r: ScriptRequest, outline: { heading: string; points: string[] }[], i: number, words: number, prevEnd: string): string {
   const ch = outline[i];
   const flavor = CHANNEL_FLAVOR[r.channelKey] ?? CHANNEL_FLAVOR.infoonspot;
-  const first = i === 0, last = i === outline.length - 1;
+  const last = i === outline.length - 1;
   return [
     `You are writing chapter ${i + 1} of ${outline.length} of the narration of a video for "${r.brandName}" (${flavor}).`,
     `Video topic: ${r.topic}`,

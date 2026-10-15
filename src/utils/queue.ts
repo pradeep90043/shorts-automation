@@ -23,6 +23,13 @@ export class JobQueue {
     JobQueue.all.add(this);
   }
 
+  /** True when no pipeline is running or waiting on any channel queue: the long-video worker only starts then. */
+  public static isIdle(): boolean {
+    if (JobQueue.globalActive > 0) return false;
+    for (const q of JobQueue.all) if (q.queue.length > 0 || q.activeCount > 0) return false;
+    return true;
+  }
+
   private static wakeAll(): void {
     for (const q of JobQueue.all) q.processNext();
   }

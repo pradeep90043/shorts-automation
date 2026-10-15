@@ -13,6 +13,13 @@ import { acquireSingleInstanceLock } from "./utils/singleInstanceLock";
 import { initSchema, closePg } from "./utils/pgClient";
 import { loadCredentialsToEnv } from "./utils/credentialStore";
 import { startLogServer } from "./logServer";
+import { youtubeServiceFor } from "./logServer";
+import { getStickmanJob, isStickmanBusy, startStickmanJob } from "./my-video/stickmanJobs";
+import { candidateStore } from "./longvideo-auto/config";
+import { LongQueue } from "./longvideo-auto/queue";
+import { startAutoLong } from "./longvideo-auto";
+import { makeAsk } from "./longvideo-auto/llm";
+import { JobQueue } from "./utils/queue";
 
 async function bootstrap() {
   pipelineLogger.info(
@@ -198,6 +205,37 @@ async function bootstrap() {
         "Bootstrap"
       );
     }
+  }
+
+  // Daily 10-minute video per channel (src/longvideo-auto): ranks the day's published Shorts after midnight IST, then makes
+  // one video at a time while no Short is being processed. Does nothing unless AUTO_LONG_VIDEO_ENABLED=true.
+  try {
+    const adminProfile = config.profiles.find((p) => p.watch?.adminChatId) ?? config.profiles[0];
+    startAutoLong({
+      store: candidateStore(),
+      queue: new LongQueue(),
+      ask: makeAsk(),
+      fetchText: async (url, init) => {
+        const res = await fetch(url, { method: init?.method ?? "GET", body: init?.body, headers: init?.headers, signal: AbortSignal.timeout(20_000) });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return (await res.text()).slice(0, 1_500_000);
+      },
+      startJob: (input) => startStickmanJob(input as any),
+      getJob: (id) => getStickmanJob(id) as any,
+      isStickmanBusy,
+      isShortActive: () => !JobQueue.isIdle(),
+      youtubeFor: async (key) => (await youtubeServiceFor(key)) as any,
+      brandName: (key) => config.profiles.find((p) => p.key === key)?.brandName ?? key,
+      notify: async (text) => {
+        const idx = config.profiles.indexOf(adminProfile);
+        const svc = activeServices[idx];
+        const chat = adminProfile?.watch?.adminChatId;
+        if (svc && chat) await svc.sendMessage(chat, text);
+      },
+      now: () => Date.now(),
+    });
+  } catch (err) {
+    pipelineLogger.error("Daily long video could not start", err, "Bootstrap");
   }
 
   pipelineLogger.info(

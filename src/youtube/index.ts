@@ -207,6 +207,47 @@ export class YouTubeService {
     await yt.videos.update({ part: ["status"], requestBody: { id: videoId, status: { ...status, privacyStatus } } });
   }
 
+  /**
+   * Keeps the video private and has YouTube make it public by itself at `publishAtIso`, so the release does not depend on
+   * this app being up at that moment. YouTube requires privacyStatus "private" together with publishAt.
+   */
+  public async schedulePublish(videoId: string, publishAtIso: string): Promise<void> {
+    const when = Date.parse(publishAtIso);
+    if (!Number.isFinite(when) || when < Date.now() + 5 * 60 * 1000) throw new Error("publishAt must be at least 5 minutes ahead");
+    const channel = this.ytConfig.channels.find((c) => !!c.refreshToken);
+    if (!channel) throw new Error("No YouTube channel connected.");
+    const yt = google.youtube({ version: "v3", auth: this.oauthFor(channel) });
+    const cur = await yt.videos.list({ part: ["status"], id: [videoId] });
+    const status = cur.data.items?.[0]?.status;
+    if (!status) throw new Error("Video not found on YouTube.");
+    await yt.videos.update({
+      part: ["status"],
+      requestBody: { id: videoId, status: { ...status, privacyStatus: "private", publishAt: new Date(when).toISOString() } },
+    });
+  }
+
+  /** Replaces a video's title, description and tags, keeping its category and other snippet fields. */
+  public async updateSnippet(videoId: string, patch: { title?: string; description?: string; tags?: string[] }): Promise<void> {
+    const channel = this.ytConfig.channels.find((c) => !!c.refreshToken);
+    if (!channel) throw new Error("No YouTube channel connected.");
+    const yt = google.youtube({ version: "v3", auth: this.oauthFor(channel) });
+    const cur = await yt.videos.list({ part: ["snippet"], id: [videoId] });
+    const snippet = cur.data.items?.[0]?.snippet;
+    if (!snippet) throw new Error("Video not found on YouTube.");
+    await yt.videos.update({
+      part: ["snippet"],
+      requestBody: {
+        id: videoId,
+        snippet: {
+          ...snippet,
+          title: (patch.title ?? snippet.title ?? "").slice(0, 100),
+          description: (patch.description ?? snippet.description ?? "").slice(0, 4900),
+          tags: patch.tags ?? snippet.tags,
+        },
+      },
+    });
+  }
+
   // Upload to ALL configured channels in parallel
   public async uploadToAllChannels(
     videoPath: string,
