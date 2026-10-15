@@ -14,6 +14,7 @@ import { TelegramService, escapeMarkdown } from "./telegram";
 import { PipelineContext, VideoMetadata } from "./types";
 import { pipelineLogger } from "./utils/logger";
 import { howItWorksLines, renderHowItWorksClip } from "./my-video/howItWorksClip";
+import { insightEnabledFor, insightFor, insightIntro } from "./my-video/insightClip";
 import { FreeLlmApiClient } from "./ai/freellmapi";
 import { GeminiClient } from "./ai/gemini";
 import { parseAiJson, extractJsonArrayField } from "./utils/json";
@@ -1192,7 +1193,7 @@ Rules:
 - tags: 10-12 specific tags covering the topic, theme, and audience (no spaces in tags).
 - mood: Determine the emotional tone or theme of the content. Choose exactly one of: "funny", "sad", or "other" (for general, educational, or motivational content).
 - voiceoverScript: ${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} that describes the content. It should sound very natural, hook the viewer immediately, and explain what is happening or read the meme text in an entertaining way.
-- howItWorks: A detailed, clear, and educational explanation (approx 2-3 sentences, 30-50 words) explaining how the code snippet or trick works. This step-by-step commentary adds original educational value to reuse of other creators' videos, so explain the logic or mechanics thoroughly and clearly.
+- howItWorks: ${insightFor(this.profile.key).promptRule}
 - diagramTitle: A brief 2-4 word title for the diagram (e.g. "Execution Flow", "State Lifecycle", "Timeline", "Fact Check", "How it works").
 - diagramWorkflow: A valid, simple Mermaid.js flowchart (graph TD or graph LR) explaining the logic, execution, process, timeline, or steps of the topic (3-5 nodes max). Use double quotes around node labels (e.g. A[\"Start\"] --> B[\"Check condition\"]). Node IDs must be simple alphanumeric characters. Keep it clean and valid.
 - ${this.theme.analysisRules}`;
@@ -1320,7 +1321,7 @@ KEYWORDS: ${this.theme.keywordsRule}
 THUMBNAIL: Max 5 words, highly clickable, curiosity driven.
 FILENAME: SEO-friendly filename (e.g., viral-short-video-2026.mp4).
 - MOOD: Determine emotional tone: "funny", "serious", "emotional", "motivational", "technical", "horror", "romantic", "sad", or "other".
-- howItWorks: A detailed, clear, and educational explanation (approx 2-3 sentences, 30-50 words) explaining how the code snippet or trick works. This step-by-step commentary adds original educational value to reuse of other creators' videos, so explain the logic or mechanics thoroughly and clearly.
+- howItWorks: ${insightFor(this.profile.key).promptRule}
 - diagramTitle: A brief 2-4 word title for the diagram (e.g. "Execution Flow", "State Lifecycle", "Timeline", "Fact Check", "How it works").
 - diagramWorkflow: A valid, simple Mermaid.js flowchart (graph TD or graph LR) explaining the logic, execution, process, timeline, or steps of the topic (3-5 nodes max). Use double quotes around node labels (e.g. A[\"Start\"] --> B[\"Check condition\"]). Node IDs must be simple alphanumeric characters. Keep it clean and valid.
 ${this.theme.analysisRules}`;
@@ -2943,7 +2944,7 @@ ${this.theme.analysisRules}`;
         // run that starts now, while the reel is rendered. If it fails or is late, the Edge voice is used as before.
         if (clonedVoiceEnabled(this.profile.key) && context.metadata?.voiceoverScript) {
           const claim = context.metadata.voiceoverScript;
-          const hiw = (this.profile.watch?.outroVersion || "v2") === "v2" ? howItWorksLines(this.deriveTranscriptionWorkflow(context).explanation) : [];
+          const hiw = (this.profile.watch?.outroVersion || "v2") === "v2" ? howItWorksLines(this.deriveTranscriptionWorkflow(context).explanation, insightIntro(this.profile.key)) : [];
           context.clonedHowItWorksLines = hiw;
           context.clonedVoice = startClonedLines(`short-${context.id.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 16) || Date.now()}`, [
             { name: "claim", text: spokenText(claim) },
@@ -5161,7 +5162,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       const transitionTtsPath = path.join(tempDir, "transition_tts.mp3");
       const transitionBgFramePath = path.join(tempDir, "transition_bg_frame.png");
       const transitionTextPath = path.join(tempDir, "transition_text.txt");
-      const hasTransition = profileKey === "codeorcap" && (this.profile.watch?.outroVersion || "v2") === "v2";
+      const hasTransition = insightEnabledFor(profileKey, this.profile.watch?.outroVersion);
 
       if (hasTransition) {
         pipelineLogger.info(
@@ -5176,7 +5177,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         let clonedHiwFiles: string[] | undefined;
         if (context.clonedVoice) {
           const set = await context.clonedVoice;
-          const lines = howItWorksLines(rawExplanation);
+          const lines = howItWorksLines(rawExplanation, insightIntro(profileKey));
           const asked = context.clonedHowItWorksLines ?? [];
           const files = lines.map((_, i) => set?.file(`hiw_${i}`));
           if (set && lines.length === asked.length && lines.every((l, i) => l === asked[i]) && files.every(Boolean)) clonedHiwFiles = files as string[];
@@ -5189,7 +5190,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
           const myVideoClip = path.join(tempDir, "hiw_myvideo.mp4");
           const rendered = await renderHowItWorksClip(
             // the short's own diagram (not the generic placeholder deriveTranscriptionWorkflow invents when it is missing)
-            { explanation: rawExplanation, title: context.metadata?.title, mermaid: context.metadata?.diagramWorkflow, diagramTitle: workflowData.diagramTitle, narrationFiles: clonedHiwFiles },
+            { explanation: rawExplanation, intro: insightIntro(profileKey), title2: insightFor(profileKey).title, title: context.metadata?.title, mermaid: context.metadata?.diagramWorkflow, diagramTitle: workflowData.diagramTitle, narrationFiles: clonedHiwFiles },
             myVideoClip,
           );
           if (rendered) {
@@ -5212,7 +5213,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         }
 
         if (!myVideoDone) {
-        const speechScript = `Let us check how is it working. ${rawExplanation}`;
+        const speechScript = `${insightIntro(profileKey)} ${rawExplanation}`;
 
         let ttsDuration = 3.5;
         try {
@@ -5304,7 +5305,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
             return lines.join("\n");
           };
 
-          const introText = "Let us check how is it working:";
+          const introText = `${insightIntro(profileKey).replace(/[.。।]+$/, "")}:`;
           const wrappedExplanation = rawExplanation
             ? wrapText(rawExplanation, 32)
             : "";

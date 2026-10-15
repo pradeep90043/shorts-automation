@@ -28,6 +28,10 @@ export interface HowItWorksInput {
   /** Mermaid flowchart from the short's own metadata (labels become the diagram nodes) - NOT a generated placeholder */
   mermaid?: string;
   diagramTitle?: string;
+  /** spoken first line (defaults to CodeOrCap's "Let us check how is it working.") */
+  intro?: string;
+  /** on-screen title of the first scene (defaults to "HOW IT WORKS") */
+  title2?: string;
 }
 
 const INTRO = "Let us check how is it working.";
@@ -56,13 +60,13 @@ export function mermaidNodes(mermaid: string | undefined): string[] {
 }
 
 /** The lines the clip narrates, in scene order: the intro, then one per sentence of the explanation. */
-export const howItWorksLines = (explanation: string): string[] => [INTRO, ...explanationBeats(explanation)];
+export const howItWorksLines = (explanation: string, intro: string = INTRO): string[] => [intro, ...explanationBeats(explanation)];
 
 /** Narration beats: one per sentence of the explanation (list numbers removed), at most MAX_BODY_BEATS. */
 export function explanationBeats(explanation: string): string[] {
   const text = cleanScript(explanation.replace(/(^|\s)\d+[.)]\s+/g, "$1").replace(/…/g, ".")).replace(/\s+/g, " ").trim();
   // one beat per sentence (the visuals advance with each); only a long sentence is cut further
-  const beats = text.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter((s) => s.split(/\s+/).length >= 2)
+  const beats = text.split(/(?<=[.!?।])\s+/).map((s) => s.trim()).filter((s) => s.split(/\s+/).length >= 2)
     .flatMap((s) => (s.split(/\s+/).length > 16 ? splitScriptIntoBeats(s) : [s]));
   if (beats.length <= MAX_BODY_BEATS) return beats;
   return [...beats.slice(0, MAX_BODY_BEATS - 1), beats.slice(MAX_BODY_BEATS - 1).join(" ")];
@@ -150,7 +154,7 @@ export function buildHowItWorksSpec(input: HowItWorksInput, slug: string, direct
   }
 
   const raw: { text: string; visual: Record<string, unknown> }[] = [
-    { text: INTRO, visual: { pose: "point", mood: "excited", accent: "gold", camera: "push", setting: "stage", title: "HOW IT WORKS", callouts: heading && heading !== "How it works" ? [heading.toUpperCase()] : undefined } },
+    { text: input.intro ?? INTRO, visual: { pose: "point", mood: "excited", accent: "gold", camera: "push", setting: "stage", title: input.title2 ?? "HOW IT WORKS", callouts: heading && heading !== "How it works" ? [heading.toUpperCase()] : undefined } },
   ];
   beats.forEach((text, k) => {
     const fromLlm = directed?.get(k);

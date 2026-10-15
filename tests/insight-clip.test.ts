@@ -1,0 +1,43 @@
+import assert from "assert";
+import { insightChannels, insightEnabledFor, insightFor, insightIntro, insightLang } from "../src/my-video/insightClip";
+import { howItWorksLines } from "../src/my-video/howItWorksClip";
+
+// CodeOrCap must not change: same intro line, same metadata instruction as before this module existed
+assert.strictEqual(insightIntro("codeorcap", {} as any), "Let us check how is it working.");
+assert.deepStrictEqual(howItWorksLines("Water cools the chips. It carries heat away."), ["Let us check how is it working.", "Water cools the chips.", "It carries heat away."]);
+assert.strictEqual(
+  insightFor("codeorcap").promptRule,
+  "A detailed, clear, and educational explanation (approx 2-3 sentences, 30-50 words) explaining how the code snippet or trick works. " +
+    "This step-by-step commentary adds original educational value to reuse of other creators' videos, so explain the logic or mechanics thoroughly and clearly.",
+);
+
+// each channel has its own kind
+assert.strictEqual(insightFor("storiyum").key, "moral");
+assert.strictEqual(insightFor("prompt_gag").key, "market");
+assert.strictEqual(insightFor("infoonspot").key, "reaction");
+assert.strictEqual(insightFor("some_new_channel").key, "how", "unknown channels get the safe default");
+
+// the switch: default = CodeOrCap only (today's behaviour); "all" or a list turns the others on
+assert.deepStrictEqual([...insightChannels({} as any)], ["codeorcap"]);
+assert.strictEqual(insightEnabledFor("storiyum", "v2", {} as any), false);
+assert.strictEqual(insightEnabledFor("storiyum", "v2", { INSIGHT_CLIP_CHANNELS: "codeorcap,storiyum" } as any), true);
+assert.strictEqual(insightEnabledFor("infoonspot", "v2", { INSIGHT_CLIP_CHANNELS: "all" } as any), true);
+assert.strictEqual(insightEnabledFor("storiyum", "v1", { INSIGHT_CLIP_CHANNELS: "all" } as any), false, "a channel set to v1 stays without the clip");
+assert.strictEqual(insightEnabledFor("codeorcap", undefined, {} as any), true, "outroVersion defaults to v2 as before");
+
+// language of the intro
+assert.strictEqual(insightLang({ INSIGHT_CLIP_LANG: "hi" } as any), "hi");
+assert.strictEqual(insightIntro("prompt_gag", { INSIGHT_CLIP_LANG: "hi" } as any), "अभी मार्केट में क्या चल रहा है।");
+assert.ok(insightFor("prompt_gag").promptRule.includes("no buy/sell advice"));
+
+// the lines the clip speaks carry the channel's intro, and the body beats are untouched
+const lines = howItWorksLines("The market fell sharply today. Here is why it matters.", insightIntro("prompt_gag", {} as any));
+assert.strictEqual(lines[0], "Here is what is happening in the market.");
+assert.strictEqual(lines.length, 3);
+
+// Hindi explanations are split into beats at the danda, like English ones at the full stop
+const hi = howItWorksLines("बाज़ार आज तेज़ी से गिरा। इसका असर आपकी बचत पर पड़ सकता है।", insightIntro("prompt_gag", { INSIGHT_CLIP_LANG: "hi" } as any));
+assert.strictEqual(hi.length, 3);
+assert.strictEqual(hi[1], "बाज़ार आज तेज़ी से गिरा।");
+
+console.log("✓ insight clip");
