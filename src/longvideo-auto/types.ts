@@ -34,6 +34,8 @@ export interface LongRequest {
   fallback?: LongCandidate;
   status: "queued" | "running" | "done" | "failed" | "skipped";
   attempts: number;
+  /** a failed attempt is retried no earlier than this (epoch ms) */
+  notBeforeMs?: number;
   createdAt: string;
   startedAt?: string;
   finishedAt?: string;
