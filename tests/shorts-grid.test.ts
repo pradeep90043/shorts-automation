@@ -40,9 +40,12 @@ assert.throws(() => validateGrid(4, { ...DEFAULT_GRID, stepMin: 60 }), /fits \d+
 assert.strictEqual(parseHhmm("07:05"), 425);
 assert.throws(() => parseHhmm("7pm"));
 
-// env overrides; the grid is off unless asked for
+// env overrides; the grid is on unless switched off
 assert.strictEqual(gridFromEnv({ SHORTS_GRID_START: "08:00", SHORTS_GRID_STEP_MIN: "30" } as any).stepMin, 30);
-assert.strictEqual(shortsGridActive({} as any), false);
+assert.strictEqual(shortsGridActive({} as any), true, "on by default");
 assert.strictEqual(shortsGridActive({ SHORTS_GRID: "on" } as any), true);
+assert.strictEqual(shortsGridActive({ SHORTS_GRID: "off" } as any), false);
+assert.strictEqual(shortsGridActive({ SHORTS_GRID: "0" } as any), false);
+assert.strictEqual(shortsGridActive({ SHORTS_GRID: " False " } as any), false);
 
 console.log("✓ shorts grid");

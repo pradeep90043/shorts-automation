@@ -17,12 +17,14 @@ assert.strictEqual(insightFor("prompt_gag").key, "market");
 assert.strictEqual(insightFor("infoonspot").key, "reaction");
 assert.strictEqual(insightFor("some_new_channel").key, "how", "unknown channels get the safe default");
 
-// the switch: default = CodeOrCap only (today's behaviour); "all" or a list turns the others on
-assert.deepStrictEqual([...insightChannels({} as any)], ["codeorcap"]);
-assert.strictEqual(insightEnabledFor("storiyum", "v2", {} as any), false);
+// the switch: all four channels by default; a list limits it; "off" removes it
+assert.deepStrictEqual([...insightChannels({} as any)].sort(), ["codeorcap", "infoonspot", "prompt_gag", "storiyum"]);
+assert.strictEqual(insightEnabledFor("storiyum", "v2", {} as any), true);
+assert.strictEqual(insightEnabledFor("storiyum", "v2", { INSIGHT_CLIP_CHANNELS: "codeorcap" } as any), false);
 assert.strictEqual(insightEnabledFor("storiyum", "v2", { INSIGHT_CLIP_CHANNELS: "codeorcap,storiyum" } as any), true);
-assert.strictEqual(insightEnabledFor("infoonspot", "v2", { INSIGHT_CLIP_CHANNELS: "all" } as any), true);
-assert.strictEqual(insightEnabledFor("storiyum", "v1", { INSIGHT_CLIP_CHANNELS: "all" } as any), false, "a channel set to v1 stays without the clip");
+assert.strictEqual(insightEnabledFor("codeorcap", "v2", { INSIGHT_CLIP_CHANNELS: "off" } as any), false);
+assert.strictEqual(insightEnabledFor("codeorcap", "v2", { INSIGHT_CLIP_CHANNELS: "none" } as any), false);
+assert.strictEqual(insightEnabledFor("storiyum", "v1", {} as any), false, "a channel set to v1 stays without the clip");
 assert.strictEqual(insightEnabledFor("codeorcap", undefined, {} as any), true, "outroVersion defaults to v2 as before");
 
 // language of the intro

@@ -1,3 +1,5 @@
+import { switchOn } from "../utils/switches";
+
 /**
  * The daily publishing grid shared by the four channels.
  *
@@ -108,5 +110,5 @@ export function gridFromEnv(env: NodeJS.ProcessEnv = process.env): GridConfig {
   };
 }
 
-/** "on" activates the grid; anything else keeps the legacy schedule (and the planned grid is only logged). */
-export const shortsGridActive = (env: NodeJS.ProcessEnv = process.env): boolean => /^(on|1|true|yes)$/i.test(env.SHORTS_GRID ?? "");
+/** On by default. SHORTS_GRID=off keeps the legacy scheduleTime + 5 min stagger (the planned grid is still logged). */
+export const shortsGridActive = (env: NodeJS.ProcessEnv = process.env): boolean => switchOn("SHORTS_GRID", env, true);

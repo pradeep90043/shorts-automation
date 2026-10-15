@@ -14,6 +14,9 @@ import {
   recordLoginFailure, safeNext, sessionCookie,
 } from "./utils/dashboardAuth";
 import { maskChannel, restoreMasked } from "./utils/channelMask";
+import { autoLongSnapshot } from "./longvideo-auto";
+import { candidateStore } from "./longvideo-auto/config";
+import { LongQueue } from "./longvideo-auto/queue";
 import { activeWatchers } from "./instagram/channelWatcher";
 import { DirectUploader } from "./direct-uploader";
 import { ViralAnalyzer } from "./utils/viral-analyzer";
@@ -1762,6 +1765,19 @@ export function startLogServer(): void {
           "Access-Control-Allow-Origin": "*",
         });
         res.end(JSON.stringify({ success: false, message: err.message || "Failed to publish video to YouTube" }));
+      }
+      return;
+    }
+
+    // ── Daily long video system: status for the dashboard and for a quick curl ───────────────────────────
+    if (req.method === "GET" && url.split("?")[0] === "/api/autolong/status") {
+      try {
+        const snap = autoLongSnapshot(candidateStore(), new LongQueue());
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ success: true, ...snap }));
+      } catch (err: any) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: false, message: err?.message || "status failed" }));
       }
       return;
     }

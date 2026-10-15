@@ -181,6 +181,7 @@
     <div class="nav-item" data-tab="viral" onclick="switchTab('viral',this)"><span>🔥</span> Viral Analytics</div>
     <div class="nav-item" data-tab="config" onclick="switchTab('config',this)"><span>⚙️</span> Configuration</div>
     <div class="nav-item" data-tab="logs" onclick="switchTab('logs',this)"><span>▶</span> Console Logs</div>
+    <div class="nav-item" data-tab="autolong" onclick="switchTab('autolong',this)"><span>🎬</span> Daily Video <span class="nav-badge" id="autolong-badge" style="display:none;background:#f85149;">!</span></div>
     <div class="divider"></div>
     <div class="nav-section-label">Channels</div>
     <div id="sidebar-channels-list"></div>
@@ -584,6 +585,36 @@
     </div>
 
     <!-- TAB: LOGS -->
+    <div id="tab-autolong" class="tab-pane">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:6px;">
+        <div>
+          <div style="font-size:18px;font-weight:800;color:#fff;">🎬 Daily 10-minute video</div>
+          <div style="color:var(--text-muted);font-size:12px;">One researched video per channel per night, released in the evening. Refreshes every 10 seconds.</div>
+        </div>
+        <div id="autolong-updated" style="color:var(--text-muted);font-size:12px;">loading...</div>
+      </div>
+      <div id="autolong-alert" style="display:none;margin:12px 0;padding:12px 14px;border:1px solid #f85149;border-radius:10px;background:rgba(248,81,73,.12);color:#ffb4ae;font-size:13px;"></div>
+      <div id="autolong-switches" style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0;"></div>
+      <div id="autolong-counters" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;"></div>
+      <div class="table-card" style="margin-bottom:20px;">
+        <div style="font-size:14px;font-weight:800;color:#fff;margin-bottom:10px;">Schedule (IST)</div>
+        <div id="autolong-schedule" style="font-size:12px;color:var(--text-muted);line-height:1.8;"></div>
+      </div>
+      <div class="table-card" style="margin-bottom:20px;">
+        <div style="font-size:14px;font-weight:800;color:#fff;margin-bottom:10px;">Queue (latest first)</div>
+        <div class="table-responsive">
+          <table>
+            <thead><tr><th>Day</th><th>Channel</th><th>Status</th><th>Seed reel</th><th>Tries</th><th>Public at</th><th>Video / error</th></tr></thead>
+            <tbody id="autolong-queue"><tr><td colspan="7" style="color:var(--text-muted);">loading...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="table-card">
+        <div style="font-size:14px;font-weight:800;color:#fff;margin-bottom:10px;">Live events</div>
+        <div id="autolong-events" style="font-family:ui-monospace,Menlo,monospace;font-size:12px;max-height:46vh;overflow-y:auto;line-height:1.6;"></div>
+      </div>
+    </div>
+
     <div id="tab-logs" class="tab-pane">
       <div style="font-size:18px;font-weight:800;color:#fff;margin-bottom:4px;">▶ Console Logs</div>
       <div style="color:var(--text-muted);margin-bottom:16px;">Live log output from watcher jobs, AI rendering engines, and uploader services</div>
@@ -2232,6 +2263,75 @@
   if (window.location.pathname === '/logs' || window.location.pathname.startsWith('/logs/')) {
     switchTab('logs');
   }
+
+  /* ─── DAILY 10-MINUTE VIDEO ─── */
+  async function fetchAutoLong() {
+    try {
+      const r = await fetch('/api/autolong/status', { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      renderAutoLong(await r.json());
+    } catch (e) {
+      const el = document.getElementById('autolong-updated');
+      if (el) el.textContent = 'status unavailable: ' + (e && e.message ? e.message : e);
+    }
+  }
+  function renderAutoLong(d) {
+    const $ = (id) => document.getElementById(id);
+    if (!$('autolong-queue')) return;
+    $('autolong-updated').textContent = 'updated ' + new Date(d.now).toLocaleTimeString();
+    const sw = d.config && d.config.switches ? d.config.switches : {};
+    $('autolong-switches').innerHTML = Object.keys(sw).map(function (k) {
+      const off = /^OFF/.test(String(sw[k]));
+      return '<span style="padding:4px 10px;border-radius:999px;font-size:11px;border:1px solid ' + (off ? '#f85149' : '#2ea043') +
+        ';color:' + (off ? '#ffb4ae' : '#7ee787') + ';">' + esc(k) + ': ' + esc(sw[k]) + '</span>';
+    }).join('');
+    const c = (d.service && d.service.counters) || {};
+    const box = function (label, val, bad) {
+      return '<div style="min-width:92px;padding:10px 14px;border:1px solid var(--card-border);border-radius:10px;background:var(--card);">' +
+        '<div style="font-size:20px;font-weight:800;color:' + (bad && val > 0 ? '#f85149' : '#fff') + ';">' + esc(val) + '</div>' +
+        '<div style="font-size:11px;color:var(--text-muted);">' + esc(label) + '</div></div>';
+    };
+    $('autolong-counters').innerHTML = box('planned', c.planned || 0) + box('skipped', c.skipped || 0) + box('started', c.started || 0) +
+      box('done', c.done || 0) + box('retried', c.retried || 0, true) + box('failed', c.failed || 0, true) + box('tick errors', c.tickErrors || 0, true) +
+      box('now running', d.service && d.service.running ? '1' : '0');
+    const cfg = d.config || {};
+    const slots = cfg.shortSlotsIst || {};
+    $('autolong-schedule').innerHTML =
+      '<b>Long video public at:</b> ' + esc((cfg.longReleaseIst || []).join(' / ')) + ' (CodeOrCap / Storiyum / Prompt Gag / InfoOnSpot)<br>' +
+      Object.keys(slots).map(function (k) { return '<b>' + esc(k) + ' Shorts:</b> ' + esc(slots[k].join(', ')); }).join('<br>') + '<br>' +
+      '<b>Candidates today:</b> ' + esc(Object.keys(d.candidatesToday || {}).map(function (k) { return k + '=' + d.candidatesToday[k]; }).join(', ')) +
+      '<br><b>Last planned:</b> ' + esc((d.service && d.service.lastPlanAt) || 'not yet') + ' &nbsp; <b>Last tick:</b> ' + esc((d.service && d.service.lastTickAt) || 'not yet');
+    const badge = { queued: '#d29922', running: '#58a6ff', done: '#2ea043', failed: '#f85149', skipped: '#8b949e' };
+    const rows = d.queue || [];
+    $('autolong-queue').innerHTML = rows.length ? rows.map(function (r) {
+      const last = r.videoUrl ? '<a href="' + esc(r.videoUrl).replace(/"/g, '&quot;') + '" target="_blank" rel="noopener" style="color:#58a6ff;">' + esc(r.videoUrl) + '</a>' : (r.error ? '<span style="color:#ffb4ae;">' + esc(r.error) + '</span>' : '');
+      return '<tr><td>' + esc(r.id.split(':')[0]) + '</td><td>' + esc(r.channel) + '</td>' +
+        '<td><span style="color:' + (badge[r.status] || '#fff') + ';font-weight:700;">' + esc(r.status) + '</span></td>' +
+        '<td>' + (r.seed ? esc(r.seed.title) + ' <span style="color:var(--text-muted);">(' + esc(r.seed.viralScore) + ')</span>' : '-') + '</td>' +
+        '<td>' + esc(r.attempts) + '</td><td>' + esc(r.releaseAt ? new Date(r.releaseAt).toLocaleString() : '-') + '</td><td>' + last + '</td></tr>';
+    }).join('') : '<tr><td colspan="7" style="color:var(--text-muted);">Nothing planned yet. The first plan runs after 00:00 IST.</td></tr>';
+    const lvl = { info: '#8b949e', warn: '#d29922', error: '#f85149' };
+    $('autolong-events').innerHTML = (d.events || []).slice().reverse().map(function (e) {
+      return '<div style="color:' + (lvl[e.level] || '#8b949e') + ';">' + esc(new Date(e.at).toLocaleTimeString()) + ' [' + esc(e.stage) + ']' +
+        (e.requestId ? '[' + esc(e.requestId) + ']' : '') + ' ' + esc(e.message) + '</div>';
+    }).join('') || '<div style="color:var(--text-muted);">No events yet.</div>';
+    // a red mark on the tab when something failed recently, so it is noticed without opening the tab
+    const f = d.service && d.service.lastFailure;
+    const recent = f && (Date.now() - new Date(f.at).getTime()) < 24 * 3600 * 1000;
+    const bad = rows.some(function (r) { return r.status === 'failed'; });
+    $('autolong-badge').style.display = (recent || bad) ? '' : 'none';
+    const alertEl = $('autolong-alert');
+    if (recent || bad) {
+      alertEl.style.display = '';
+      alertEl.innerHTML = '<b>Needs attention:</b> ' + esc(f ? ('[' + f.stage + '] ' + f.message) : 'a video failed') +
+        (f && f.requestId ? ' <span style="opacity:.8;">(' + esc(f.requestId) + ')</span>' : '');
+    } else {
+      alertEl.style.display = 'none';
+    }
+  }
+
+  fetchAutoLong();
+  setInterval(fetchAutoLong, 10000);
   setInterval(fetchDashboardData, 10000);
   setInterval(fetchPendingReviews, 3000);
 </script>

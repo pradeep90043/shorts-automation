@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { config } from "../config";
+import { autoLongStatus } from "./status";
 import type { LongCandidate } from "./types";
 
 /** IST calendar date (YYYY-MM-DD) of an instant: the day a Short counts for, midnight to midnight India time. */
@@ -23,21 +24,37 @@ export class CandidateStore {
   }
 
   private load(): void {
+    let raw: string;
     try {
-      this.rows = JSON.parse(fs.readFileSync(this.file, "utf8"));
-      if (!Array.isArray(this.rows)) this.rows = [];
+      raw = fs.readFileSync(this.file, "utf8");
     } catch {
+      this.rows = []; // first run: no file yet
+      return;
+    }
+    try {
+      const j = JSON.parse(raw);
+      this.rows = Array.isArray(j) ? j : [];
+    } catch (err) {
+      // never overwrite what we cannot read: keep it for inspection and start empty
+      const bad = `${this.file}.corrupt-${Date.now()}`;
+      try { fs.renameSync(this.file, bad); } catch { /* best effort */ }
+      autoLongStatus.error("store", `candidate file was not valid JSON; moved to ${bad} and started empty`, err);
       this.rows = [];
     }
   }
 
   private save(): void {
-    const cutoff = istDateOf(Date.now() - this.keepDays * 24 * 60 * 60 * 1000);
-    this.rows = this.rows.filter((r) => r.istDate >= cutoff);
-    fs.mkdirSync(path.dirname(this.file), { recursive: true });
-    const tmp = `${this.file}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(this.rows, null, 1));
-    fs.renameSync(tmp, this.file);
+    try {
+      const cutoff = istDateOf(Date.now() - this.keepDays * 24 * 60 * 60 * 1000);
+      this.rows = this.rows.filter((r) => r.istDate >= cutoff);
+      fs.mkdirSync(path.dirname(this.file), { recursive: true });
+      const tmp = `${this.file}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(this.rows, null, 1));
+      fs.renameSync(tmp, this.file);
+    } catch (err) {
+      // memory stays correct for this run; the failure is loud in the log
+      autoLongStatus.error("store", `could not write ${this.file}`, err);
+    }
   }
 
   /** Idempotent: the same channel+shortcode is recorded once (a re-poll of a finished job must not duplicate it). */

@@ -559,7 +559,7 @@ export class ChannelWatcher {
   private logPlannedGrid(): void {
     const cfg = gridFromEnv();
     pipelineLogger.info(
-      `[${this.profile.brandName}] Shorts grid ${this.gridOn() ? "ACTIVE" : "planned (SHORTS_GRID=on to use it)"}: ` +
+      `[${this.profile.brandName}] Shorts grid ${this.gridOn() ? "ACTIVE" : "OFF (SHORTS_GRID=off: legacy scheduleTime/gapHours in use; the grid would be)"}: ` +
         `selects reels ${hhmm(pickMinute(this.gridIndex(), cfg))} IST, publishes at ` +
         `${shortSlots(this.gridIndex(), CHANNEL_ORDER.length, cfg).map(hhmm).join(", ")} IST`,
       "ChannelWatcher",
@@ -727,6 +727,20 @@ export class ChannelWatcher {
     const slotTimes = this.slotTimesUtcMs(picked.length);
     // grid mode after a late start: only the slots left of the day are used, and only those reels are reserved
     const slotted = picked.slice(0, slotTimes.length);
+    if (slotted.length < picked.length) {
+      pipelineLogger.warn(
+        `[${this.profile.brandName}] Shorts grid: only ${slotted.length} of ${picked.length} picked reel(s) fit the slots still ahead today ` +
+          `(started late); the other ${picked.length - slotted.length} are NOT reserved and stay available for tomorrow`,
+        "ChannelWatcher",
+      );
+    }
+    if (this.gridOn() && slotted.length) {
+      pipelineLogger.info(
+        `[${this.profile.brandName}] Shorts grid: ${slotted.length} Short(s) scheduled at ` +
+          `${slotTimes.slice(0, slotted.length).map((ms) => hhmm(Math.round(((ms + ChannelWatcher.IST_OFFSET_MS) % 86400000) / 60000))).join(", ")} IST`,
+        "ChannelWatcher",
+      );
+    }
     const queue: QueuedReel[] = slotted.map((p, i) => {
       const stats = this.hashtagReelPool.find((r) => r.shortcode === p.shortcode);
       return {

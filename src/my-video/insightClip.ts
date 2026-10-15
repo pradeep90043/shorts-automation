@@ -1,8 +1,10 @@
+import { isOffValue } from "../utils/switches";
+
 /**
  * The stickman clip in the middle of a V2 Short. CodeOrCap's is "how it works"; the other channels get the insight that
  * suits them: Storiyum a moral or punchline, Prompt Gag the current market and an opinion, InfoOnSpot an opinion or reaction.
  *
- * Which channels have the clip is a switch (INSIGHT_CLIP_CHANNELS) so it can be turned on one channel at a time.
+ * Which channels have the clip is a switch (INSIGHT_CLIP_CHANNELS): all four by default, INSIGHT_CLIP_CHANNELS=off to stop.
  */
 export type InsightKey = "how" | "moral" | "market" | "reaction";
 
@@ -63,10 +65,14 @@ const BY_CHANNEL: Record<string, InsightKey> = {
 
 export const insightFor = (channelKey: string): InsightKind => KINDS[BY_CHANNEL[channelKey.toLowerCase()] ?? "how"];
 
-/** Channels that get the clip. Default is CodeOrCap only: today's behaviour. "all" = the four known channels. */
+/**
+ * Channels that get the clip. Default (unset) and "all" = the four known channels; "off"/"none"/"0" = nobody;
+ * otherwise a comma list, e.g. "codeorcap,storiyum".
+ */
 export function insightChannels(env: NodeJS.ProcessEnv = process.env): Set<string> {
-  const raw = (env.INSIGHT_CLIP_CHANNELS ?? "codeorcap").trim().toLowerCase();
-  if (raw === "all") return new Set(Object.keys(BY_CHANNEL));
+  const raw = (env.INSIGHT_CLIP_CHANNELS ?? "all").trim().toLowerCase();
+  if (raw === "" || raw === "all") return new Set(Object.keys(BY_CHANNEL));
+  if (isOffValue(raw)) return new Set();
   return new Set(raw.split(",").map((s) => s.trim()).filter(Boolean));
 }
 

@@ -19,6 +19,7 @@ import { candidateStore } from "./longvideo-auto/config";
 import { LongQueue } from "./longvideo-auto/queue";
 import { startAutoLong } from "./longvideo-auto";
 import { makeAsk } from "./longvideo-auto/llm";
+import { autoLongStatus } from "./longvideo-auto/status";
 import { JobQueue } from "./utils/queue";
 
 async function bootstrap() {
@@ -208,9 +209,9 @@ async function bootstrap() {
   }
 
   // Daily 10-minute video per channel (src/longvideo-auto): ranks the day's published Shorts after midnight IST, then makes
-  // one video at a time while no Short is being processed. Does nothing unless AUTO_LONG_VIDEO_ENABLED=true.
+  // one video at a time while no Short is being processed. ON by default (DAILY_LONG_VIDEO=off stops it). Notices and
+  // failures are shown on the dashboard's "Daily Video" tab and written to the log; nothing here uses Telegram.
   try {
-    const adminProfile = config.profiles.find((p) => p.watch?.adminChatId) ?? config.profiles[0];
     startAutoLong({
       store: candidateStore(),
       queue: new LongQueue(),
@@ -226,16 +227,11 @@ async function bootstrap() {
       isShortActive: () => !JobQueue.isIdle(),
       youtubeFor: async (key) => (await youtubeServiceFor(key)) as any,
       brandName: (key) => config.profiles.find((p) => p.key === key)?.brandName ?? key,
-      notify: async (text) => {
-        const idx = config.profiles.indexOf(adminProfile);
-        const svc = activeServices[idx];
-        const chat = adminProfile?.watch?.adminChatId;
-        if (svc && chat) await svc.sendMessage(chat, text);
-      },
+      notify: async (text) => autoLongStatus.log("info", "notice", text.replace(/\n/g, " | ")),
       now: () => Date.now(),
     });
   } catch (err) {
-    pipelineLogger.error("Daily long video could not start", err, "Bootstrap");
+    pipelineLogger.error("[AutoLong] could not start the daily long video", err, "Bootstrap");
   }
 
   pipelineLogger.info(

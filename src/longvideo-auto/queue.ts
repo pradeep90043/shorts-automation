@@ -4,6 +4,7 @@ import { config } from "../config";
 import { AUTO_LONG_DEFAULT_CHANNELS } from "./config";
 import { CandidateStore } from "./candidateStore";
 import { pickSeed, rankCandidates } from "./rank";
+import { autoLongStatus } from "./status";
 import type { LongRequest } from "./types";
 
 /**
@@ -18,22 +19,39 @@ export class LongQueue {
     const dir = config.paths.logDir || path.resolve(__dirname, "../../logs");
     this.file = file ?? path.join(dir, "autolong_requests.json");
     try {
-      const j = JSON.parse(fs.readFileSync(this.file, "utf8"));
-      this.rows = Array.isArray(j) ? j : [];
+      const raw = fs.readFileSync(this.file, "utf8");
+      try {
+        const j = JSON.parse(raw);
+        this.rows = Array.isArray(j) ? j : [];
+      } catch (err) {
+        const bad = `${this.file}.corrupt-${Date.now()}`;
+        try { fs.renameSync(this.file, bad); } catch { /* best effort */ }
+        autoLongStatus.error("store", `request queue file was not valid JSON; moved to ${bad} and started empty`, err);
+        this.rows = [];
+      }
     } catch {
-      this.rows = [];
+      this.rows = []; // first run
     }
     // a restart while a request was "running" means the work was lost: put it back (counts as an attempt)
-    for (const r of this.rows) if (r.status === "running") r.status = "queued";
+    for (const r of this.rows) {
+      if (r.status === "running") {
+        r.status = "queued";
+        autoLongStatus.log("warn", "queue", `request was running when the app stopped; queued again`, r.id);
+      }
+    }
   }
 
   private save(): void {
-    const cutoff = new Date(Date.now() - this.keepDays * 86400e3).toISOString().slice(0, 10);
-    this.rows = this.rows.filter((r) => r.istDate >= cutoff);
-    fs.mkdirSync(path.dirname(this.file), { recursive: true });
-    const tmp = `${this.file}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(this.rows, null, 1));
-    fs.renameSync(tmp, this.file);
+    try {
+      const cutoff = new Date(Date.now() - this.keepDays * 86400e3).toISOString().slice(0, 10);
+      this.rows = this.rows.filter((r) => r.istDate >= cutoff);
+      fs.mkdirSync(path.dirname(this.file), { recursive: true });
+      const tmp = `${this.file}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(this.rows, null, 1));
+      fs.renameSync(tmp, this.file);
+    } catch (err) {
+      autoLongStatus.error("store", `could not write ${this.file}`, err);
+    }
   }
 
   public all(): LongRequest[] { return this.rows.map((r) => ({ ...r })); }
@@ -82,19 +100,41 @@ export async function planDay(queue: LongQueue, istDate: string, deps: PlanDeps)
     const id = `${istDate}:${channelKey}`;
     if (queue.get(id)) continue;
     let pool = deps.store.forDay(channelKey, istDate);
-    if (!pool.length) pool = deps.store.latestUnused(channelKey, istDate, 3);
+    let usedHistory = false;
+    if (!pool.length) {
+      pool = deps.store.latestUnused(channelKey, istDate, 3);
+      usedHistory = pool.length > 0;
+    }
     let potential: Record<string, number> = {};
     if (deps.potential && pool.length > 1) {
       try { potential = await deps.potential(channelKey, pool); } catch { potential = {}; }
     }
     const picked = pickSeed(rankCandidates(pool, potential));
     if (!picked) {
-      queue.enqueue({ id, channelKey, istDate, seed: undefined as any, status: "skipped", error: "no candidate with enough substance" });
+      const why = pool.length
+        ? `${pool.length} candidate(s) but none with enough text to carry 10 minutes`
+        : "no Short was published today and there is no unused candidate from the last 3 days";
+      queue.enqueue({ id, channelKey, istDate, seed: undefined as any, status: "skipped", error: why });
+      autoLongStatus.counters.skipped++;
+      autoLongStatus.log("warn", "plan", `${channelKey}: SKIPPED for ${istDate}: ${why}`, id);
       skipped.push(channelKey);
       continue;
     }
     queue.enqueue({ id, channelKey, istDate, seed: picked.seed, fallback: picked.fallback });
+    autoLongStatus.counters.planned++;
+    autoLongStatus.log(
+      "info", "plan",
+      `${channelKey}: seed ${picked.seed.shortcode} "${picked.seed.title.slice(0, 60)}" score ${picked.seed.score} ` +
+        `(viral ${picked.seed.parts.viral}, substance ${picked.seed.parts.substance}) of ${pool.length} candidate(s)` +
+        `${usedHistory ? " [from earlier days: nothing published today]" : ""}` +
+        `${picked.fallback ? `; fallback ${picked.fallback.shortcode}` : "; no fallback"}`,
+      id,
+    );
     queued.push(channelKey);
+  }
+  autoLongStatus.lastPlanAt = new Date().toISOString();
+  if (queued.length || skipped.length) {
+    autoLongStatus.log("info", "plan", `day ${istDate}: queued [${queued.join(", ") || "-"}] skipped [${skipped.join(", ") || "-"}]`);
   }
   return { queued, skipped };
 }
@@ -109,30 +149,56 @@ export interface WorkerDeps {
   produce(req: LongRequest, useFallbackSeed: boolean): Promise<{ videoUrl?: string; jobId?: string; releaseAt?: string }>;
   maxAttempts?: number;
   backoffMs?: number;
+  /** told about every result that is not "idle"/"blocked", with the request and the error when there is one (alerts hook here) */
+  onResult?: (result: RunResult, req: LongRequest, error?: string) => void | Promise<void>;
 }
 
 export type RunResult = "idle" | "blocked" | "done" | "retry" | "failed";
 
 /** Runs at most one request. Shorts always win: with a Short active (or a video already rendering) nothing starts. */
 export async function runNext(queue: LongQueue, deps: WorkerDeps, channelOrder?: string[]): Promise<RunResult> {
-  if (deps.isShortActive() || deps.isLongBusy()) return "blocked";
+  if (deps.isShortActive() || deps.isLongBusy()) {
+    autoLongStatus.counters.blocked++;
+    return "blocked";
+  }
   const req = queue.next(deps.now(), channelOrder);
   if (!req) return "idle";
   const maxAttempts = deps.maxAttempts ?? 2;
   const attempt = req.attempts + 1;
   queue.update(req.id, { status: "running", attempts: attempt, startedAt: new Date(deps.now()).toISOString() });
+  autoLongStatus.runningRequest = req.id;
+  autoLongStatus.counters.started++;
+  const useFallback = attempt > 1 && !!req.fallback;
+  autoLongStatus.log("info", "run", `attempt ${attempt}/${maxAttempts}${useFallback ? " with the runner-up reel" : ""}`, req.id);
+  const emit = async (r: RunResult, error?: string) => {
+    try { await deps.onResult?.(r, req, error); } catch (e) {
+      autoLongStatus.log("warn", "alert", `result hook failed: ${e instanceof Error ? e.message : e}`, req.id);
+    }
+  };
   try {
     // the second attempt uses the runner-up reel when there is one: a seed that cannot be scripted will not work twice
-    const out = await deps.produce(req, attempt > 1 && !!req.fallback);
+    const out = await deps.produce(req, useFallback);
     queue.update(req.id, { status: "done", finishedAt: new Date(deps.now()).toISOString(), error: undefined, ...out });
+    autoLongStatus.counters.done++;
+    autoLongStatus.log("info", "run", `DONE ${out.videoUrl ?? ""}${out.releaseAt ? ` public at ${out.releaseAt}` : ""}`, req.id);
+    await emit("done");
     return "done";
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (attempt >= maxAttempts) {
       queue.update(req.id, { status: "failed", finishedAt: new Date(deps.now()).toISOString(), error: msg });
+      autoLongStatus.counters.failed++;
+      autoLongStatus.error("run", `GAVE UP after ${attempt} attempt(s)`, err, req.id);
+      await emit("failed", msg);
       return "failed";
     }
-    queue.update(req.id, { status: "queued", error: msg, notBeforeMs: deps.now() + (deps.backoffMs ?? 10 * 60 * 1000) });
+    const retryAt = deps.now() + (deps.backoffMs ?? 10 * 60 * 1000);
+    queue.update(req.id, { status: "queued", error: msg, notBeforeMs: retryAt });
+    autoLongStatus.counters.retried++;
+    autoLongStatus.log("warn", "run", `attempt ${attempt} failed (${msg}); retry after ${new Date(retryAt).toISOString()}`, req.id);
+    await emit("retry", msg);
     return "retry";
+  } finally {
+    autoLongStatus.runningRequest = undefined;
   }
 }
