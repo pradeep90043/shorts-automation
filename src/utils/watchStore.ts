@@ -18,6 +18,11 @@ export interface QueuedReel {
   failed?: boolean;
   failedReason?: string;
   addedAt?: string;
+  /** engagement at pick time, kept so the midnight ranking can score the published reel (src/longvideo-auto/rank.ts) */
+  viralScore?: number;
+  playCount?: number;
+  likeCount?: number;
+  commentCount?: number;
 }
 
 interface WatchStateRow {

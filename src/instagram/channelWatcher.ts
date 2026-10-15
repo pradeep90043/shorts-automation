@@ -2,6 +2,9 @@ import { ChannelProfile, config } from "../config";
 import { TelegramService } from "../telegram";
 import { WatchStore, QueuedReel } from "../utils/watchStore";
 import { CHANNEL_ORDER, channelSlotIndex, gridFromEnv, hhmm, pickMinute, shortSlots, shortsGridActive } from "../schedule/shortsGrid";
+import { candidateStore } from "../longvideo-auto/config";
+import { istDateOf } from "../longvideo-auto/candidateStore";
+import type { JobEntry } from "../utils/db";
 import { ReelHistoryStore } from "../utils/reelHistoryStore";
 import { JobDatabase } from "../utils/db";
 import {
@@ -724,13 +727,20 @@ export class ChannelWatcher {
     const slotTimes = this.slotTimesUtcMs(picked.length);
     // grid mode after a late start: only the slots left of the day are used, and only those reels are reserved
     const slotted = picked.slice(0, slotTimes.length);
-    const queue: QueuedReel[] = slotted.map((p, i) => ({
-      shortcode: p.shortcode,
-      url: p.url,
-      channel: p.channel,
-      scheduledAt: new Date(slotTimes[i]).toISOString(),
-      fired: false,
-    }));
+    const queue: QueuedReel[] = slotted.map((p, i) => {
+      const stats = this.hashtagReelPool.find((r) => r.shortcode === p.shortcode);
+      return {
+        shortcode: p.shortcode,
+        url: p.url,
+        channel: p.channel,
+        scheduledAt: new Date(slotTimes[i]).toISOString(),
+        fired: false,
+        viralScore: stats?.viralScore,
+        playCount: stats?.playCount,
+        likeCount: stats?.likeCount,
+        commentCount: stats?.commentCount,
+      };
+    });
 
     // Reserve immediately so a crash/retry can never re-pick the same reel.
     await Promise.all(slotted.map((p) => this.history.add(p.shortcode, p.channel)));
@@ -744,6 +754,41 @@ export class ChannelWatcher {
       "ChannelWatcher",
     );
     return [];
+  }
+
+  /**
+   * Remembers a published Short as a possible seed for the channel's 10-minute video (ranked at midnight IST).
+   * Never throws: losing a candidate must not affect publishing.
+   */
+  private recordLongCandidate(item: QueuedReel, job: JobEntry): void {
+    try {
+      const md = job.metadata;
+      const text = [job.context?.transcript?.text, job.caption, md?.howItWorks, md?.voiceoverScript, md?.description]
+        .map((t) => (typeof t === "string" ? t.trim() : ""))
+        .filter(Boolean)
+        .join("\n")
+        .slice(0, 6000);
+      const now = Date.now();
+      candidateStore().record({
+        channelKey: this.profile.key,
+        shortcode: item.shortcode,
+        istDate: istDateOf(now),
+        publishedAt: new Date(now).toISOString(),
+        title: md?.title || "",
+        text,
+        sourceUrl: item.url,
+        youtubeUrl: job.youtubeUrl,
+        playCount: item.playCount ?? 0,
+        likeCount: item.likeCount ?? 0,
+        commentCount: item.commentCount ?? 0,
+        viralScore: item.viralScore ?? 0,
+      });
+    } catch (err) {
+      pipelineLogger.warn(
+        `[${this.profile.brandName}] Could not record @${item.channel}/${item.shortcode} as a long-video candidate: ${err instanceof Error ? err.message : err}`,
+        "ChannelWatcher",
+      );
+    }
   }
 
   private async processQueue(): Promise<void> {
@@ -778,6 +823,7 @@ export class ChannelWatcher {
 
       if (job.status === "completed") {
         await this.store.markPublished(inFlight.shortcode, job.youtubeUrl, job.instagramUrl, job.facebookUrl);
+        this.recordLongCandidate(inFlight, job);
         await this.history.markPublished(
           inFlight.shortcode,
           job.youtubeUrl,
