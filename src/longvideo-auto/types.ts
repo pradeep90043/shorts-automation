@@ -33,6 +33,8 @@ export interface LongRequest {
   /** the runner-up, used when the first seed cannot be turned into a script */
   fallback?: LongCandidate;
   status: "queued" | "running" | "done" | "failed" | "skipped";
+  /** made on demand from the dashboard: go public right after upload instead of waiting for the evening slot */
+  publishNow?: boolean;
   attempts: number;
   /** a failed attempt is retried no earlier than this (epoch ms) */
   notBeforeMs?: number;

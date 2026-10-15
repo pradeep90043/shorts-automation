@@ -65,6 +65,15 @@ export class LongQueue {
     return true;
   }
 
+  /** Drops a request that is not running, so the day can be planned again. Returns false if it is missing or running. */
+  public remove(id: string): boolean {
+    const i = this.rows.findIndex((x) => x.id === id);
+    if (i < 0 || this.rows[i].status === "running") return false;
+    this.rows.splice(i, 1);
+    this.save();
+    return true;
+  }
+
   public update(id: string, patch: Partial<LongRequest>): void {
     const r = this.rows.find((x) => x.id === id);
     if (!r) return;
@@ -201,4 +210,13 @@ export async function runNext(queue: LongQueue, deps: WorkerDeps, channelOrder?:
   } finally {
     autoLongStatus.runningRequest = undefined;
   }
+}
+
+let shared: LongQueue | null = null;
+/**
+ * The one queue of this process. The nightly worker, the status route and "make it now" must all use THIS instance:
+ * two instances over the same file would not see each other's rows and the later save would overwrite the earlier one.
+ */
+export function longQueue(): LongQueue {
+  return (shared ??= new LongQueue());
 }

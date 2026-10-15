@@ -16,7 +16,7 @@ import { startLogServer } from "./logServer";
 import { youtubeServiceFor } from "./logServer";
 import { getStickmanJob, isStickmanBusy, startStickmanJob } from "./my-video/stickmanJobs";
 import { candidateStore } from "./longvideo-auto/config";
-import { LongQueue } from "./longvideo-auto/queue";
+import { longQueue } from "./longvideo-auto/queue";
 import { startAutoLong } from "./longvideo-auto";
 import { makeAsk } from "./longvideo-auto/llm";
 import { autoLongStatus } from "./longvideo-auto/status";
@@ -214,7 +214,7 @@ async function bootstrap() {
   try {
     startAutoLong({
       store: candidateStore(),
-      queue: new LongQueue(),
+      queue: longQueue(),
       ask: makeAsk(),
       fetchText: async (url, init) => {
         const res = await fetch(url, { method: init?.method ?? "GET", body: init?.body, headers: init?.headers, signal: AbortSignal.timeout(20_000) });

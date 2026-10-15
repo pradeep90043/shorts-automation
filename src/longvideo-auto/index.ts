@@ -25,6 +25,7 @@ export interface JobView {
 }
 
 export interface YoutubeLike {
+  setPrivacy(videoId: string, privacy: "private" | "unlisted" | "public"): Promise<void>;
   schedulePublish(videoId: string, publishAtIso: string): Promise<void>;
   updateSnippet(videoId: string, patch: { title?: string; description?: string; tags?: string[] }): Promise<void>;
 }
@@ -122,6 +123,16 @@ export async function produceLongVideo(
   const releaseAt = await runStage(req.id, "release", async () => {
     const yt = await deps.youtubeFor(req.channelKey);
     if (!yt) throw new Error(`no YouTube channel connected for ${req.channelKey}`);
+    // the title/description fix is cosmetic: if it fails the video is still released
+    await yt.updateSnippet(view.remote.videoId, { title: pkg.title, description: pkg.description, tags: pkg.tags }).catch((e: unknown) => {
+      autoLongStatus.log("warn", "release", `could not update title/description: ${e instanceof Error ? e.message : e}`, req.id);
+    });
+    if (req.publishNow) {
+      await yt.setPrivacy(view.remote.videoId, "public");
+      deps.store.markUsed(req.channelKey, seed.shortcode);
+      note(`PUBLIC NOW ${view.remote.url} (made on demand)`);
+      return new Date(deps.now()).toISOString();
+    }
     const taken = new Set<string>();
     for (const r of deps.queue.all()) if (r.releaseAt && r.id !== req.id) {
       const ist = new Date(Date.parse(r.releaseAt) + 5.5 * 3600e3);
@@ -129,10 +140,6 @@ export async function produceLongVideo(
     }
     const rel = assignRelease(req.channelKey, deps.now(), istDateOf(deps.now()), taken);
     const at = new Date(rel.atMs).toISOString();
-    // the title/description fix is cosmetic: if it fails the video is still scheduled (private -> public by YouTube)
-    await yt.updateSnippet(view.remote.videoId, { title: pkg.title, description: pkg.description, tags: pkg.tags }).catch((e: unknown) => {
-      autoLongStatus.log("warn", "release", `could not update title/description: ${e instanceof Error ? e.message : e}`, req.id);
-    });
     await yt.schedulePublish(view.remote.videoId, at);
     deps.store.markUsed(req.channelKey, seed.shortcode);
     note(`scheduled ${view.remote.url} for ${at} (${hhmm(rel.minute)} IST)`);
@@ -259,4 +266,44 @@ export function autoLongSnapshot(store: CandidateStore, queue: LongQueue) {
       })),
     events: autoLongStatus.events(60),
   };
+}
+
+export type EnqueueNowResult =
+  | { ok: true; id: string; seed: { shortcode: string; title: string }; publishNow: boolean }
+  | { ok: false; reason: string; status?: string; id?: string };
+
+/**
+ * "Make today's video now" for one channel: plans TODAY's best candidate immediately (the nightly plan is for yesterday)
+ * and queues it. Refuses while a request for the same day is queued or running, so a double click cannot make two videos;
+ * `force` replaces a failed or skipped one.
+ */
+export async function enqueueNow(
+  queue: LongQueue,
+  store: CandidateStore,
+  channelKey: string,
+  opts: { publishNow?: boolean; force?: boolean; shortcode?: string; now?: number } = {},
+): Promise<EnqueueNowResult> {
+  const istDate = istDateOf(opts.now ?? Date.now());
+  const id = `${istDate}:${channelKey}`;
+  const existing = queue.get(id);
+  if (existing) {
+    if (existing.status === "queued" || existing.status === "running") return { ok: false, reason: `already ${existing.status}`, status: existing.status, id };
+    if (existing.status === "done" && !opts.force) return { ok: false, reason: "today's video for this channel is already made (use force to make another)", status: "done", id };
+    queue.remove(id);
+  }
+  if (opts.shortcode) {
+    // a specific reel: make it today's seed even when it is not the top-ranked one
+    const hit = store.forDay(channelKey, istDate).find((c) => c.shortcode === opts.shortcode);
+    if (!hit) return { ok: false, reason: `reel ${opts.shortcode} is not among today's published Shorts for ${channelKey}` };
+    queue.enqueue({ id, channelKey, istDate, seed: hit, publishNow: !!opts.publishNow });
+    autoLongStatus.log("info", "plan", `${channelKey}: seed ${hit.shortcode} chosen by hand${opts.publishNow ? ", public as soon as it is ready" : ""}`, id);
+    return { ok: true, id, seed: { shortcode: hit.shortcode, title: hit.title }, publishNow: !!opts.publishNow };
+  }
+  const { queued } = await planDay(queue, istDate, { store, channels: [channelKey] });
+  const made = queue.get(id);
+  if (!queued.length || !made || made.status !== "queued") {
+    return { ok: false, reason: made?.error ?? "no candidate yet: publish a Short for this channel first", status: made?.status, id };
+  }
+  if (opts.publishNow) queue.update(id, { publishNow: true });
+  return { ok: true, id, seed: { shortcode: made.seed.shortcode, title: made.seed.title }, publishNow: !!opts.publishNow };
 }

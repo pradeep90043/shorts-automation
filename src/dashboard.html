@@ -593,6 +593,20 @@
         </div>
         <div id="autolong-updated" style="color:var(--text-muted);font-size:12px;">loading...</div>
       </div>
+      <div class="table-card" style="margin:12px 0;">
+        <div style="font-size:14px;font-weight:800;color:#fff;margin-bottom:4px;">Make today's video now</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Uses the best Short published today for the channel (publish a Short first). Normally this runs by itself after midnight.</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+          <select class="input-field" id="autolong-channel" style="width:180px;padding:6px 10px;">
+            <option value="prompt_gag">Prompt Gag</option><option value="codeorcap">CodeOrCap</option>
+            <option value="storiyum">Storiyum</option><option value="infoonspot">InfoOnSpot</option>
+          </select>
+          <label style="font-size:12px;color:var(--text-muted);display:flex;gap:6px;align-items:center;"><input type="checkbox" id="autolong-now" checked> publish as soon as it is ready</label>
+          <label style="font-size:12px;color:var(--text-muted);display:flex;gap:6px;align-items:center;"><input type="checkbox" id="autolong-force"> replace a failed/finished one</label>
+          <button class="btn-primary" style="padding:6px 14px;font-size:12px;" onclick="autoLongMakeNow()">🎬 Make video now</button>
+          <span id="autolong-make-result" style="font-size:12px;"></span>
+        </div>
+      </div>
       <div id="autolong-alert" style="display:none;margin:12px 0;padding:12px 14px;border:1px solid #f85149;border-radius:10px;background:rgba(248,81,73,.12);color:#ffb4ae;font-size:13px;"></div>
       <div id="autolong-switches" style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0;"></div>
       <div id="autolong-counters" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;"></div>
@@ -2275,6 +2289,27 @@
       if (el) el.textContent = 'status unavailable: ' + (e && e.message ? e.message : e);
     }
   }
+
+  async function autoLongMakeNow() {
+    const out = document.getElementById('autolong-make-result');
+    const channel = document.getElementById('autolong-channel').value;
+    out.style.color = 'var(--text-muted)';
+    out.textContent = 'sending...';
+    try {
+      const r = await fetch('/api/autolong/enqueue', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channel: channel, publishNow: document.getElementById('autolong-now').checked, force: document.getElementById('autolong-force').checked }),
+      });
+      const d = await r.json();
+      if (d.success) { out.style.color = '#7ee787'; out.textContent = 'queued: "' + (d.seed && d.seed.title || d.id) + '". It starts within a minute.'; }
+      else { out.style.color = '#ffb4ae'; out.textContent = 'not queued: ' + (d.reason || d.message || ('HTTP ' + r.status)); }
+      fetchAutoLong();
+    } catch (e) {
+      out.style.color = '#ffb4ae';
+      out.textContent = 'failed: ' + (e && e.message ? e.message : e);
+    }
+  }
+
   function renderAutoLong(d) {
     const $ = (id) => document.getElementById(id);
     if (!$('autolong-queue')) return;

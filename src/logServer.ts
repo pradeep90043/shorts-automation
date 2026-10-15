@@ -14,9 +14,9 @@ import {
   recordLoginFailure, safeNext, sessionCookie,
 } from "./utils/dashboardAuth";
 import { maskChannel, restoreMasked } from "./utils/channelMask";
-import { autoLongSnapshot } from "./longvideo-auto";
+import { autoLongSnapshot, enqueueNow } from "./longvideo-auto";
 import { candidateStore } from "./longvideo-auto/config";
-import { LongQueue } from "./longvideo-auto/queue";
+import { longQueue } from "./longvideo-auto/queue";
 import { activeWatchers } from "./instagram/channelWatcher";
 import { DirectUploader } from "./direct-uploader";
 import { ViralAnalyzer } from "./utils/viral-analyzer";
@@ -1769,10 +1769,31 @@ export function startLogServer(): void {
       return;
     }
 
+    // ── Daily long video: make today's video for a channel right now (dashboard button) ──────────────────
+    if (req.method === "POST" && url.split("?")[0] === "/api/autolong/enqueue") {
+      const send = (code: number, data: unknown) => {
+        res.writeHead(code, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify(data));
+      };
+      try {
+        const body = await parseJsonBody(req);
+        const channel = String(body.channel || "").toLowerCase().trim();
+        if (!channel) return send(400, { success: false, message: "channel is required" });
+        const r = await enqueueNow(longQueue(), candidateStore(), channel, {
+          publishNow: body.publishNow === true,
+          force: body.force === true,
+          shortcode: typeof body.shortcode === "string" ? body.shortcode : undefined,
+        });
+        return send(r.ok ? 200 : 409, { success: r.ok, ...r });
+      } catch (err: any) {
+        return send(500, { success: false, message: err?.message || "enqueue failed" });
+      }
+    }
+
     // ── Daily long video system: status for the dashboard and for a quick curl ───────────────────────────
     if (req.method === "GET" && url.split("?")[0] === "/api/autolong/status") {
       try {
-        const snap = autoLongSnapshot(candidateStore(), new LongQueue());
+        const snap = autoLongSnapshot(candidateStore(), longQueue());
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
         res.end(JSON.stringify({ success: true, ...snap }));
       } catch (err: any) {
