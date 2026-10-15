@@ -28,6 +28,24 @@ export const VOICE_PROFILES: Record<string, VoiceProfile> = {
     sample_language: "hi",
     sample_text: "auto",
   },
+  // Prompt Gag (finance) speaks in the owner's voice, same sample as CodeOrCap
+  prompt_gag: {
+    voice: "paddy1",
+    sample_path: "assets/voice-samples/paddy1.mp3",
+    sample_start: "0",
+    sample_end: "15",
+    sample_language: "hi",
+    sample_text: "auto",
+  },
+  // InfoOnSpot speaks in the Pakizah voice, same sample as Storiyum
+  infoonspot: {
+    voice: "paki1",
+    sample_path: "assets/voice-samples/pakizah.mp3",
+    sample_start: "0",
+    sample_end: "14.7",
+    sample_language: "hi",
+    sample_text: "auto",
+  },
   // Storiyum narrates in the Pakizah voice (14.8 s of clean storytelling speech, about -24 LUFS with natural pauses)
   storiyum: {
     voice: "paki1",

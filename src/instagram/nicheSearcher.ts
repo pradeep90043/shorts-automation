@@ -72,6 +72,17 @@ const HASHTAG_MAP: Record<string, Record<string, string[]>> = {
     ],
   },
   // InfoOnSpot — news / what's happening right now / updates
+  // Prompt Gag — Indian market news and money explainers. Broad, high-volume tags first (only the first 5 are used by the fallback).
+  finance: {
+    default: [
+      "stockmarket", "sharemarket", "investing", "finance", "personalfinance",
+      "nifty", "sensex", "mutualfunds", "stockmarketindia", "financialfreedom",
+      "moneytips", "wealth", "economy", "businessnews", "financetips",
+      "tradingindia", "stocks", "sip", "financialliteracy", "marketupdate",
+    ],
+    serious: ["stockmarket", "economy", "nifty", "sensex", "businessnews", "marketupdate"],
+    educational: ["financialliteracy", "personalfinance", "investing", "mutualfunds", "sip", "moneytips"],
+  },
   infoonspot: {
     default: [
       "breakingnews", "newsupdate", "latestnews", "dailynews", "newsflash",

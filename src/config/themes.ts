@@ -185,9 +185,37 @@ const infoOnSpotTheme: ContentTheme = {
   },
 };
 
+
+// Prompt Gag — current market news and opinion (finance). Educational only: no advice, no promises, no stock "picks".
+const financeTheme: ContentTheme = {
+  niche: "finance",
+  channelDescriptor:
+    "a credible Indian finance explainer YouTube Shorts & Instagram channel: what is moving the market today, why, and a balanced opinion",
+  titleRules: `TITLE RULES: Max 65 chars. A clear, specific hook about what happened in the market or money topic. One relevant emoji. Never promise returns, never say "buy"/"sell", no "guaranteed", no "100% profit".`,
+  descriptionRules: (brandName: string) =>
+    `DESCRIPTION RULES: 100-180 words. 1) What happened (facts only, from the clip). 2) Why it matters in plain words. 3) One balanced opinion that names the risk too. ` +
+    `4) Follow @${brandName} for daily market updates. 5) Include a credit line reading exactly: "📲 CONTENT SOURCE/CREDIT: @<original_creator> (Respective Owner) DM FOR CREDIT OR REMOVAL". ` +
+    `6) End with: "Disclaimer: Educational content only, not financial advice. Do your own research or ask a registered advisor before investing."`,
+  keywordsRule: `Provide 1 primary keyword, 5 secondary keywords, 15 tags, and 6-8 hashtags (always include #shorts #finance #stockmarket #investing).`,
+  analysisRules:
+    `FINANCE RULES: Identify the market event, number or claim shown. Separate fact from opinion. Flag any claim of guaranteed returns, ` +
+    `"sure-shot" tips or buy/sell calls as unsafe and do NOT repeat them. Never state a price or percentage the clip does not show. Set mood to "serious" or "educational".`,
+  appendVerdict: false,
+  requiredHashtag: "finance",
+  noHistoryHint:
+    "No historical uploads data yet. Prefer clear 'what happened and why' market explainers with a balanced opinion and no advice.",
+  fallback: {
+    title: "What Moved The Market Today 📈",
+    description:
+      "A quick look at what moved the market today and why it matters.\n\nFollow for daily market updates.\n\n📲 CONTENT SOURCE/CREDIT: @creator\n(Respective Owner)\nDM FOR CREDIT OR REMOVAL\n\nDisclaimer: Educational content only, not financial advice.\n\n#shorts #finance #stockmarket #investing",
+    tags: ["finance", "stock market", "investing", "market update", "shorts", "money"],
+  },
+};
+
 export const CONTENT_THEMES: Record<string, ContentTheme> = {
   tech: techTheme,
   stories: storiesTheme,
   humor: humorTheme,
   infoonspot: infoOnSpotTheme,
+  finance: financeTheme,
 };

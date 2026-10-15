@@ -389,7 +389,7 @@ function loadExtraProfiles(): ChannelProfile[] {
       if (!fbPageId) fbPageId = "1244228672098266";
     }
 
-    const nicheEnv = env("NICHE") || (prefix === "PROMPT_GAG" ? "humor" : prefix === "INFOONSPOT" ? "infoonspot" : undefined);
+    const nicheEnv = env("NICHE") || (prefix === "PROMPT_GAG" ? "finance" : prefix === "INFOONSPOT" ? "infoonspot" : undefined);
 
     profiles.push({
       key: prefix.toLowerCase(),
