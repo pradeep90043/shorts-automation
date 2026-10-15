@@ -1,6 +1,7 @@
 import { ChannelProfile, config } from "../config";
 import { TelegramService } from "../telegram";
 import { WatchStore, QueuedReel } from "../utils/watchStore";
+import { CHANNEL_ORDER, channelSlotIndex, gridFromEnv, hhmm, pickMinute, shortSlots, shortsGridActive } from "../schedule/shortsGrid";
 import { ReelHistoryStore } from "../utils/reelHistoryStore";
 import { JobDatabase } from "../utils/db";
 import {
@@ -463,6 +464,7 @@ export class ChannelWatcher {
         `${this.profile.watch.gapHours}h apart`,
       "ChannelWatcher",
     );
+    this.logPlannedGrid();
   }
 
   // scheduleTime (HH:MM) is always treated as IST (UTC+5:30) so the Oracle
@@ -495,6 +497,72 @@ export class ChannelWatcher {
     );
   }
 
+  /** UTC ms of a minute-after-midnight IST on today's IST date. */
+  private istTodayAtMinuteUtcMs(minute: number): number {
+    const nowIst = new Date(this.nowIstMs());
+    return (
+      Date.UTC(nowIst.getUTCFullYear(), nowIst.getUTCMonth(), nowIst.getUTCDate(), Math.floor(minute / 60), minute % 60, 0, 0) -
+      ChannelWatcher.IST_OFFSET_MS
+    );
+  }
+
+  /** SHORTS_GRID=on: the shared 07:00-22:00 grid (src/schedule/shortsGrid.ts); otherwise the legacy scheduleTime + 5 min stagger. */
+  private gridOn(): boolean {
+    return shortsGridActive();
+  }
+
+  private gridIndex(): number {
+    return channelSlotIndex(this.profile.key, this.profileIndex);
+  }
+
+  /** UTC ms at which this channel selects its reels for the day. */
+  private batchRunUtcMs(): number {
+    if (this.gridOn()) return this.istTodayAtMinuteUtcMs(pickMinute(this.gridIndex(), gridFromEnv()));
+    return this.todayScheduleUtcMs() + this.profileIndex * 5 * 60 * 1000;
+  }
+
+  /** UTC ms of this channel's first Short of the day. */
+  private firstSlotUtcMs(): number {
+    if (this.gridOn()) {
+      const cfg = gridFromEnv();
+      return this.istTodayAtMinuteUtcMs(cfg.startMin + this.gridIndex() * cfg.stepMin);
+    }
+    return this.todayScheduleUtcMs() + this.profileIndex * 5 * 60 * 1000;
+  }
+
+  /** Time between two of this channel's Shorts: the whole grid's step times the channel count (3 h for 4 channels). */
+  private slotGapMs(): number {
+    if (this.gridOn()) return CHANNEL_ORDER.length * gridFromEnv().stepMin * 60 * 1000;
+    return this.profile.watch.gapHours * 60 * 60 * 1000;
+  }
+
+  /**
+   * UTC ms of the Shorts to publish today for `count` picked reels. Grid mode: the channel's own slots that are still
+   * ahead (a late start publishes only what is left of the day, never a burst of past slots). Legacy: start + i * gap.
+   */
+  private slotTimesUtcMs(count: number): number[] {
+    if (this.gridOn()) {
+      const now = Date.now();
+      return shortSlots(this.gridIndex(), CHANNEL_ORDER.length, gridFromEnv())
+        .map((m) => this.istTodayAtMinuteUtcMs(m))
+        .filter((ms) => ms > now - 2 * 60 * 1000)
+        .slice(0, count);
+    }
+    const start = this.firstSlotUtcMs();
+    return Array.from({ length: count }, (_, i) => start + i * this.slotGapMs());
+  }
+
+  /** Logs this channel's planned grid, so it can be checked before SHORTS_GRID=on is set. */
+  private logPlannedGrid(): void {
+    const cfg = gridFromEnv();
+    pipelineLogger.info(
+      `[${this.profile.brandName}] Shorts grid ${this.gridOn() ? "ACTIVE" : "planned (SHORTS_GRID=on to use it)"}: ` +
+        `selects reels ${hhmm(pickMinute(this.gridIndex(), cfg))} IST, publishes at ` +
+        `${shortSlots(this.gridIndex(), CHANNEL_ORDER.length, cfg).map(hhmm).join(", ")} IST`,
+      "ChannelWatcher",
+    );
+  }
+
   private checkAndRunMissedBatch(): void {
     const today = new Date().toISOString().slice(0, 10);
     const batchRanToday = this.store.getLastBatchDate() === today;
@@ -508,7 +576,7 @@ export class ChannelWatcher {
       return;
     }
 
-    const staggeredScheduledMs = this.todayScheduleUtcMs() + (this.profileIndex * 5 * 60 * 1000);
+    const staggeredScheduledMs = this.batchRunUtcMs();
     if (Date.now() >= staggeredScheduledMs) {
       const staggerMs = this.profileIndex * 5 * 60 * 1000;
       pipelineLogger.info(
@@ -545,7 +613,7 @@ export class ChannelWatcher {
 
   private msUntilNextScheduleTime(): number {
     const nowMs = Date.now();
-    const scheduledMs = this.todayScheduleUtcMs() + (this.profileIndex * 5 * 60 * 1000);
+    const scheduledMs = this.batchRunUtcMs();
     if (scheduledMs <= nowMs) {
       // Already past today's IST schedule — fire tomorrow
       return scheduledMs + 24 * 60 * 60 * 1000 - nowMs;
@@ -653,25 +721,26 @@ export class ChannelWatcher {
       );
     }
 
-    const gapMs = this.profile.watch.gapHours * 60 * 60 * 1000;
-    const startTime = this.todayScheduleUtcMs() + (this.profileIndex * 5 * 60 * 1000);
-    const queue: QueuedReel[] = picked.map((p, i) => ({
+    const slotTimes = this.slotTimesUtcMs(picked.length);
+    // grid mode after a late start: only the slots left of the day are used, and only those reels are reserved
+    const slotted = picked.slice(0, slotTimes.length);
+    const queue: QueuedReel[] = slotted.map((p, i) => ({
       shortcode: p.shortcode,
       url: p.url,
       channel: p.channel,
-      scheduledAt: new Date(startTime + i * gapMs).toISOString(),
+      scheduledAt: new Date(slotTimes[i]).toISOString(),
       fired: false,
     }));
 
     // Reserve immediately so a crash/retry can never re-pick the same reel.
-    await Promise.all(picked.map((p) => this.history.add(p.shortcode, p.channel)));
+    await Promise.all(slotted.map((p) => this.history.add(p.shortcode, p.channel)));
     await this.store.setQueue(queue);
     await this.store.setLastBatchDate(today);
 
     const sourceDesc = "niche hashtag search";
     pipelineLogger.info(
       `[${this.profile.brandName}] Daily batch selected: ${queue.length} reel(s) from ${sourceDesc}, ` +
-        `spaced ${this.profile.watch.gapHours}h apart.`,
+        `${this.gridOn() ? "on the shared Shorts grid" : `spaced ${this.profile.watch.gapHours}h apart`}.`,
       "ChannelWatcher",
     );
     return [];
@@ -789,7 +858,7 @@ export class ChannelWatcher {
       let canFetch = false;
       if (queue.length === 0) {
         // Start populating as soon as we reach the staggered scheduled time
-        const staggeredScheduledMs = this.todayScheduleUtcMs() + (this.profileIndex * 5 * 60 * 1000);
+        const staggeredScheduledMs = this.batchRunUtcMs();
         if (this.isForcedRun || now >= staggeredScheduledMs) {
           canFetch = true;
         }
@@ -829,10 +898,10 @@ export class ChannelWatcher {
             "ChannelWatcher",
           );
           // Advance past the failed slot so the queue is not permanently blocked on this channel
-          const staggeredScheduledMs = this.todayScheduleUtcMs() + (this.profileIndex * 5 * 60 * 1000);
+          const staggeredScheduledMs = this.firstSlotUtcMs();
           const scheduledTime = queue.length === 0
             ? (this.isForcedRun ? now : staggeredScheduledMs)
-            : new Date(queue[queue.length - 1].scheduledAt).getTime() + this.profile.watch.gapHours * 60 * 60 * 1000;
+            : new Date(queue[queue.length - 1].scheduledAt).getTime() + this.slotGapMs();
           const scheduledAtStr = new Date(scheduledTime).toISOString();
           const skipCode = `skip_${channel}_${Date.now()}`;
           await this.store.setQueue([...queue, {
@@ -856,10 +925,10 @@ export class ChannelWatcher {
             "ChannelWatcher",
           );
           // Advance past the skipped slot so the queue moves on to remaining channels
-          const staggeredScheduledMs = this.todayScheduleUtcMs() + (this.profileIndex * 5 * 60 * 1000);
+          const staggeredScheduledMs = this.firstSlotUtcMs();
           const scheduledTime = queue.length === 0
             ? (this.isForcedRun ? now : staggeredScheduledMs)
-            : new Date(queue[queue.length - 1].scheduledAt).getTime() + this.profile.watch.gapHours * 60 * 60 * 1000;
+            : new Date(queue[queue.length - 1].scheduledAt).getTime() + this.slotGapMs();
           const scheduledAtStr = new Date(scheduledTime).toISOString();
           const skipCode = `skip_${channel}_${Date.now()}`;
           await this.store.setQueue([...queue, {
@@ -877,10 +946,10 @@ export class ChannelWatcher {
         }
 
         const pick = unseen[Math.floor(Math.random() * unseen.length)];
-        const staggeredScheduledMs = this.todayScheduleUtcMs() + (this.profileIndex * 5 * 60 * 1000);
+        const staggeredScheduledMs = this.firstSlotUtcMs();
         const scheduledTime = queue.length === 0
           ? (this.isForcedRun ? now : staggeredScheduledMs)
-          : new Date(queue[queue.length - 1].scheduledAt).getTime() + this.profile.watch.gapHours * 60 * 60 * 1000;
+          : new Date(queue[queue.length - 1].scheduledAt).getTime() + this.slotGapMs();
         const scheduledAtStr = new Date(scheduledTime).toISOString();
 
         // Reserve in history and commit to queue before firing — crash-safe.
