@@ -82,3 +82,42 @@ export async function buildClonedVerdictAudio(score: number, outPath: string, di
     return null;
   }
 }
+
+/**
+ * Storiyum's end clip (assets/verdict-clips/storiyum_cta.mp4, 4.0 s) shows a person saying "Every story has a lesson." (0.00-1.44 s) and
+ * "Follow Storiyum." (2.32-3.14 s). Same idea as the CodeOrCap verdict: the clip's audio is replaced by the channel's cloned voice (paki1),
+ * each phrase placed where the lips move, so the Short has one voice from the narration to the end. File: <dir>/<file>.mp3.
+ */
+export const STORIYUM_CTA_PARTS = [
+  { file: "cta_s1", start: 0.0, window: 1.8 }, // "Every story has a lesson."  (lips 1.44 s + wiggle)
+  { file: "cta_s2", start: 2.32, window: 1.2 }, // "Follow Storiyum."  (lips 0.82 s + wiggle)
+] as const;
+
+export async function buildClonedCtaAudio(
+  outPath: string,
+  parts: ReadonlyArray<{ file: string; start: number; window: number }>,
+  dir = clonedVerdictDir(),
+  clipSeconds = 4.01,
+): Promise<string | null> {
+  try {
+    const paths = parts.map((p) => path.join(dir, `${p.file}.mp3`));
+    if (!paths.every((x) => fs.existsSync(x))) return null;
+    const inputs: string[] = [];
+    const chains: string[] = [];
+    for (let i = 0; i < parts.length; i++) {
+      const tempo = verdictTempo(await audioDuration(paths[i]), parts[i].window);
+      const delayMs = Math.round(parts[i].start * 1000);
+      inputs.push("-i", paths[i]);
+      chains.push(`[${i}:a]atempo=${tempo.toFixed(4)},adelay=${delayMs}|${delayMs}[a${i}]`);
+    }
+    const graph =
+      `${chains.join(";")};${parts.map((_, i) => `[a${i}]`).join("")}amix=inputs=${parts.length}:duration=longest:normalize=0,` +
+      `volume=${VERDICT_GAIN_DB}dB,alimiter=limit=0.9,apad=whole_dur=${clipSeconds}[out]`;
+    await run(config.binaries.ffmpeg, ["-y", ...inputs, "-filter_complex", graph, "-map", "[out]", "-t", String(clipSeconds), "-ar", "44100", "-ac", "2", outPath]);
+    pipelineLogger.info("Cloned CTA audio built", "ClonedVerdict");
+    return outPath;
+  } catch (err) {
+    pipelineLogger.warn(`Cloned CTA audio failed (${err instanceof Error ? err.message : err}) -> recorded audio kept`, "ClonedVerdict");
+    return null;
+  }
+}

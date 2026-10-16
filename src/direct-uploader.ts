@@ -33,7 +33,7 @@ import { ImageAnalyzer } from "./image-analysis";
 import { TTSService } from "./audio/tts";
 import { prepareScoreAudio } from "./audio/verdictNumber";
 import { clonedVoiceEnabled, spokenText, startClonedLines } from "./audio/clonedVoice";
-import { buildClonedVerdictAudio } from "./audio/clonedVerdict";
+import { buildClonedCtaAudio, buildClonedVerdictAudio, STORIYUM_CTA_PARTS } from "./audio/clonedVerdict";
 import { concatAudio } from "./audio/retime";
 import { estimateWordTimings, groupWordsIntoLines, generateASSFile } from "./audio/subtitles";
 import { buildGridPreview } from "./utils/gridPreview";
@@ -3866,9 +3866,9 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         );
       }
 
-      // 3.5 — Append verdict / CTA sequence (CodeOrCap + Storiyum + Prompt Gag)
+      // 3.5 — Append verdict / CTA sequence (CodeOrCap + Storiyum). Prompt Gag ends with the reel and the V2 clip: no laughing end-card.
       const _pk = this.profile.key.toLowerCase();
-      if (_pk === "codeorcap" || _pk === "storiyum" || _pk === "prompt_gag") {
+      if (_pk === "codeorcap" || _pk === "storiyum") {
         const withVerdictPath = path.join(tempDir, "video_with_verdict.mp4");
         const appended = await this.appendVerdictSequence(context, finalVideoPath, withVerdictPath);
         if (appended) finalVideoPath = withVerdictPath;
@@ -4878,7 +4878,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
    * Supported profiles:
    *   codeorcap — verdict + score PNG, avatar bg (codeorcap_verdict_bg.mp4)
    *               Falls back to blurred-frame + animated sticker when asset is absent.
-   *   storiyum  — CTA only (no score), avatar bg (storiyum_cta.mp4).
+   *   storiyum  — CTA only (no score), avatar bg (storiyum_cta.mp4), cloned Storiyum voice.
    *               Skips silently when asset is absent.
    *
    * Avatar mode uses the clip's original audio; verdict category and score are shown
@@ -4932,14 +4932,6 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         seg1Target:   1.44,                 // Whisper: 0.00–1.44s
         gapDuration:  0.88,                 // Whisper: 1.44–2.32s
         seg2Target:   0.82,                 // Whisper: 2.32–3.14s
-        scoreEnabled: false as const,
-      },
-      prompt_gag: {
-        assetFile:    "prompt_gag_cta.mp4",
-        ttsKey:       "prompt_gag",
-        seg1Target:   2.0,
-        gapDuration:  0.5,
-        seg2Target:   1.0,
         scoreEnabled: false as const,
       },
     } as const;
@@ -5088,9 +5080,15 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
           ].join(";");
           mapArgs = `-map "[out_v]" -map "[out_a]"`;
         } else {
-          // Storiyum: avatar clip video + original audio only — no text overlays
+          // Storiyum: avatar clip video, no text overlays. The audio is the Storiyum cloned voice (the same voice as the narration)
+          // placed where the lips move; the recorded audio is kept when the cloned phrases are missing or the cloud voice is off.
+          const clonedCta =
+            profileKey === "storiyum" && clonedVoiceEnabled(profileKey)
+              ? await buildClonedCtaAudio(path.join(tempDir, "cta_cloned.wav"), STORIYUM_CTA_PARTS, undefined, clipDuration)
+              : null;
+          if (clonedCta) extraInputs = `-i "${clonedCta}" `;
           filterComplex = `[0:v]setpts=PTS-STARTPTS[out_v]`;
-          mapArgs = `-map "[out_v]" -map 0:a`;
+          mapArgs = clonedCta ? `-map "[out_v]" -map 1:a` : `-map "[out_v]" -map 0:a`;
         }
 
         await new Promise<void>((resolve, reject) => {
