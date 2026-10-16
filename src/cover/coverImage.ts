@@ -97,6 +97,39 @@ async function geminiBackground(prompt: string, aspect: CoverAspect): Promise<Bu
   }
 }
 
+/**
+ * The owner's own image endpoint (a Cloudflare worker): POST {"prompt"} -> an image (1024x1024, cropped to the cover's shape later).
+ * COVER_IMAGE_API_KEY (a secret on the server, never in this public repo) is required; COVER_IMAGE_API_URL overrides the built-in address.
+ */
+const DEFAULT_IMAGE_API_URL = "https://image-api.spamhu93.workers.dev";
+
+async function workerBackground(prompt: string): Promise<Buffer | null> {
+  const url = process.env.COVER_IMAGE_API_URL || DEFAULT_IMAGE_API_URL; // the address is not a secret: it lives in code; the key never does
+  const key = process.env.COVER_IMAGE_API_KEY;
+  if (!url || !key) return null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 90_000);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+        body: JSON.stringify({ prompt }),
+        signal: controller.signal,
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const buf = Buffer.from(await res.arrayBuffer());
+      await sharp(buf).metadata();
+      return buf;
+    } catch (err) {
+      pipelineLogger.warn(`Cover: image API attempt ${attempt}/2 failed (${err instanceof Error ? err.message : err})`, "Cover");
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return null;
+}
+
 async function aiBackground(prompt: string, w: number, h: number): Promise<Buffer | null> {
   for (let attempt = 1; attempt <= 2; attempt++) {
     const controller = new AbortController();
@@ -172,7 +205,7 @@ async function build(brand: Brand, headline: string, req: CoverRequest): Promise
   const topic = (req.title || headline).replace(/[\p{Extended_Pictographic}️‍#|]/gu, " ").replace(/\s+/g, " ").trim().slice(0, 120);
   const prompt = `${brand.style}, scene about: ${topic}. No text, no letters, no words, no logos, no watermark. ${req.aspect === "portrait" ? "vertical composition, subject in the upper middle" : "wide composition, subject on the right"}`;
   const started = Date.now();
-  let ai = await geminiBackground(prompt, req.aspect);
+  let ai = (await workerBackground(prompt)) ?? (await geminiBackground(prompt, req.aspect));
   let logoCut = false;
   if (!ai) {
     ai = await aiBackground(prompt, w, h);
