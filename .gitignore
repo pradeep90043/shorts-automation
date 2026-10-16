@@ -5,6 +5,8 @@ logs
 output
 *.log
 .env
+.env.*
+!.env.example
 .DS_Store
 cookies.txt
 www.instagram.com_cookies.txt

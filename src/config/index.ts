@@ -4,8 +4,17 @@ import path from "path";
 import fs from "fs";
 import { ContentTheme, CONTENT_THEMES, createCustomTheme } from "./themes";
 
-// Load environmental variables
-dotenv.config();
+// Load environmental variables. APP_ENV=dev loads ONLY .env.dev (test tokens, test repos, local database) and never .env, so a
+// dev run from this checkout cannot pick up the production tokens; a missing .env.dev stops the app instead of falling back.
+if ((process.env.APP_ENV || "").toLowerCase() === "dev") {
+  const devFile = path.resolve(process.cwd(), ".env.dev");
+  if (!fs.existsSync(devFile)) {
+    throw new Error(`APP_ENV=dev needs ${devFile} (it is never replaced by .env, so production tokens stay out of a dev run)`);
+  }
+  dotenv.config({ path: devFile });
+} else {
+  dotenv.config();
+}
 
 export { ContentTheme, CONTENT_THEMES, createCustomTheme } from "./themes";
 
