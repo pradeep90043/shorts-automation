@@ -17,6 +17,7 @@ import { maskChannel, restoreMasked } from "./utils/channelMask";
 import { autoLongSnapshot, enqueueNow } from "./longvideo-auto";
 import { candidateStore } from "./longvideo-auto/config";
 import { longQueue } from "./longvideo-auto/queue";
+import { handleMediaRequest } from "./instagram/mediaLinks";
 import { activeWatchers } from "./instagram/channelWatcher";
 import { DirectUploader } from "./direct-uploader";
 import { ViralAnalyzer } from "./utils/viral-analyzer";
@@ -1202,6 +1203,10 @@ export function startLogServer(): void {
     }
     // The log endpoints (/logs, /logs/raw, /logs/stream ...) are deliberately open, so logs can be read with a plain curl.
     const openLogs = req.method === "GET" && (authPath === "/logs" || authPath.startsWith("/logs/"));
+    // Temporary public links for Instagram's video_url upload (src/instagram/mediaLinks.ts). Answered BEFORE the login check on
+    // purpose (Instagram's servers have no session) and ONLY for /ig-media/<43-char token>.mp4; every other path continues below.
+    if (handleMediaRequest(req, res)) return;
+
     if (!openLogs && !isMachineRoute(req.method || "GET", authPath)) {
       const auth = authenticate(req);
       if (!auth.ok) {
