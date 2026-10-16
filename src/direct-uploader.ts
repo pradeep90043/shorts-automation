@@ -2946,7 +2946,7 @@ ${this.theme.analysisRules}`;
         // run that starts now, while the reel is rendered. If it fails or is late, the Edge voice is used as before.
         if (clonedVoiceEnabled(this.profile.key) && context.metadata?.voiceoverScript) {
           const claim = context.metadata.voiceoverScript;
-          const hiw = this.profile.key.toLowerCase() === "codeorcap" && (this.profile.watch?.outroVersion || "v2") === "v2" ? howItWorksLines(this.deriveTranscriptionWorkflow(context).explanation, insightIntro(this.profile.key)) : [];
+          const hiw = insightEnabledFor(this.profile.key, this.profile.watch?.outroVersion) ? howItWorksLines(this.deriveTranscriptionWorkflow(context).explanation, insightIntro(this.profile.key)) : [];
           context.clonedHowItWorksLines = hiw;
           context.clonedVoice = startClonedLines(`short-${context.id.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 16) || Date.now()}`, [
             { name: "claim", text: spokenText(claim) },
@@ -5236,7 +5236,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
             : await this.tts.generateVoiceover(
                 speechScript,
                 transitionTtsPath,
-                "codeorcap",
+                profileKey,
               );
         } catch (err) {
           pipelineLogger.warn(
