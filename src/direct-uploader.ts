@@ -3868,9 +3868,9 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         );
       }
 
-      // 3.5 — Append verdict / CTA sequence (CodeOrCap + Storiyum). Prompt Gag ends with the reel and the V2 clip: no laughing end-card.
+      // 3.5 — Append verdict / CTA sequence (CodeOrCap + Storiyum). Prompt Gag has no end-card: only the V2 clip follows the reel.
       const _pk = this.profile.key.toLowerCase();
-      if (_pk === "codeorcap" || _pk === "storiyum") {
+      if (_pk === "codeorcap" || _pk === "storiyum" || _pk === "prompt_gag") {
         const withVerdictPath = path.join(tempDir, "video_with_verdict.mp4");
         const appended = await this.appendVerdictSequence(context, finalVideoPath, withVerdictPath);
         if (appended) finalVideoPath = withVerdictPath;
@@ -4936,11 +4936,23 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         seg2Target:   0.82,                 // Whisper: 2.32–3.14s
         scoreEnabled: false as const,
       },
+      // Prompt Gag (finance): no end-card: the Short is the reel, then the insight clip (V2)
+      prompt_gag: {
+        assetFile:    "",
+        ttsKey:       "prompt_gag",
+        seg1Target:   0,
+        gapDuration:  0,
+        seg2Target:   0,
+        scoreEnabled: false as const,
+        noEndCard:    true as const,
+      },
     } as const;
 
     type ProfileKey = keyof typeof PROFILE_CFG;
     const cfg = (PROFILE_CFG as Record<string, typeof PROFILE_CFG[ProfileKey]>)[profileKey];
     if (!cfg) return false;
+    const noEndCard = (cfg as { noEndCard?: boolean }).noEndCard === true;
+    if (noEndCard && !insightEnabledFor(profileKey, this.profile.watch?.outroVersion)) return false;
 
     try {
       const customBgPath = path.join(config.paths.assetsDir, "verdict-clips", cfg.assetFile);
@@ -4950,6 +4962,28 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       const rawFCS = context.metadata?.factCheckScore ?? 7;
       const score  = Math.min(10, Math.max(1, Math.round(rawFCS)));
 
+      // Cross-platform font path resolution for drawtext filters
+      const fontCandidates = [
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/Library/Fonts/Arial Bold.ttf",
+        "/Library/Fonts/Arial.ttf",
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "C:/Windows/Fonts/arialbd.ttf",
+        "C:/Windows/Fonts/arial.ttf",
+      ];
+      let fontFile = "'Arial'";
+      for (const fc of fontCandidates) {
+        if (fs.existsSync(fc)) {
+          fontFile = `'${fc}'`;
+          break;
+        }
+      }
+
+      const verdictClipPath = path.join(tempDir, "verdict_clip.mp4");
+
+      if (!noEndCard) {
       // 1 — Resolve sticker (CodeOrCap fallback only — Storiyum skips if asset missing)
       let stickerPath = "";
       if (!useAvatarBg) {
@@ -5011,30 +5045,9 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         scoreFadeOutStart = (end - 0.40).toFixed(2);
       }
 
-      // Cross-platform font path resolution for drawtext filters
-      const fontCandidates = [
-        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-        "/System/Library/Fonts/Supplemental/Arial.ttf",
-        "/Library/Fonts/Arial Bold.ttf",
-        "/Library/Fonts/Arial.ttf",
-        "/System/Library/Fonts/Helvetica.ttc",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "C:/Windows/Fonts/arialbd.ttf",
-        "C:/Windows/Fonts/arial.ttf",
-      ];
-      let fontFile = "'Arial'";
-      for (const fc of fontCandidates) {
-        if (fs.existsSync(fc)) {
-          fontFile = `'${fc}'`;
-          break;
-        }
-      }
-
       // 3 — Render score PNG (CodeOrCap only)
       const scorePngPath = path.join(tempDir, "verdict_score.png");
       if (cfg.scoreEnabled) await this.renderScorePng(score, scorePngPath);
-
-      const verdictClipPath = path.join(tempDir, "verdict_clip.mp4");
 
       if (useAvatarBg) {
         let filterComplex: string;
@@ -5156,6 +5169,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
           exec(cmd, (err) => (err ? reject(err) : resolve()));
         });
       }
+      } // end of the verdict / CTA end-card (not for noEndCard channels)
 
       // 3.5 — Generate transition clip (if Outro Version is v2)
       const transitionClipPath = path.join(tempDir, "transition_clip.mp4");
@@ -5381,7 +5395,25 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       let concatFilter = "";
       let concatCmd = "";
 
-      if (hasTransition) {
+      if (noEndCard) {
+        // reel + insight clip only
+        concatFilter =
+          `[0:v]scale=1080:1920:force_original_aspect_ratio=decrease,` +
+          `pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[v0];` +
+          `[1:v]scale=1080:1920:force_original_aspect_ratio=decrease,` +
+          `pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[v1];` +
+          `[0:a]aresample=44100[a0];[1:a]aresample=44100[a1];` +
+          `[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]`;
+        concatCmd =
+          `${config.binaries.ffmpeg} -y ` +
+          `-i "${effectiveMainVideoPath}" ` +
+          `-i "${transitionClipPath}" ` +
+          `-filter_complex "${concatFilter}" ` +
+          `-map "[v]" -map "[a]" ` +
+          `-c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p ` +
+          `-c:a aac ` +
+          `"${outputPath}"`;
+      } else if (hasTransition) {
         concatFilter =
           `[0:v]scale=1080:1920:force_original_aspect_ratio=decrease,` +
           `pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[v0];` +

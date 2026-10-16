@@ -19,6 +19,18 @@ export const RESUMABLE_MAX_SEC = 60;
 /** Length of the last-resort copy: under the limit with a margin, with a 1 s fade-out so it does not end mid-word. */
 export const TRIMMED_SEC = 58.5;
 
+/** Instagram refuses captions over 2200 characters (error 2207010 "caption too long") or with more than 30 hashtags. */
+export const IG_CAPTION_MAX = 2200;
+export function buildCaption(metadata: VideoMetadata): string {
+  const tags = metadata.tags.slice(0, 30).map((t) => "#" + t.replace(/\s+/g, "")).join(" ");
+  const head = `${metadata.title}\n\n`;
+  const tail = `\n\n${tags}`;
+  const room = IG_CAPTION_MAX - head.length - tail.length;
+  const desc = (metadata.description || "");
+  const body = desc.length <= room ? desc : desc.slice(0, Math.max(0, room - 1)).replace(/\s+\S*$/, "") + "…";
+  return (head + body + tail).slice(0, IG_CAPTION_MAX);
+}
+
 export interface PublisherDeps {
   fetchFn?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
@@ -249,7 +261,7 @@ export class InstagramPublisher {
       pipelineLogger.error(`[${account.name}] Missing Instagram credentials`, undefined, "InstagramPublisher");
       return null;
     }
-    const caption = `${metadata.title}\n\n${metadata.description}\n\n${metadata.tags.map((t) => "#" + t.replace(/\s+/g, "")).join(" ")}`;
+    const caption = buildCaption(metadata);
 
     // Reel cover (9:16): only when the caller names a brand; the cover rides along with the video_url method
     const cover = opts.brandKey && this.d.publicBaseUrl() ? await makeCover({ title: metadata.title, coverHeadline: metadata.coverHeadline, thumbnailText: metadata.thumbnailText, brandKey: opts.brandKey, aspect: "portrait" }) : null;
