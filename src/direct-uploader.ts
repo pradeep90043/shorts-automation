@@ -2827,7 +2827,7 @@ ${this.theme.analysisRules}`;
             );
             if (!context.reviewSettings) {
               context.reviewSettings = {
-                voiceover: !isPromptGag,
+                voiceover: true,
                 originalAudio: false, // Force off copyrighted original audio
                 captions: true,
                 sticker: true,
@@ -2847,34 +2847,34 @@ ${this.theme.analysisRules}`;
         }
       }
 
-      // Apply preset overrides for PromptGag
+      // Apply preset overrides for PromptGag (finance explainer): the cloned voice explains the market move, captions on, the reel's own
+      // audio off, no reaction sticker (the old humor preset laughed over every reel)
       if (isPromptGag) {
         pipelineLogger.info(
-          "PromptGag profile detected — applying preset overrides: captions off, voiceover off, sticker on",
+          "PromptGag profile detected — applying preset overrides: voiceover ON, captions ON, original audio OFF, sticker OFF",
           "DirectUploader"
         );
-        const keepOriginalAudio = !context.originalAudioCopyright?.matched;
         if (!context.reviewSettings) {
           context.reviewSettings = {
-            voiceover: false,
-            originalAudio: keepOriginalAudio,
-            captions: false,
+            voiceover: true,
+            originalAudio: false,
+            captions: true,
             cropTopPct: 0,
             cropBottomPct: 0,
-            sticker: true,
+            sticker: false,
           };
         } else {
-          context.reviewSettings.voiceover = false;
-          context.reviewSettings.originalAudio = keepOriginalAudio;
-          context.reviewSettings.captions = false;
-          context.reviewSettings.sticker = true;
+          context.reviewSettings.voiceover = true;
+          context.reviewSettings.originalAudio = false;
+          context.reviewSettings.captions = true;
+          context.reviewSettings.sticker = false;
         }
 
         if (context.aiRecommendedSettings) {
-          context.aiRecommendedSettings.voiceover = false;
-          context.aiRecommendedSettings.originalAudio = keepOriginalAudio;
-          context.aiRecommendedSettings.captions = false;
-          context.aiRecommendedSettings.sticker = true;
+          context.aiRecommendedSettings.voiceover = true;
+          context.aiRecommendedSettings.originalAudio = false;
+          context.aiRecommendedSettings.captions = true;
+          context.aiRecommendedSettings.sticker = false;
         }
       }
 
