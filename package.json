@@ -30,6 +30,7 @@
     "test:dashboard-auth": "ts-node tests/dashboard-auth.test.ts",
     "test:voicebox-narration": "ts-node tests/voicebox-narration.test.ts",
     "test:cloned-voice": "ts-node tests/cloned-voice.test.ts",
+    "test:cover-image": "ts-node tests/cover-image.test.ts",
     "verify": "node scripts/verify.js",
     "dm:chat": "ts-node src/instagram/dm/cli.ts chat",
     "dm:knowledge": "ts-node src/instagram/dm/cli.ts knowledge",

@@ -6,6 +6,7 @@ import { pipelineLogger } from "../utils/logger";
 import { VideoMetadata } from "../types";
 import { switchOn } from "../utils/switches";
 import { mediaLinks, MediaLinkRegistry } from "./mediaLinks";
+import { makeCover } from "../cover/coverImage";
 
 export interface InstagramUploadResult {
   accountName: string;
@@ -111,20 +112,29 @@ export class InstagramPublisher {
   }
 
   /** Method 1: Instagram downloads the video from a temporary link on this server. Accepts Reels longer than 60 s. */
-  private async viaUrl(account: InstagramAccount, videoPath: string, caption: string, base: string): Promise<string> {
+  private async viaUrl(account: InstagramAccount, videoPath: string, caption: string, base: string, coverPath?: string | null): Promise<string> {
     const link = this.d.links.register(videoPath);
+    const coverLink = coverPath ? this.d.links.register(coverPath) : null;
     try {
       const videoUrl = `${base}${link.path}`;
-      const init = await this.graph(account, `${account.igUserId}/media`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ media_type: "REELS", video_url: videoUrl, caption }),
-      });
+      const create = (withCover: boolean) =>
+        this.graph(account, `${account.igUserId}/media`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ media_type: "REELS", video_url: videoUrl, caption, ...(withCover && coverLink ? { cover_url: `${base}${coverLink.path}` } : {}) }),
+        });
+      let init = await create(true);
+      if ((!init.ok || !init.data.id) && coverLink) {
+        // a cover must never cost the Reel: try again without it
+        pipelineLogger.warn(`[${account.name}] Instagram refused the container with a cover (${JSON.stringify(init.data).slice(0, 200)}): retrying without it`, "InstagramPublisher");
+        init = await create(false);
+      }
       if (!init.ok || !init.data.id) throw new Error(`Failed to create the container from a URL: ${JSON.stringify(init.data).slice(0, 300)}`);
       await this.waitUntilReady(account, init.data.id);
       return init.data.id;
     } finally {
       this.d.links.revoke(link.token); // the link lives only as long as Instagram needs it
+      if (coverLink) this.d.links.revoke(coverLink.token);
     }
   }
 
@@ -178,7 +188,7 @@ export class InstagramPublisher {
    *  1. video_url (any length)            2. resumable, only when the video is within Instagram's 60 s limit
    *  3. last resort for a long video: a 58.5 s copy (end faded out) through the resumable upload
    */
-  private async publishOnce(account: InstagramAccount, videoPath: string, caption: string): Promise<InstagramUploadResult & { method: string }> {
+  private async publishOnce(account: InstagramAccount, videoPath: string, caption: string, coverPath?: string | null): Promise<InstagramUploadResult & { method: string }> {
     const tag = `[${account.name}]`;
     const duration = await this.d.probeDuration(videoPath);
     const tooLong = duration !== null && duration > RESUMABLE_MAX_SEC;
@@ -189,7 +199,7 @@ export class InstagramPublisher {
     if (base) {
       try {
         pipelineLogger.info(`${tag} Instagram method 1/3: Instagram downloads the video from a temporary link`, "InstagramPublisher");
-        const id = await this.viaUrl(account, videoPath, caption, base);
+        const id = await this.viaUrl(account, videoPath, caption, base, coverPath);
         return { ...(await this.publishContainer(account, id)), method: "video_url" };
       } catch (err) {
         const msg = this.redact(err instanceof Error ? err.message : String(err), account.accessToken);
@@ -233,6 +243,7 @@ export class InstagramPublisher {
     account: InstagramAccount,
     videoPath: string,
     metadata: VideoMetadata,
+    opts: { brandKey?: string } = {},
   ): Promise<InstagramUploadResult | null> {
     if (!account.accessToken || !account.igUserId) {
       pipelineLogger.error(`[${account.name}] Missing Instagram credentials`, undefined, "InstagramPublisher");
@@ -240,11 +251,14 @@ export class InstagramPublisher {
     }
     const caption = `${metadata.title}\n\n${metadata.description}\n\n${metadata.tags.map((t) => "#" + t.replace(/\s+/g, "")).join(" ")}`;
 
+    // Reel cover (9:16): only when the caller names a brand; the cover rides along with the video_url method
+    const cover = opts.brandKey && this.d.publicBaseUrl() ? await makeCover({ title: metadata.title, coverHeadline: metadata.coverHeadline, thumbnailText: metadata.thumbnailText, brandKey: opts.brandKey, aspect: "portrait" }) : null;
+
     const MAX_UPLOAD_ATTEMPTS = 3;
     for (let attempt = 1; attempt <= MAX_UPLOAD_ATTEMPTS; attempt++) {
       try {
         pipelineLogger.info(`[${account.name}] Starting Instagram Reel upload (Attempt ${attempt}/${MAX_UPLOAD_ATTEMPTS})...`, "InstagramPublisher");
-        const r = await this.publishOnce(account, videoPath, caption);
+        const r = await this.publishOnce(account, videoPath, caption, cover);
         pipelineLogger.checkpoint(`[${account.name}] Uploaded to Instagram (${r.method})`, true, r.url);
         return { accountName: r.accountName, url: r.url, mediaId: r.mediaId };
       } catch (err) {
@@ -264,6 +278,7 @@ export class InstagramPublisher {
   public async uploadToAllAccounts(
     videoPath: string,
     metadata: VideoMetadata,
+    opts: { brandKey?: string } = {},
   ): Promise<InstagramUploadResult[]> {
     const accounts = this.accounts;
 
@@ -284,7 +299,7 @@ export class InstagramPublisher {
     }
 
     const promises = accounts.map((account) =>
-      this.uploadToAccount(account, videoPath, metadata),
+      this.uploadToAccount(account, videoPath, metadata, opts),
     );
     const results = await Promise.all(promises);
 

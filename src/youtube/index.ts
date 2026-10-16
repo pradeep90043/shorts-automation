@@ -3,12 +3,15 @@ import fs from "fs";
 import { VideoMetadata } from "../types";
 import { config, YoutubeChannel, YoutubeConfig } from "../config";
 import { pipelineLogger } from "../utils/logger";
+import { makeCover } from "../cover/coverImage";
 
 export interface UploadOptions {
   /** upload progress 0..100 (best channel so far) */
   onProgress?: (pct: number) => void;
   /** long-form video: return a /watch URL instead of /shorts */
   isLong?: boolean;
+  /** channel look for the cover image (codeorcap, storiyum, ...) */
+  brandKey?: string;
 }
 
 /** Abort an upload when no bytes move for this long (a stalled connection would otherwise hang forever). */
@@ -130,6 +133,8 @@ export class YouTubeService {
             ? `https://www.youtube.com/watch?v=${videoId}`
             : `https://youtube.com/shorts/${videoId}`;
           pipelineLogger.checkpoint(`[${channel.name}] Uploaded`, true, url);
+          // cover image: best effort, the video is already up
+          await this.applyCover(yt, videoId, metadata, isLandscapeOrLong ? "landscape" : "portrait", opts.brandKey, channel.name);
           return { channelName: channel.name, url, videoId };
         } catch (err: any) {
           lastErr = err;
@@ -193,6 +198,25 @@ export class YouTubeService {
     const { token } = await this.oauthFor(channel).getAccessToken();
     if (!token) throw new Error("Google returned no access token.");
     return { accessToken: token, channelName: channel.name };
+  }
+
+  private async applyCover(yt: any, videoId: string, metadata: VideoMetadata, aspect: "landscape" | "portrait", brandKey: string | undefined, channelName: string): Promise<void> {
+    try {
+      const file = await makeCover({ title: metadata.title, coverHeadline: metadata.coverHeadline, thumbnailText: metadata.thumbnailText, brandKey, aspect });
+      if (!file) return;
+      await yt.thumbnails.set({ videoId, media: { mimeType: "image/jpeg", body: fs.createReadStream(file) } });
+      pipelineLogger.info(`[${channelName}] YouTube thumbnail set (${aspect})`, "YouTubeService");
+    } catch (err: any) {
+      // e.g. the channel is not verified for custom thumbnails (403): the video keeps YouTube's own pick
+      pipelineLogger.warn(`[${channelName}] YouTube thumbnail not set: ${err?.message || err}`, "YouTubeService");
+    }
+  }
+
+  /** Sets the cover of a video that was uploaded elsewhere (the cloud runner's long videos). Never throws. */
+  public async setCover(videoId: string, metadata: VideoMetadata, aspect: "landscape" | "portrait", brandKey?: string): Promise<void> {
+    const channel = this.ytConfig.channels.find((c) => !!c.refreshToken);
+    if (!channel) return;
+    await this.applyCover(google.youtube({ version: "v3", auth: this.oauthFor(channel) }), videoId, metadata, aspect, brandKey, channel.name);
   }
 
   /** Change a video's visibility (e.g. a private upload from the cloud runner becomes public). */

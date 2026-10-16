@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import fs from "fs";
+import path from "path";
 import http from "http";
 import { pipelineLogger } from "../utils/logger";
 
@@ -27,7 +28,7 @@ export interface RegistryOptions {
   now?: () => number;
 }
 
-const TOKEN_RE = /^\/ig-media\/([A-Za-z0-9_-]{43})\.mp4$/;
+const TOKEN_RE = /^\/ig-media\/([A-Za-z0-9_-]{43})\.(mp4|jpg)$/;
 
 export class MediaLinkRegistry {
   private links = new Map<string, MediaLink>();
@@ -41,7 +42,7 @@ export class MediaLinkRegistry {
     this.now = opts.now ?? Date.now;
   }
 
-  /** Registers a file and returns its URL path ("/ig-media/<token>.mp4"). Throws if the file is missing or empty. */
+  /** Registers a file (a video, or a .jpg cover) and returns its URL path ("/ig-media/<token>.mp4" or ".jpg"). Throws if the file is missing or empty. */
   register(filePath: string): { token: string; path: string; expiresAt: number } {
     const st = fs.statSync(filePath);
     if (!st.isFile() || st.size === 0) throw new Error(`not a usable file: ${filePath}`);
@@ -49,7 +50,8 @@ export class MediaLinkRegistry {
     const token = crypto.randomBytes(32).toString("base64url");
     const link: MediaLink = { token, filePath, size: st.size, expiresAt: this.now() + this.ttlMs, hits: 0 };
     this.links.set(token, link);
-    return { token, path: `/ig-media/${token}.mp4`, expiresAt: link.expiresAt };
+    const ext = path.extname(filePath).toLowerCase() === ".jpg" ? "jpg" : "mp4";
+    return { token, path: `/ig-media/${token}.${ext}`, expiresAt: link.expiresAt };
   }
 
   /** The live link for a token, or undefined (unknown, expired or used up: an expired one is forgotten here). */
@@ -147,7 +149,7 @@ export function handleMediaRequest(req: http.IncomingMessage, res: http.ServerRe
   }
   link.hits++;
   const base = {
-    "Content-Type": "video/mp4",
+    "Content-Type": m[2] === "jpg" ? "image/jpeg" : "video/mp4",
     "Accept-Ranges": "bytes",
     "Cache-Control": "no-store",
     "X-Robots-Tag": "noindex, nofollow",

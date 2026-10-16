@@ -11,6 +11,9 @@ import { cancelCloudRun, renderStickmanVideo, resumeCloudRender, type CloudRunRe
  */
 type RunnerPublishProvider = (job: StickmanJob) => Promise<RunnerGrant | null>;
 let runnerPublishProvider: RunnerPublishProvider | undefined;
+type RunnerUploadedHook = (job: StickmanJob, videoId: string) => Promise<void>;
+let runnerUploadedHook: RunnerUploadedHook | undefined;
+export const setRunnerUploadedHook = (fn: RunnerUploadedHook): void => { runnerUploadedHook = fn; };
 export const setRunnerPublishProvider = (fn: RunnerPublishProvider): void => { runnerPublishProvider = fn; };
 import {
   estimateStickman, recordTimings, STAGE_LABELS, STAGE_ORDER,
@@ -335,6 +338,7 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
         orientation: orientation ?? "horizontal",
         theme: "dark", // developers prefer a dark screen: code panels and the CodeOrCap brand are built for it
         runnerPublish: runnerPublishProvider && job.input.channelKey ? () => runnerPublishProvider!(job) : undefined,
+        onRunnerUploaded: runnerUploadedHook ? (videoId: string) => runnerUploadedHook!(job, videoId) : undefined,
         resolution: resolution ?? (orientation === "vertical" ? 1080 : 720),
         rate: job.estimate.rate,
         ...(narrationDir

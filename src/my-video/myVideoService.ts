@@ -56,6 +56,8 @@ export interface StickmanVideoSpec {
    * token) and the server skips downloading it. Return null when that is not possible: the video is downloaded.
    */
   runnerPublish?: () => Promise<RunnerGrant | null>;
+  /** called after the runner uploaded the video (the dashboard sets its cover image); never awaited by the render */
+  onRunnerUploaded?: (videoId: string) => Promise<void>;
 }
 
 /** Pipeline stages inside my-video, in execution order. */
@@ -188,7 +190,7 @@ export interface RemoteVideo {
   channelName?: string;
 }
 
-const runnerPublish = new Map<string, { grant: () => Promise<RunnerGrant | null>; channelName?: string; remote?: RemoteVideo; error?: string }>();
+const runnerPublish = new Map<string, { grant: () => Promise<RunnerGrant | null>; onUploaded?: (videoId: string) => Promise<void>; channelName?: string; remote?: RemoteVideo; error?: string }>();
 
 /** Handles the runner's calls. Returns the HTTP status and JSON body. */
 export async function handleRunnerPublish(
@@ -215,6 +217,7 @@ export async function handleRunnerPublish(
     if (!/^[\w-]{6,20}$/.test(videoId)) return { status: 400, body: { success: false } };
     entry.remote = { videoId, url: `https://youtu.be/${videoId}`, privacy: String(body.privacy || "private"), channelName: entry.channelName };
     logger.info(`[my-video] ${slug} uploaded to YouTube by the runner: ${entry.remote.url} (${entry.remote.privacy})`);
+    void entry.onUploaded?.(videoId).catch((e: any) => logger.warn(`[my-video] ${slug}: cover not set: ${e?.message || e}`));
     return { status: 200, body: { success: true } };
   }
   if (body.action === "failed") {
@@ -262,7 +265,7 @@ async function renderViaGithubActions(
   const bundleUrl = `${publicUrl}/api/longvideo/bundle/${spec.slug}`;
   const progressToken = resume?.token ?? randomBytes(12).toString("hex");
   cloudProgress.set(spec.slug, { token: progressToken, chunks: new Map() });
-  if (spec.runnerPublish) runnerPublish.set(spec.slug, { grant: spec.runnerPublish });
+  if (spec.runnerPublish) runnerPublish.set(spec.slug, { grant: spec.runnerPublish, onUploaded: spec.onRunnerUploaded });
   const vertical = spec.orientation === "vertical";
   const resolution = String(spec.resolution ?? (vertical ? 1080 : 720));
 

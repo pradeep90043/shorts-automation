@@ -27,7 +27,7 @@ import { MultiSceneGenerator } from "./video/multiSceneGenerator";
 import { YouTubeService } from "./youtube";
 import { estimateStickman } from "./my-video/stickmanEstimate";
 import { buildImportPrompts, buildPlanOnlyPrompt, checkImportedPlan, checkPlanOnly, PlanImportError } from "./my-video/stickmanPlanner";
-import { cancelStickmanJob, continueStickmanJob, getStickmanJob, getStickmanJobForPoll, listStickmanJobs, markRemotePublic, resetPublish, restartStickmanJob, setRunnerPublishProvider, startPublish, startStickmanJob } from "./my-video/stickmanJobs";
+import { cancelStickmanJob, continueStickmanJob, getStickmanJob, getStickmanJobForPoll, listStickmanJobs, markRemotePublic, resetPublish, restartStickmanJob, setRunnerPublishProvider, setRunnerUploadedHook, startPublish, startStickmanJob } from "./my-video/stickmanJobs";
 import { handleRunnerPublish, recordCloudProgress, resolveMyVideoDir } from "./my-video/myVideoService";
 import { pipelineLogger } from "./utils/logger";
 import { buildActivityFeed, loadJobSummaries, jobsFileFor } from "./utils/activityFeed";
@@ -1142,6 +1142,14 @@ export function startLogServer(): void {
     };
   });
 
+  // ...and gets its cover image (AI picture + headline, 16:9) once the runner reports the upload
+  setRunnerUploadedHook(async (job, videoId) => {
+    const key = String(job.input.channelKey || "").toLowerCase().trim();
+    const yt = key ? await youtubeServiceFor(key) : null;
+    if (!yt) return;
+    await yt.setCover(videoId, { title: job.title || "Video", description: "", tags: [] }, job.input.orientation === "vertical" ? "portrait" : "landscape", key);
+  });
+
   const server = http.createServer(async (req, res) => {
     const url = req.url || "/";
 
@@ -1694,7 +1702,7 @@ export function startLogServer(): void {
                 title: result.metadata.title,
                 description: result.metadata.description,
                 tags: result.metadata.tags,
-              });
+              }, { brandKey: channelKey });
               publishedUrls.push(...ytRes);
             } catch (pubErr: any) {
               pipelineLogger.warn(`Auto-publish to YouTube failed: ${pubErr.message}`, "LogServer");
@@ -1756,7 +1764,7 @@ export function startLogServer(): void {
           title: body.title || `${storedConfig?.brandName || 'CodeOrCap'} Video`,
           description: body.description || "",
           tags: Array.isArray(body.tags) ? body.tags : ["tech", "coding", "tutorial"],
-        });
+        }, { brandKey: channelKey });
 
         res.writeHead(200, {
           "Content-Type": "application/json",
@@ -1960,7 +1968,7 @@ export function startLogServer(): void {
               const results = await ytService.uploadToAllChannels(
                 j.videoPath!,
                 { title: j.title || "Video", description: j.description || "", tags: j.tags || ["tech", "coding", "tutorial"] },
-                { onProgress, isLong: j.input.orientation !== "vertical" },
+                { onProgress, isLong: j.input.orientation !== "vertical", brandKey: channelKey },
               );
               if (!results.length && ytService.lastErrors.length) throw new Error(ytService.lastErrors.join(" | "));
               return results.map((r) => ({ channelName: r.channelName, url: r.url }));

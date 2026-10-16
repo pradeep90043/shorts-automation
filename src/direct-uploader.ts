@@ -1549,11 +1549,13 @@ ${this.theme.analysisRules}`;
       const results: UploadResult[] = await this.youtube.uploadToAllChannels(
         finalVideoPath,
         metadata,
+        { brandKey: this.profile.key },
       );
 
       const instaResults: InstagramUploadResult[] = await this.instagram.uploadToAllAccounts(
         finalVideoPath,
         metadata,
+        { brandKey: this.profile.key },
       );
 
       const fbResult: FacebookUploadResult | null = await this.facebook.uploadReel(
@@ -1782,7 +1784,7 @@ ${this.theme.analysisRules}`;
         title: result.metadata.title || `${metadata.title} | Full In-Depth Guide`,
         description: `${result.metadata.description}\n\n🎬 Full deep-dive companion video for our Short on ${topic}.\n\nSubscribe to ${this.profile.brandName} (${this.profile.handle}) for daily engineering insights!`,
         tags: [...(result.metadata.tags || []), "guide", "tutorial", "deep dive"],
-      });
+      }, { isLong: true, brandKey: this.profile.key });
 
       const firstUrl = ytResults.find((r) => r && r.url)?.url;
       if (firstUrl) {
