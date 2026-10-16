@@ -638,7 +638,7 @@ async function getDashboardDataUncached() {
       key: "prompt_gag",
       name: "PromptGag",
       handle: "@prompt_gag",
-      niche: "humor",
+      niche: "finance",
       initials: "PG",
       color: "amber",
       dailyLimit: 6,

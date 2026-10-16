@@ -78,16 +78,20 @@ NICHE_KEYWORDS = {
         "current affairs today",
         "viral news",
     ],
-    # funny / satire / sarcasm
+    # finance: markets, investing, SIP / mutual funds, personal money, economy (Prompt Gag is a finance channel)
     "prompt_gag": [
-        "sarcasm reels",
-        "satire comedy",
-        "dry humor",
-        "relatable memes",
-        "funny sarcastic",
-        "office humor",
-        "savage roast",
-        "deadpan comedy",
+        "stock market explained",
+        "share market tips for beginners",
+        "mutual fund sip tips",
+        "personal finance tips india",
+        "investing for beginners",
+        "how to save money",
+        "money mistakes to avoid",
+        "financial literacy",
+        "economy explained",
+        "budgeting tips",
+        "passive income ideas",
+        "business news today",
     ],
 }
 
