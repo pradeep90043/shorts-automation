@@ -2944,12 +2944,12 @@ ${this.theme.analysisRules}`;
         // run that starts now, while the reel is rendered. If it fails or is late, the Edge voice is used as before.
         if (clonedVoiceEnabled(this.profile.key) && context.metadata?.voiceoverScript) {
           const claim = context.metadata.voiceoverScript;
-          const hiw = (this.profile.watch?.outroVersion || "v2") === "v2" ? howItWorksLines(this.deriveTranscriptionWorkflow(context).explanation, insightIntro(this.profile.key)) : [];
+          const hiw = this.profile.key.toLowerCase() === "codeorcap" && (this.profile.watch?.outroVersion || "v2") === "v2" ? howItWorksLines(this.deriveTranscriptionWorkflow(context).explanation, insightIntro(this.profile.key)) : [];
           context.clonedHowItWorksLines = hiw;
           context.clonedVoice = startClonedLines(`short-${context.id.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 16) || Date.now()}`, [
             { name: "claim", text: spokenText(claim) },
             ...hiw.map((text, i) => ({ name: `hiw_${i}`, text: spokenText(text) })),
-          ]);
+          ], this.profile.key);
           this.tts.registerCloned(this.profile.key, claim, context.clonedVoice.then((set) => set?.file("claim") ?? null));
         }
         // CodeOrCap: fit the voice to the reel so the narration runs to the end instead of stopping early.

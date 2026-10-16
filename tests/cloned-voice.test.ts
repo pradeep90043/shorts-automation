@@ -5,7 +5,7 @@ import path from "path";
 import { execFileSync, spawnSync } from "child_process";
 import { config } from "../src/config";
 import { audioDuration, rateToTempo, retimeAudio } from "../src/audio/retime";
-import { spokenText } from "../src/audio/clonedVoice";
+import { clonedVoiceEnabled, spokenText } from "../src/audio/clonedVoice";
 import { VERDICT_WINDOWS, buildClonedVerdictAudio, clonedVerdictAvailable, verdictNumber, verdictTempo } from "../src/audio/clonedVerdict";
 import { TTSService } from "../src/audio/tts";
 import { buildHowItWorksSpec, howItWorksLines } from "../src/my-video/howItWorksClip";
@@ -24,6 +24,12 @@ import { buildHowItWorksSpec, howItWorksLines } from "../src/my-video/howItWorks
     assert.strictEqual(verdictNumber(0.2), 1);
     assert.strictEqual(verdictNumber(6.6), 7);
     assert.strictEqual(verdictNumber(42), 10);
+
+    // ── every channel with a cloned voice profile uses it (Storiyum shorts were silent: Edge TTS 403 on the VM) ──
+    process.env.GITHUB_TOKEN = process.env.GITHUB_TOKEN || "x";
+    delete process.env.CLONED_VOICE;
+    for (const k of ["codeorcap", "storiyum", "infoonspot", "prompt_gag"]) assert.ok(clonedVoiceEnabled(k), `${k} has a cloned voice`);
+    assert.ok(!clonedVoiceEnabled("some-new-channel"), "no profile, no cloned voice");
 
     // ── text for the voice ──
     assert.strictEqual(spokenText("Wow 🔥 check https://x.co/a now #AI @bob **bold**"), "Wow check now bold");
