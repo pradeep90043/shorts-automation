@@ -85,10 +85,16 @@ jobs:
           if [ -n "${RENDER_GITHUB_TOKEN}" ]; then printf 'GITHUB_TOKEN=%s\n' "${RENDER_GITHUB_TOKEN}" >> .env; fi
           # The dashboard login password. Appended last, so it wins over any older DASHBOARD_PASSWORD line inside PRODUCTION_ENV.
           if [ -n "${DASHBOARD_PASSWORD}" ]; then printf 'DASHBOARD_PASSWORD=%s\n' "${DASHBOARD_PASSWORD}" >> .env; fi
+          # Cover-image API (src/cover/coverImage.ts). Only PRODUCTION_ENV and the secrets listed here reach the server, so a
+          # separate repository secret has to be copied in like this (the last line of a key wins over one inside PRODUCTION_ENV).
+          if [ -n "${COVER_IMAGE_API_KEY}" ]; then printf 'COVER_IMAGE_API_KEY=%s\n' "${COVER_IMAGE_API_KEY}" >> .env; fi
+          if [ -n "${COVER_IMAGE_API_URL}" ]; then printf 'COVER_IMAGE_API_URL=%s\n' "${COVER_IMAGE_API_URL}" >> .env; fi
         env:
           PRODUCTION_ENV: ${{ secrets.PRODUCTION_ENV }}
           RENDER_GITHUB_TOKEN: ${{ secrets.RENDER_GITHUB_TOKEN }}
           DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+          COVER_IMAGE_API_KEY: ${{ secrets.COVER_IMAGE_API_KEY }}
+          COVER_IMAGE_API_URL: ${{ secrets.COVER_IMAGE_API_URL }}
           PRODUCTION_COOKIES: ${{ secrets.PRODUCTION_COOKIES }}
 
       - name: Rsync runtime files to VM
