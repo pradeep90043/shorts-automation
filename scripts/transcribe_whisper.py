@@ -21,6 +21,14 @@ import os
 import sys
 import wave
 
+# Cap thread pools before PyTorch / CTranslate2 C++ libraries initialize
+_threads = os.environ.get("WHISPER_THREADS", "2")
+os.environ.setdefault("OMP_NUM_THREADS", _threads)
+os.environ.setdefault("MKL_NUM_THREADS", _threads)
+os.environ.setdefault("OPENBLAS_NUM_THREADS", _threads)
+os.environ.setdefault("VECLIB_MAXIMUM_THREADS", _threads)
+os.environ.setdefault("NUMEXPR_NUM_THREADS", _threads)
+
 
 def load_pcm16_mono(path: str):
     """Read the 16 kHz mono PCM WAV that transcription.ts extracts with ffmpeg.

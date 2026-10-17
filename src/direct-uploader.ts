@@ -1441,15 +1441,29 @@ ${this.theme.analysisRules}`;
     pipelineLogger.info(`Input video duration: ${duration.toFixed(2)}s`, "DirectUploader");
     
     if (duration > 59.0) {
-      pipelineLogger.info(`Video exceeds 59s. Trimming and optimizing with faststart...`, "DirectUploader");
-      // Trimming requires re-encoding to prevent keyframe alignment issues
-      const trimCmd = `${config.binaries.ffmpeg} -y -i "${videoPath}" -t 59.0 -c:v libx264 -preset superfast -crf 23 -c:a aac -movflags +faststart "${tempOutPath}"`;
-      await new Promise<void>((resolve, reject) => {
-        exec(trimCmd, (err) => {
-          if (err) reject(err);
-          else resolve();
+      pipelineLogger.info(`Video exceeds 59s. Trimming and optimizing with stream copy (faststart)...`, "DirectUploader");
+      // Fast stream copy (instant, 0 CPU overhead, starts on frame 0 IDR keyframe)
+      const fastTrimCmd = `${config.binaries.ffmpeg} -y -i "${videoPath}" -t 59.0 -c copy -movflags +faststart "${tempOutPath}"`;
+      try {
+        await new Promise<void>((resolve, reject) => {
+          exec(fastTrimCmd, (err) => {
+            if (err) reject(err);
+            else resolve();
+          });
         });
-      });
+      } catch (copyErr) {
+        pipelineLogger.warn(
+          `Stream copy trim failed, falling back to superfast re-encode: ${copyErr instanceof Error ? copyErr.message : copyErr}`,
+          "DirectUploader"
+        );
+        const reencodeCmd = `${config.binaries.ffmpeg} -y -i "${videoPath}" -t 59.0 -c:v libx264 -preset superfast -crf 23 -c:a aac -movflags +faststart "${tempOutPath}"`;
+        await new Promise<void>((resolve, reject) => {
+          exec(reencodeCmd, (err) => {
+            if (err) reject(err);
+            else resolve();
+          });
+        });
+      }
     } else {
       pipelineLogger.info(`Optimizing video with faststart...`, "DirectUploader");
       // Just copy stream and add faststart flags (instant)
