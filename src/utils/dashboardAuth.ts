@@ -107,7 +107,7 @@ export const clearLoginFailures = (ip: string): void => void fails.delete(ip);
  */
 export function isMachineRoute(method: string, pathname: string): boolean {
   if (method === "POST" && (pathname === "/api/inject-reels" || pathname === "/api/longvideo/progress" || pathname === "/api/longvideo/yt-token" || pathname === "/api/dm/webhook")) return true;
-  if (method === "GET" && (pathname.startsWith("/api/longvideo/bundle/") || pathname === "/api/dm/webhook")) return true;
+  if (method === "GET" && (pathname.startsWith("/api/longvideo/bundle/") || pathname.startsWith("/api/short/bundle/") || pathname === "/api/dm/webhook")) return true;
   return false;
 }
 

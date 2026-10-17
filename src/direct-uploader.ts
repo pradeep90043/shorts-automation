@@ -40,6 +40,7 @@ import { buildGridPreview } from "./utils/gridPreview";
 import { TranscriptionService } from "./audio/transcription";
 import { PexelsService } from "./video/pexelsService";
 import { MultiSceneGenerator } from "./video/multiSceneGenerator";
+import { renderShortCloud } from "./renderer/cloudShortRenderer";
 
 // Metadata format rules (title/description/keywords/analysis) live on the channel
 // profile's ContentTheme (src/config/themes.ts) so every generation path (unified
@@ -3803,64 +3804,88 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
           ? context.selectedMusicTrack
           : undefined;
 
-      // 0 — Overlay the mood-matched reaction sticker (video-only pass, same
-      // -c:v copy constraint as captions below — must happen before any
-      // audio-mix step that copies the video stream unfiltered).
-      let mixInputPath = rawVideoPath;
-      if (settings.sticker) {
-        const stickeredPath = await this.overlayReactionSticker(context, mixInputPath);
-        if (stickeredPath && fs.existsSync(stickeredPath)) mixInputPath = stickeredPath;
-      }
+      let finalVideoPath = path.join(tempDir, "video_final.mp4");
 
-      // 1 — Burn captions in a dedicated video-filter pass (the audio mixes all
-      // use -c:v copy and cannot carry a filter). The voiceover+no-music hook
-      // branch burns its own subtitles, so skip pre-burning for that case.
-      const captionsInHookBranch = useVoice && !musicTrack;
-      if (settings.captions && !captionsInHookBranch) {
-        const captionedPath = await this.burnCaptions(context, mixInputPath, useVoice);
-        if (captionedPath && fs.existsSync(captionedPath)) mixInputPath = captionedPath;
-      }
-
-      // 2 — Strip the original audio first when the user turned it OFF
-      let baseVideoPath = mixInputPath;
-      if (!settings.originalAudio) {
-        const mutedPath = path.join(tempDir, "video_muted.mp4");
-        await new Promise<void>((resolve, reject) => {
-          const muteCmd = `${config.binaries.ffmpeg} -y -i "${mixInputPath}" -an -c:v copy "${mutedPath}"`;
-          exec(muteCmd, (error) => (error ? reject(error) : resolve()));
-        });
-        if (fs.existsSync(mutedPath)) {
-          baseVideoPath = mutedPath;
+      // ── CLOUD RENDER VIA GITHUB ACTIONS (4 vCPU, 7GB RAM) ────────────────────
+      let cloudDone = false;
+      if (process.env.CLOUD_RENDER_SHORTS !== "false") {
+        try {
+          const cloudOut = await renderShortCloud(context, (detail) => {
+            this.db.updateJob(id, { currentStep: detail });
+          });
+          if (cloudOut && fs.existsSync(cloudOut)) {
+            finalVideoPath = cloudOut;
+            cloudDone = true;
+            pipelineLogger.checkpoint("✓ Short video successfully rendered via GitHub Actions Cloud runner", true, id);
+          }
+        } catch (cloudErr) {
+          pipelineLogger.warn(
+            `[DirectUploader] Cloud render error, using local FFmpeg fallback: ${cloudErr instanceof Error ? cloudErr.message : cloudErr}`,
+            "DirectUploader"
+          );
         }
       }
 
-      // 3 — Audio mix matrix (voiceover / original audio / music)
-      let finalVideoPath = path.join(tempDir, "video_final.mp4");
-      if (musicTrack) {
-        pipelineLogger.info(
-          `Mixing background music${useVoice ? " + voiceover" : ""}: ${musicTrack}`,
-          "DirectUploader",
-        );
-        await this.music.addBackgroundMusic(
-          baseVideoPath,
-          config.paths.musicDir,
-          finalVideoPath,
-          context.metadata?.mood,
-          true, // forceReplace
-          undefined,
-          musicTrack,
-          useVoice ? voiceoverPath : undefined,
-        );
-      } else if (useVoice) {
-        await this.renderVoiceoverHook(
-          context,
-          baseVideoPath,
-          voiceoverPath,
-          finalVideoPath,
-          settings.captions,
-        );
-      } else {
-        fs.copyFileSync(baseVideoPath, finalVideoPath);
+      // ── LOCAL ENCODING FALLBACK (If cloud render was skipped or failed) ────────
+      if (!cloudDone) {
+        // 0 — Overlay the mood-matched reaction sticker (video-only pass, same
+        // -c:v copy constraint as captions below — must happen before any
+        // audio-mix step that copies the video stream unfiltered).
+        let mixInputPath = rawVideoPath;
+        if (settings.sticker) {
+          const stickeredPath = await this.overlayReactionSticker(context, mixInputPath);
+          if (stickeredPath && fs.existsSync(stickeredPath)) mixInputPath = stickeredPath;
+        }
+
+        // 1 — Burn captions in a dedicated video-filter pass (the audio mixes all
+        // use -c:v copy and cannot carry a filter). The voiceover+no-music hook
+        // branch burns its own subtitles, so skip pre-burning for that case.
+        const captionsInHookBranch = useVoice && !musicTrack;
+        if (settings.captions && !captionsInHookBranch) {
+          const captionedPath = await this.burnCaptions(context, mixInputPath, useVoice);
+          if (captionedPath && fs.existsSync(captionedPath)) mixInputPath = captionedPath;
+        }
+
+        // 2 — Strip the original audio first when the user turned it OFF
+        let baseVideoPath = mixInputPath;
+        if (!settings.originalAudio) {
+          const mutedPath = path.join(tempDir, "video_muted.mp4");
+          await new Promise<void>((resolve, reject) => {
+            const muteCmd = `${config.binaries.ffmpeg} -y -i "${mixInputPath}" -an -c:v copy "${mutedPath}"`;
+            exec(muteCmd, (error) => (error ? reject(error) : resolve()));
+          });
+          if (fs.existsSync(mutedPath)) {
+            baseVideoPath = mutedPath;
+          }
+        }
+
+        // 3 — Audio mix matrix (voiceover / original audio / music)
+        if (musicTrack) {
+          pipelineLogger.info(
+            `Mixing background music${useVoice ? " + voiceover" : ""}: ${musicTrack}`,
+            "DirectUploader",
+          );
+          await this.music.addBackgroundMusic(
+            baseVideoPath,
+            config.paths.musicDir,
+            finalVideoPath,
+            context.metadata?.mood,
+            true, // forceReplace
+            undefined,
+            musicTrack,
+            useVoice ? voiceoverPath : undefined,
+          );
+        } else if (useVoice) {
+          await this.renderVoiceoverHook(
+            context,
+            baseVideoPath,
+            voiceoverPath,
+            finalVideoPath,
+            settings.captions,
+          );
+        } else {
+          fs.copyFileSync(baseVideoPath, finalVideoPath);
+        }
       }
 
       // 3.4 — Audio clearance: if the mixed audio still contains recognisable music, strip it
