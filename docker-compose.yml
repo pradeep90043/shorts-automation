@@ -106,7 +106,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 350M
+          memory: 650M
     environment:
       - FREELLMAPI_URL=http://freellmapi-dev:3001
       - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-codeorcap@2026}
