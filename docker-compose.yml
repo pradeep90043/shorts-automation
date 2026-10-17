@@ -83,6 +83,48 @@ services:
       - SUBDOMAINS=${DUCKDNS_SUBDOMAIN:-shorts-automation}
       - TOKEN=${DUCKDNS_TOKEN}
 
+  # DuckDNS IP updater for Dev (keeps shorts-dev.duckdns.org pointing to server IP)
+  duckdns-dev:
+    image: lscr.io/linuxserver/duckdns:latest
+    container_name: duckdns-dev
+    restart: unless-stopped
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Asia/Kolkata
+      - SUBDOMAINS=${DEV_DUCKDNS_SUBDOMAIN:-shorts-dev}
+      - TOKEN=${DEV_DUCKDNS_TOKEN:-0c4336fe-1453-4aa3-ad42-feea06535294}
+
+  # Dev Bot System (Runs isolated on dev branch and shorts-dev.duckdns.org)
+  bot-dev:
+    image: ${BOT_DEV_IMAGE:-ghcr.io/pradeep90043/shorts-automation:dev}
+    pull_policy: always
+    container_name: codeorcap-bot-dev
+    restart: unless-stopped
+    env_file: ${BOT_DEV_ENV_FILE:-.env.dev}
+    shm_size: 512mb
+    deploy:
+      resources:
+        limits:
+          memory: 350M
+    environment:
+      - FREELLMAPI_URL=http://freellmapi-dev:3001
+      - BOT_ENV=dev
+      - TZ=Asia/Kolkata
+    depends_on:
+      - freellmapi-dev
+      - postgres
+    volumes:
+      - ./output-dev:/app/output
+      - ./assets/music:/app/assets/music
+      - ./assets/stickers:/app/assets/stickers
+      - ./assets/templates:/app/assets/templates
+      - ./logs-dev:/app/logs
+      - ./data-dev:/root/.shorts-automation
+    ports:
+      - "127.0.0.1:3004:3000"
+      - "127.0.0.1:3005:3002"
+
   # Caddy Reverse Proxy (Free Automatic HTTPS SSL Cert for DuckDNS)
   caddy:
     image: caddy:latest
@@ -93,6 +135,7 @@ services:
       - "443:443"
     environment:
       - DUCKDNS_DOMAIN=${DUCKDNS_SUBDOMAIN:-shorts-automation}.duckdns.org
+      - DEV_DUCKDNS_DOMAIN=${DEV_DUCKDNS_SUBDOMAIN:-shorts-dev}.duckdns.org
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data

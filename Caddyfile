@@ -69,3 +69,64 @@
         reverse_proxy bot:3002
     }
 }
+
+# Dev Site: shorts-dev.duckdns.org (Completely isolated from prod)
+{$DEV_DUCKDNS_DOMAIN:shorts-dev.duckdns.org} {
+
+    # Dev FreeLLMAPI Frontend JS/CSS/Favicon Assets
+    handle /assets/* {
+        reverse_proxy freellmapi-dev:3001
+    }
+    handle /favicon.svg {
+        reverse_proxy freellmapi-dev:3001
+    }
+
+    # Dev FreeLLMAPI OpenAI API Endpoints
+    handle /v1/* {
+        reverse_proxy freellmapi-dev:3001
+    }
+
+    # Dev FreeLLMAPI Internal Backend API Endpoints
+    handle /api/auth/* {
+        reverse_proxy freellmapi-dev:3001
+    }
+    handle /api/analytics/* {
+        reverse_proxy freellmapi-dev:3001
+    }
+    handle /api/keys/* {
+        reverse_proxy freellmapi-dev:3001
+    }
+    handle /api/models/* {
+        reverse_proxy freellmapi-dev:3001
+    }
+    handle /api/settings/* {
+        reverse_proxy freellmapi-dev:3001
+    }
+    handle /api/health* {
+        reverse_proxy freellmapi-dev:3001
+    }
+    handle /api/embeddings/* {
+        reverse_proxy freellmapi-dev:3001
+    }
+    handle /api/fallback/* {
+        reverse_proxy freellmapi-dev:3001
+    }
+    handle /api/media/* {
+        reverse_proxy freellmapi-dev:3001
+    }
+    handle /api/premium/* {
+        reverse_proxy freellmapi-dev:3001
+    }
+
+    # Dev FreeLLMAPI Admin & Web UI
+    handle /freellmapi* {
+        uri strip_prefix /freellmapi
+        reverse_proxy freellmapi-dev:3001
+    }
+
+    # Dev Live Log Dashboard & Bot System (Default Root)
+    handle {
+        reverse_proxy bot-dev:3002
+    }
+}
+

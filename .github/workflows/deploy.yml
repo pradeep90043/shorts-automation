@@ -4,10 +4,11 @@ on:
   push:
     branches:
       - main
+      - dev
   workflow_dispatch:
 
 concurrency:
-  group: deploy-main
+  group: deploy-${{ github.ref_name }}
   cancel-in-progress: false
 
 env:
@@ -16,23 +17,32 @@ env:
 jobs:
   # ───────────────────────────────────────────────────────────────────────────
   # Build the Docker image on a fast GitHub runner and push to GHCR.
-  # The Dockerfile is multi-stage: it compiles TypeScript itself, so no
-  # separate `npm run build` is needed here.
   # ───────────────────────────────────────────────────────────────────────────
   build:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    outputs:
+      tag: ${{ steps.branch_tag.outputs.tag }}
+      sha_tag: ${{ steps.branch_tag.outputs.sha_tag }}
     steps:
       - name: Checkout (with my-video submodule)
         uses: actions/checkout@v4
         with:
-          # my-video is a separate (private) repo: GITHUB_TOKEN can't read it, so
-          # add a PAT with repo read access as the MY_VIDEO_TOKEN secret. Without
-          # the secret/submodule the image still builds, stickman renderer off.
           submodules: ${{ secrets.MY_VIDEO_TOKEN != '' }}
           token: ${{ secrets.MY_VIDEO_TOKEN || github.token }}
+
+      - name: Set image tag based on branch
+        id: branch_tag
+        run: |
+          if [ "${{ github.ref_name }}" = "dev" ]; then
+            echo "tag=dev" >> "$GITHUB_OUTPUT"
+            echo "sha_tag=dev-${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+            echo "sha_tag=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -54,18 +64,15 @@ jobs:
           context: .
           push: true
           tags: |
-            ${{ steps.img.outputs.name }}:latest
-            ${{ steps.img.outputs.name }}:${{ github.sha }}
+            ${{ steps.img.outputs.name }}:${{ steps.branch_tag.outputs.tag }}
+            ${{ steps.img.outputs.name }}:${{ steps.branch_tag.outputs.sha_tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          # Plain single-arch manifest — avoids attestation/manifest-list quirks
-          # when an older Docker on the VM does `compose pull`.
           provenance: false
           sbom: false
 
   # ───────────────────────────────────────────────────────────────────────────
   # Ship config to the VM and roll the container to the freshly-built image.
-  # No image build happens on the VM anymore — it just pulls.
   # ───────────────────────────────────────────────────────────────────────────
   deploy:
     needs: build
@@ -77,23 +84,27 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Materialise prod secrets
+      - name: Materialise secrets
         run: |
-          printf '%s\n' "${PRODUCTION_ENV}" > .env
-          printf '%s\n' "${PRODUCTION_COOKIES}" > cookies.txt
-          # Enables offloading long-video renders to GitHub Actions (my-video repo)
-          if [ -n "${RENDER_GITHUB_TOKEN}" ]; then printf 'GITHUB_TOKEN=%s\n' "${RENDER_GITHUB_TOKEN}" >> .env; fi
-          # The dashboard login password. Appended last, so it wins over any older DASHBOARD_PASSWORD line inside PRODUCTION_ENV.
-          if [ -n "${DASHBOARD_PASSWORD}" ]; then printf 'DASHBOARD_PASSWORD=%s\n' "${DASHBOARD_PASSWORD}" >> .env; fi
-          # Cover-image API (src/cover/coverImage.ts). Only PRODUCTION_ENV and the secrets listed here reach the server, so a
-          # separate repository secret has to be copied in like this (the last line of a key wins over one inside PRODUCTION_ENV).
-          if [ -n "${COVER_IMAGE_API_KEY}" ]; then printf 'COVER_IMAGE_API_KEY=%s\n' "${COVER_IMAGE_API_KEY}" >> .env; fi
-          if [ -n "${COVER_IMAGE_API_URL}" ]; then printf 'COVER_IMAGE_API_URL=%s\n' "${COVER_IMAGE_API_URL}" >> .env; fi
-          printf 'FREELLMAPI_FALLBACK_URL=http://freellmapi-dev:3001\n' >> .env
-          printf 'FREELLMAPI_FALLBACK_KEY=freellmapi-98c9da4ce2b9a5149e83d5345b05bacabc2a4aab75a569bc\n' >> .env
-          printf 'FREELLMAPI_DEV_ENCRYPTION_KEY=026653c9d168432691e1fbc8f9e16982d9296991044bae9e7c4c7b21ba52a593\n' >> .env
+          if [ "${{ github.ref_name }}" = "dev" ]; then
+            printf '%s\n' "${DEV_ENV}" > .env.dev
+            if [ -n "${RENDER_GITHUB_TOKEN}" ]; then printf 'GITHUB_TOKEN=%s\n' "${RENDER_GITHUB_TOKEN}" >> .env.dev; fi
+            if [ -n "${COVER_IMAGE_API_KEY}" ]; then printf 'COVER_IMAGE_API_KEY=%s\n' "${COVER_IMAGE_API_KEY}" >> .env.dev; fi
+            if [ -n "${COVER_IMAGE_API_URL}" ]; then printf 'COVER_IMAGE_API_URL=%s\n' "${COVER_IMAGE_API_URL}" >> .env.dev; fi
+          else
+            printf '%s\n' "${PRODUCTION_ENV}" > .env
+            printf '%s\n' "${PRODUCTION_COOKIES}" > cookies.txt
+            if [ -n "${RENDER_GITHUB_TOKEN}" ]; then printf 'GITHUB_TOKEN=%s\n' "${RENDER_GITHUB_TOKEN}" >> .env; fi
+            if [ -n "${DASHBOARD_PASSWORD}" ]; then printf 'DASHBOARD_PASSWORD=%s\n' "${DASHBOARD_PASSWORD}" >> .env; fi
+            if [ -n "${COVER_IMAGE_API_KEY}" ]; then printf 'COVER_IMAGE_API_KEY=%s\n' "${COVER_IMAGE_API_KEY}" >> .env; fi
+            if [ -n "${COVER_IMAGE_API_URL}" ]; then printf 'COVER_IMAGE_API_URL=%s\n' "${COVER_IMAGE_API_URL}" >> .env; fi
+            printf 'FREELLMAPI_FALLBACK_URL=http://freellmapi-dev:3001\n' >> .env
+            printf 'FREELLMAPI_FALLBACK_KEY=freellmapi-98c9da4ce2b9a5149e83d5345b05bacabc2a4aab75a569bc\n' >> .env
+            printf 'FREELLMAPI_DEV_ENCRYPTION_KEY=026653c9d168432691e1fbc8f9e16982d9296991044bae9e7c4c7b21ba52a593\n' >> .env
+          fi
         env:
           PRODUCTION_ENV: ${{ secrets.PRODUCTION_ENV }}
+          DEV_ENV: ${{ secrets.DEV_ENV }}
           RENDER_GITHUB_TOKEN: ${{ secrets.RENDER_GITHUB_TOKEN }}
           DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
           COVER_IMAGE_API_KEY: ${{ secrets.COVER_IMAGE_API_KEY }}
@@ -103,21 +114,27 @@ jobs:
       - name: Rsync runtime files to VM
         run: |
           mkdir -p ~/.ssh
-          # A private key MUST end with a newline or ssh reports "error in libcrypto".
           printf '%s\n' "${VM_KEY}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           SSH="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 22"
           $SSH "${VM_USER}@${VM_HOST}" "mkdir -p ~/shorts-automation"
-          # Only what the VM actually needs: compose file, Caddyfile, prod secrets,
-          # and the bind-mounted asset dirs. Everything else lives in the image.
           rsync -avz --delete -e "$SSH" \
             --exclude 'node_modules' \
             --exclude '.git' --exclude '.github' --exclude '.claude' --exclude '.agents' \
-            --exclude 'temp' --exclude 'logs' --exclude 'output' \
+            --exclude 'temp*' --exclude 'logs*' --exclude 'output*' \
             --exclude 'dist' --exclude 'src' --exclude 'scripts' --exclude 'public' \
             --exclude 'tests' --exclude 'test-assets' \
-            --exclude 'website-audit-reel' --exclude 'my-video' --exclude 'data' \
+            --exclude 'website-audit-reel' --exclude 'my-video*' --exclude 'data*' \
+            --exclude '.env*' --exclude 'cookies.txt' \
             ./ "${VM_USER}@${VM_HOST}:~/shorts-automation/"
+          
+          # Copy branch-specific env file without overwriting the other environment
+          if [ "${{ github.ref_name }}" = "dev" ]; then
+            scp -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa .env.dev "${VM_USER}@${VM_HOST}:~/shorts-automation/.env.dev"
+          else
+            scp -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa .env "${VM_USER}@${VM_HOST}:~/shorts-automation/.env"
+            scp -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa cookies.txt "${VM_USER}@${VM_HOST}:~/shorts-automation/cookies.txt"
+          fi
         env:
           VM_HOST: ${{ secrets.VM_HOST }}
           VM_USER: ${{ secrets.VM_USER }}
@@ -125,38 +142,50 @@ jobs:
 
       - name: Pull image and restart on VM
         uses: appleboy/ssh-action@master
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+          IMAGE: ghcr.io/${{ github.repository }}
+          TARGET_BRANCH: ${{ github.ref_name }}
         with:
           host: ${{ secrets.VM_HOST }}
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.VM_KEY }}
           port: 22
           command_timeout: "15m"
-          envs: GHCR_TOKEN,GHCR_USER,IMAGE
+          envs: GHCR_TOKEN,GHCR_USER,IMAGE,TARGET_BRANCH
           script: |
             set -e
             cd ~/shorts-automation
-            mkdir -p temp output logs data
-            # Caddy sometimes gets its config file created as a dir on first run
-            [ -d ./Caddyfile ] && rm -rf ./Caddyfile || true
             for attempt in {1..5}; do
               echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin && break || {
                 echo "Docker login failed (attempt $attempt), retrying in 5s..."
                 sleep 5
               }
             done
-            for attempt in {1..5}; do
-              docker compose pull bot && break || {
-                echo "Docker compose pull failed (attempt $attempt), retrying in 10s..."
-                sleep 10
-              }
-            done
-            # Clear any stale/orphaned containers left with these fixed names so
-            # `up` doesn't hit "name already in use" conflicts.
-            docker rm -f codeorcap-bot freellmapi freellmapi-dev duckdns caddy-proxy 2>/dev/null || true
-            docker compose up -d --remove-orphans
+
+            if [ "$TARGET_BRANCH" = "dev" ]; then
+              mkdir -p temp-dev output-dev logs-dev data-dev
+              touch .env.dev
+              for attempt in {1..5}; do
+                docker compose pull bot-dev && break || {
+                  echo "Pulling bot-dev failed (attempt $attempt), retrying in 10s..."
+                  sleep 10
+                }
+              done
+              docker compose up -d bot-dev duckdns-dev caddy freellmapi-dev postgres
+            else
+              mkdir -p temp output logs data
+              touch .env
+              for attempt in {1..5}; do
+                docker compose pull bot && break || {
+                  echo "Pulling bot failed (attempt $attempt), retrying in 10s..."
+                  sleep 10
+                }
+              done
+              docker compose up -d bot freellmapi freellmapi-dev duckdns caddy postgres
+            fi
+
             docker logout ghcr.io || true
             docker image prune -f || true
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GHCR_USER: ${{ github.actor }}
-          IMAGE: ghcr.io/${{ github.repository }}
+
