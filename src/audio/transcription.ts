@@ -52,11 +52,118 @@ export class TranscriptionService {
       return null;
     }
 
-    // 2. Run Whisper transcription
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (apiKey) {
+    // 2. Run Cloud Whisper transcription (Groq / Custom Endpoint / OpenAI)
+    const groqKey = process.env.GROQ_API_KEY || process.env.GROQ_WHISPER_API_KEY;
+    const customKey = process.env.WHISPER_API_KEY;
+    const openaiKey = process.env.OPENAI_API_KEY;
+
+    const extractWords = (res: any): Array<{ word: string; start: number; end: number }> => {
+      let words = ((res as any).words || [])
+        .map((w: any) => ({
+          word: (w.word || "").trim(),
+          start: typeof w.start === "number" ? w.start : 0,
+          end: typeof w.end === "number" ? w.end : 0,
+        }))
+        .filter((w: any) => Boolean(w.word));
+
+      if (words.length === 0 && Array.isArray((res as any).segments)) {
+        for (const seg of (res as any).segments) {
+          if (Array.isArray(seg.words)) {
+            for (const w of seg.words) {
+              if (w.word && w.word.trim()) {
+                words.push({
+                  word: w.word.trim(),
+                  start: typeof w.start === "number" ? w.start : 0,
+                  end: typeof w.end === "number" ? w.end : 0,
+                });
+              }
+            }
+          }
+        }
+      }
+      return words;
+    };
+
+    // 2A. Groq Cloud Whisper (Free tier: ultra-fast ~216x realtime, word-level timestamps)
+    if (groqKey) {
       try {
-        const openai = new OpenAI({ apiKey });
+        const groq = new OpenAI({
+          apiKey: groqKey,
+          baseURL: process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1",
+        });
+        const groqModel = process.env.GROQ_WHISPER_MODEL || "whisper-large-v3-turbo";
+        pipelineLogger.info(
+          `Running Groq Cloud Whisper API (${groqModel}) on ${audioWavPath}...`,
+          "TranscriptionService",
+        );
+
+        const response = await groq.audio.transcriptions.create({
+          file: fs.createReadStream(audioWavPath),
+          model: groqModel,
+          response_format: "verbose_json",
+          timestamp_granularities: ["word"],
+        });
+
+        const text = response.text || "";
+        const words = extractWords(response);
+
+        try {
+          fs.unlinkSync(audioWavPath);
+        } catch (_) {}
+
+        pipelineLogger.info(
+          `✓ Groq Cloud Whisper transcription completed (${words.length} words, text: "${text.slice(0, 60)}...")`,
+          "TranscriptionService",
+        );
+        return { text, words };
+      } catch (groqErr) {
+        pipelineLogger.warn(
+          `Groq Cloud Whisper transcription failed: ${groqErr instanceof Error ? groqErr.message : groqErr}. Trying next provider...`,
+          "TranscriptionService",
+        );
+      }
+    }
+
+    // 2B. Custom OpenAI-compatible Cloud Whisper endpoint
+    if (customKey && process.env.WHISPER_API_URL) {
+      try {
+        const client = new OpenAI({
+          apiKey: customKey,
+          baseURL: process.env.WHISPER_API_URL,
+        });
+        const model = process.env.WHISPER_MODEL || "whisper-large-v3";
+        pipelineLogger.info(
+          `Running Custom Cloud Whisper API (${model}) on ${audioWavPath}...`,
+          "TranscriptionService",
+        );
+
+        const response = await client.audio.transcriptions.create({
+          file: fs.createReadStream(audioWavPath),
+          model: model,
+          response_format: "verbose_json",
+          timestamp_granularities: ["word"],
+        });
+
+        const text = response.text || "";
+        const words = extractWords(response);
+
+        try {
+          fs.unlinkSync(audioWavPath);
+        } catch (_) {}
+
+        return { text, words };
+      } catch (customErr) {
+        pipelineLogger.warn(
+          `Custom Cloud Whisper API transcription failed: ${customErr instanceof Error ? customErr.message : customErr}. Trying next provider...`,
+          "TranscriptionService",
+        );
+      }
+    }
+
+    // 2C. OpenAI Whisper API
+    if (openaiKey) {
+      try {
+        const openai = new OpenAI({ apiKey: openaiKey });
         pipelineLogger.info(`Running OpenAI Whisper API transcription on ${audioWavPath}...`, "TranscriptionService");
         
         const response = await openai.audio.transcriptions.create({
@@ -67,11 +174,7 @@ export class TranscriptionService {
         });
 
         const text = response.text || "";
-        const words = ((response as any).words || []).map((w: any) => ({
-          word: w.word,
-          start: w.start,
-          end: w.end,
-        }));
+        const words = extractWords(response);
 
         try {
           fs.unlinkSync(audioWavPath);
