@@ -719,6 +719,25 @@ export class VideoRenderer implements IVideoRenderer {
     const COVER_SECS = 3;
 
     // 8. Execute FFmpeg
+    // When cloud short rendering is enabled, bypass heavy local raw video encoding on the 1-core VM.
+    // The cloud runner executes scripts/render_short.py which performs crop, scale, watermark, cover,
+    // stickers, captions, and ducked audio mixing in a single pass on a fast 4 vCPU runner.
+    if (process.env.CLOUD_RENDER_SHORTS !== "false") {
+      pipelineLogger.info(
+        `[VideoRenderer] Cloud short rendering active — bypassing heavy local raw video encoding for ${outputPath}`,
+        "VideoRenderer",
+      );
+      (context as any)._bypassedRawVideo = true;
+      try {
+        fs.copyFileSync(videoPath, outputPath);
+      } catch {
+        await new Promise<void>((res, rej) => {
+          exec(`ffmpeg -nostdin -y -i "${videoPath}" -c copy -movflags +faststart "${outputPath}"`, (err) => (err ? rej(err) : res()));
+        });
+      }
+      return outputPath;
+    }
+
     const fps = options.fps;
     const extraInputs = [...badgeInputPaths];
     if (hasWatermark) extraInputs.push(watermarkPath);
@@ -737,7 +756,7 @@ export class VideoRenderer implements IVideoRenderer {
       chain += `; [${last}][${coverInputIndex}:v]overlay=0:0:enable='lte(t,${COVER_SECS})'[cov]`;
       last = "cov";
     }
-    const finalCmd = `ffmpeg -y -i "${videoPath}" ${extraInputArgs} -filter_complex "${chain}" -map "[${last}]" -map 0:a? -c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p -r ${fps} -c:a copy -movflags +faststart "${outputPath}"`;
+    const finalCmd = `ffmpeg -nostdin -y -i "${videoPath}" ${extraInputArgs} -filter_complex "${chain}" -map "[${last}]" -map 0:a? -c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p -r ${fps} -c:a copy -movflags +faststart "${outputPath}"`;
 
     pipelineLogger.info(
       `Executing FFmpeg video processing command: ${finalCmd}`,

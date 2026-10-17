@@ -3832,6 +3832,31 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
 
       // ── LOCAL ENCODING FALLBACK (If cloud render was skipped or failed) ────────
       if (!cloudDone) {
+        if ((context as any)._bypassedRawVideo) {
+          pipelineLogger.warn(
+            "[DirectUploader] Cloud render was not completed — executing local raw video encoding fallback...",
+            "DirectUploader",
+          );
+          const renderer = this.getRenderer(context);
+          const origCloudEnv = process.env.CLOUD_RENDER_SHORTS;
+          process.env.CLOUD_RENDER_SHORTS = "false";
+          try {
+            await renderer.processVideo(
+              context.originalVideoPath!,
+              rawVideoPath,
+              context,
+              {
+                durationSeconds: config.rendering.videoDurationSeconds,
+                fps: config.rendering.fps,
+                effect: "none",
+              },
+            );
+          } finally {
+            process.env.CLOUD_RENDER_SHORTS = origCloudEnv;
+            (context as any)._bypassedRawVideo = false;
+          }
+        }
+
         // 0 — Overlay the mood-matched reaction sticker (video-only pass, same
         // -c:v copy constraint as captions below — must happen before any
         // audio-mix step that copies the video stream unfiltered).
