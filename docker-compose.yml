@@ -13,6 +13,7 @@ services:
       - FREELLMAPI_FALLBACK_URL=${FREELLMAPI_FALLBACK_URL:-http://freellmapi-dev:3001}
       - FREELLMAPI_FALLBACK_KEY=${FREELLMAPI_FALLBACK_KEY:-freellmapi-98c9da4ce2b9a5149e83d5345b05bacabc2a4aab75a569bc}
       - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-codeorcap@2026}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
       # The VM is always prod: forces *_TELEGRAM_BOT_TOKEN_PROD variants regardless of .env
       - BOT_ENV=prod
       - TZ=Asia/Kolkata
@@ -109,6 +110,7 @@ services:
     environment:
       - FREELLMAPI_URL=http://freellmapi-dev:3001
       - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-codeorcap@2026}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
       - BOT_ENV=dev
       - TZ=Asia/Kolkata
     depends_on:

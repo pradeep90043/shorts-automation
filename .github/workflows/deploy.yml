@@ -90,6 +90,7 @@ jobs:
             printf '%s\n' "${DEV_ENV}" > .env.dev
             if [ -n "${RENDER_GITHUB_TOKEN}" ]; then printf 'GITHUB_TOKEN=%s\n' "${RENDER_GITHUB_TOKEN}" >> .env.dev; fi
             if [ -n "${DASHBOARD_PASSWORD}" ]; then printf 'DASHBOARD_PASSWORD=%s\n' "${DASHBOARD_PASSWORD}" >> .env.dev; else printf 'DASHBOARD_PASSWORD=codeorcap@2026\n' >> .env.dev; fi
+            if [ -n "${GROQ_API_KEY}" ]; then printf 'GROQ_API_KEY=%s\n' "${GROQ_API_KEY}" >> .env.dev; fi
             if [ -n "${COVER_IMAGE_API_KEY}" ]; then printf 'COVER_IMAGE_API_KEY=%s\n' "${COVER_IMAGE_API_KEY}" >> .env.dev; fi
             if [ -n "${COVER_IMAGE_API_URL}" ]; then printf 'COVER_IMAGE_API_URL=%s\n' "${COVER_IMAGE_API_URL}" >> .env.dev; fi
           else
@@ -97,6 +98,7 @@ jobs:
             printf '%s\n' "${PRODUCTION_COOKIES}" > cookies.txt
             if [ -n "${RENDER_GITHUB_TOKEN}" ]; then printf 'GITHUB_TOKEN=%s\n' "${RENDER_GITHUB_TOKEN}" >> .env; fi
             if [ -n "${DASHBOARD_PASSWORD}" ]; then printf 'DASHBOARD_PASSWORD=%s\n' "${DASHBOARD_PASSWORD}" >> .env; fi
+            if [ -n "${GROQ_API_KEY}" ]; then printf 'GROQ_API_KEY=%s\n' "${GROQ_API_KEY}" >> .env; fi
             if [ -n "${COVER_IMAGE_API_KEY}" ]; then printf 'COVER_IMAGE_API_KEY=%s\n' "${COVER_IMAGE_API_KEY}" >> .env; fi
             if [ -n "${COVER_IMAGE_API_URL}" ]; then printf 'COVER_IMAGE_API_URL=%s\n' "${COVER_IMAGE_API_URL}" >> .env; fi
             printf 'FREELLMAPI_FALLBACK_URL=http://freellmapi-dev:3001\n' >> .env
@@ -108,6 +110,7 @@ jobs:
           DEV_ENV: ${{ secrets.DEV_ENV }}
           RENDER_GITHUB_TOKEN: ${{ secrets.RENDER_GITHUB_TOKEN }}
           DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           COVER_IMAGE_API_KEY: ${{ secrets.COVER_IMAGE_API_KEY }}
           COVER_IMAGE_API_URL: ${{ secrets.COVER_IMAGE_API_URL }}
           PRODUCTION_COOKIES: ${{ secrets.PRODUCTION_COOKIES }}
