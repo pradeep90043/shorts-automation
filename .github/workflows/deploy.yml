@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: deploy-${{ github.ref_name }}
+  group: deploy-vm
   cancel-in-progress: false
 
 env:
@@ -118,7 +118,7 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           SSH="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 22"
           $SSH "${VM_USER}@${VM_HOST}" "mkdir -p ~/shorts-automation"
-          rsync -avz --delete -e "$SSH" \
+          rsync -avz --delay-updates --delete -e "$SSH" \
             --exclude 'node_modules' \
             --exclude '.git' --exclude '.github' --exclude '.claude' --exclude '.agents' \
             --exclude 'temp*' --exclude 'logs*' --exclude 'output*' \
