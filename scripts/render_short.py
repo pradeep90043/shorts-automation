@@ -1,0 +1,272 @@
+#!/usr/bin/env python3
+"""
+Single-Pass Cloud Renderer for Shorts/Reels
+-------------------------------------------
+Renders a complete vertical short in one single FFmpeg pass:
+- Video cropping / scaling to 1080x1920
+- Brand watermark overlay
+- Cover card (3s intro)
+- Reaction sticker overlay (with sustained loop)
+- Timed animated captions (libass)
+- Voiceover & background music mixing
+Runs on GitHub Actions (4 vCPUs, 7GB RAM).
+"""
+
+import sys
+import os
+import json
+import argparse
+import subprocess
+import urllib.request
+import tarfile
+import shutil
+import tempfile
+import glob
+
+
+def download_and_extract_bundle(bundle_url: str, dest_dir: str):
+    print(f"📥 Downloading bundle from: {bundle_url}")
+    tar_path = os.path.join(dest_dir, "bundle.tar.gz")
+    
+    # Download with custom User-Agent
+    req = urllib.request.Request(bundle_url, headers={"User-Agent": "shorts-automation-renderer"})
+    with urllib.request.urlopen(req, timeout=120) as resp, open(tar_path, "wb") as f:
+        shutil.copyfileobj(resp, f)
+        
+    print(f"📦 Extracting bundle ({os.path.getsize(tar_path)} bytes)...")
+    with tarfile.open(tar_path, "r:gz") as tar:
+        tar.extractall(dest_dir)
+    print("✓ Bundle extracted successfully.")
+
+
+def find_bg_music(repo_root: str, mood: str) -> str:
+    """Finds an appropriate background music track for the given mood."""
+    music_dir = os.path.join(repo_root, "assets", "music")
+    ambient_dir = os.path.join(repo_root, "assets", "ambient")
+    
+    # Try mood folder first
+    mood_dir = os.path.join(music_dir, mood)
+    if os.path.isdir(mood_dir):
+        tracks = [os.path.join(mood_dir, f) for f in os.listdir(mood_dir) if f.endswith((".mp3", ".wav"))]
+        if tracks:
+            return tracks[0]
+            
+    # Try any track in music dir
+    all_tracks = glob.glob(os.path.join(music_dir, "**", "*.mp3"), recursive=True)
+    if all_tracks:
+        return all_tracks[0]
+        
+    # Ambient fallback
+    ambient_tracks = glob.glob(os.path.join(ambient_dir, "*.mp3"))
+    if ambient_tracks:
+        return ambient_tracks[0]
+        
+    return ""
+
+
+def build_and_run_ffmpeg(work_dir: str, repo_root: str, out_path: str):
+    spec_path = os.path.join(work_dir, "short_spec.json")
+    if not os.path.exists(spec_path):
+        raise FileNotFoundError(f"Missing short_spec.json in {work_dir}")
+        
+    with open(spec_path, "r", encoding="utf-8") as f:
+        spec = json.load(f)
+
+    profile = spec.get("profile", "codeorcap").lower()
+    mood = spec.get("mood", "technical").lower()
+    crop_top = float(spec.get("cropTopPct", 0)) / 100.0
+    crop_bottom = float(spec.get("cropBottomPct", 0)) / 100.0
+    use_cover = spec.get("cover", True)
+    use_watermark = spec.get("watermark", True)
+    use_sticker = spec.get("sticker", True)
+    use_captions = spec.get("captions", True)
+    use_voiceover = spec.get("useVoiceover", True)
+    original_audio = spec.get("originalAudio", False)
+    
+    # Input files in work_dir
+    raw_video = os.path.join(work_dir, "reel_video.mp4")
+    if not os.path.exists(raw_video):
+        # Fallback to pristine_video or any mp4
+        mp4s = [os.path.join(work_dir, f) for f in os.listdir(work_dir) if f.endswith(".mp4") and "video" in f]
+        raw_video = mp4s[0] if mp4s else ""
+
+    if not raw_video or not os.path.exists(raw_video):
+        raise FileNotFoundError(f"Input video not found in bundle: {work_dir}")
+
+    # Build FFmpeg command inputs
+    inputs = ["-i", raw_video]
+    next_input_idx = 1
+    
+    # Watermark
+    wm_idx = -1
+    if use_watermark:
+        wm_file = os.path.join(repo_root, "assets", f"watermark_{profile}.png")
+        if not os.path.exists(wm_file):
+            wm_file = os.path.join(repo_root, "assets", "watermark.png")
+        if os.path.exists(wm_file):
+            inputs.extend(["-i", wm_file])
+            wm_idx = next_input_idx
+            next_input_idx += 1
+
+    # Cover card (3s intro overlay)
+    cov_idx = -1
+    cover_file = os.path.join(work_dir, "infoonspot_cover.png")
+    if not os.path.exists(cover_file):
+        cover_file = os.path.join(work_dir, "cover.png")
+    if use_cover and os.path.exists(cover_file):
+        inputs.extend(["-i", cover_file])
+        cov_idx = next_input_idx
+        next_input_idx += 1
+
+    # Sticker
+    sticker_idx = -1
+    sticker_tail_idx = -1
+    if use_sticker:
+        sticker_file = os.path.join(repo_root, "assets", "stickers", profile, f"{mood}.mov")
+        if os.path.exists(sticker_file):
+            # Pre-cut tail for seamless looping
+            tail_file = os.path.join(work_dir, "sticker_tail.mov")
+            cut_cmd = ["ffmpeg", "-y", "-ss", "5", "-t", "5", "-i", sticker_file, "-c", "copy", "-an", tail_file]
+            subprocess.run(cut_cmd, check=False)
+            
+            inputs.extend(["-i", sticker_file])
+            sticker_idx = next_input_idx
+            next_input_idx += 1
+            
+            if os.path.exists(tail_file):
+                inputs.extend(["-stream_loop", "-1", "-i", tail_file])
+                sticker_tail_idx = next_input_idx
+                next_input_idx += 1
+
+    # Voiceover audio
+    voice_idx = -1
+    voice_file = os.path.join(work_dir, "voiceover.mp3")
+    if use_voiceover and os.path.exists(voice_file):
+        inputs.extend(["-i", voice_file])
+        voice_idx = next_input_idx
+        next_input_idx += 1
+
+    # Background music
+    music_idx = -1
+    if not original_audio:
+        music_file = find_bg_music(repo_root, mood)
+        if music_file and os.path.exists(music_file):
+            inputs.extend(["-stream_loop", "-1", "-i", music_file])
+            music_idx = next_input_idx
+            next_input_idx += 1
+
+    # Captions
+    ass_file = os.path.join(work_dir, "captions.ass")
+    has_captions = use_captions and os.path.exists(ass_file)
+
+    # ── BUILD FILTER GRAPH ───────────────────────────────────────────────────
+    v_filters = []
+    
+    # 1. Base video crop + scale to 1080x1920
+    # Crop calculation: remove crop_top and crop_bottom percent
+    crop_h = f"ih*(1-{crop_top:.3f}-{crop_bottom:.3f})"
+    crop_y = f"ih*{crop_top:.3f}"
+    v_filters.append(f"[0:v]crop=iw:{crop_h}:0:{crop_y},scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black[base]")
+    current_v = "[base]"
+
+    # 2. Watermark overlay (bottom right)
+    if wm_idx != -1:
+        v_filters.append(f"{current_v}[{wm_idx}:v]overlay=W-w-40:H-h-40[wm]")
+        current_v = "[wm]"
+
+    # 3. Cover card overlay (first 3 seconds)
+    if cov_idx != -1:
+        v_filters.append(f"{current_v}[{cov_idx}:v]overlay=0:0:enable='lte(t,3)'[cov]")
+        current_v = "[cov]"
+
+    # 4. Reaction sticker overlay (bottom left)
+    if sticker_idx != -1:
+        if sticker_tail_idx != -1:
+            v_filters.append(f"[{sticker_idx}:v]setpts=PTS-STARTPTS[stk_full];[{sticker_tail_idx}:v]setpts=PTS-STARTPTS[stk_tail];[stk_full][stk_tail]concat=n=2:v=1:a=0[stickerloop]")
+            v_filters.append(f"{current_v}[stickerloop]overlay=40:H-h-40:shortest=1[stk]")
+        else:
+            v_filters.append(f"{current_v}[{sticker_idx}:v]overlay=40:H-h-40:shortest=1[stk]")
+        current_v = "[stk]"
+
+    # 5. Burn animated subtitles (ASS)
+    if has_captions:
+        escaped_ass = ass_file.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+        v_filters.append(f"{current_v}subtitles='{escaped_ass}'[vfinal]")
+        current_v = "[vfinal]"
+
+    # ── BUILD AUDIO GRAPH ────────────────────────────────────────────────────
+    a_filters = []
+    has_audio_out = False
+    
+    if voice_idx != -1 and music_idx != -1:
+        # Voiceover + background music (duck music under voice)
+        # Voice: volume 1.35, Music: volume 0.18, ducked when voice speaks
+        a_filters.append(f"[{music_idx}:a]volume=0.20[bgm];[{voice_idx}:a]volume=1.35[vox];[bgm][vox]amix=inputs=2:duration=first:dropout_transition=2[afinal]")
+        has_audio_out = True
+    elif voice_idx != -1:
+        # Voiceover only
+        a_filters.append(f"[{voice_idx}:a]volume=1.35[afinal]")
+        has_audio_out = True
+    elif music_idx != -1:
+        # Music only
+        a_filters.append(f"[{music_idx}:a]volume=0.6[afinal]")
+        has_audio_out = True
+    elif original_audio:
+        # Original video audio
+        a_filters.append(f"[0:a]volume=1.0[afinal]")
+        has_audio_out = True
+
+    filter_complex_parts = v_filters
+    if a_filters:
+        filter_complex_parts.extend(a_filters)
+    filter_complex = "; ".join(filter_complex_parts)
+
+    cmd = ["ffmpeg", "-y"]
+    cmd.extend(inputs)
+    cmd.extend(["-filter_complex", filter_complex])
+    cmd.extend(["-map", current_v])
+    
+    if has_audio_out:
+        cmd.extend(["-map", "[afinal]", "-c:a", "aac", "-b:a", "192k", "-ar", "44100"])
+    else:
+        cmd.extend(["-an"])
+        
+    cmd.extend([
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-crf", "22",
+        "-pix_fmt", "yuv420p",
+        "-r", "30",
+        "-movflags", "+faststart",
+        out_path
+    ])
+
+    print("🚀 Executing single-pass cloud FFmpeg command:")
+    print(" ".join(cmd))
+    
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    if res.returncode != 0:
+        print(f"❌ FFmpeg error (code {res.returncode}):")
+        print(res.stderr[-2000:])
+        raise RuntimeError(f"FFmpeg render failed with exit code {res.returncode}")
+
+    print(f"✅ Cloud video render completed successfully: {out_path} ({os.path.getsize(out_path)} bytes)")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Single-Pass Cloud Short Renderer")
+    parser.add_argument("--bundle", required=True, help="URL of bundle tar.gz")
+    parser.add_argument("--out", default="video_final.mp4", help="Output video path")
+    args = parser.parse_args()
+
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    temp_dir = tempfile.mkdtemp(prefix="short_cloud_")
+    try:
+        download_and_extract_bundle(args.bundle, temp_dir)
+        build_and_run_ffmpeg(temp_dir, repo_root, args.out)
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+if __name__ == "__main__":
+    main()

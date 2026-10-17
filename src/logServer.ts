@@ -2003,6 +2003,28 @@ export function startLogServer(): void {
           tarProc.stdout.pipe(res);
           return;
         }
+        if (req.method === "GET" && route.startsWith("/api/short/bundle/")) {
+          const jobId = route.replace("/api/short/bundle/", "").trim();
+          const jobDir = path.join(config.paths.tempDir, jobId);
+          if (!fs.existsSync(jobDir)) {
+            return json(404, { success: false, message: `Short bundle not found for job: ${jobId}` });
+          }
+          res.writeHead(200, {
+            "Content-Type": "application/gzip",
+            "Content-Disposition": `attachment; filename="${jobId}.tar.gz"`,
+          });
+          const tarProc = spawn("tar", [
+            "-czf", "-",
+            "--exclude=video_raw.mp4",
+            "--exclude=video_stickered.mp4",
+            "--exclude=video_raw_captioned.mp4",
+            "--exclude=video_final.mp4",
+            "--exclude=pristine_video.mp4",
+            "-C", jobDir, "."
+          ]);
+          tarProc.stdout.pipe(res);
+          return;
+        }
         if (req.method === "GET" && route === "/api/longvideo/job") {
           const id = new URL(url, "http://localhost").searchParams.get("id") || "";
           const job = getStickmanJobForPoll(id);
