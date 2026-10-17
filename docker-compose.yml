@@ -3,7 +3,6 @@ services:
     # Image is built & pushed by GitHub Actions (.github/workflows/deploy.yml).
     # Override the tag with BOT_IMAGE if needed; defaults to :latest.
     image: ${BOT_IMAGE:-ghcr.io/pradeep90043/shorts-automation:latest}
-    pull_policy: always
     container_name: codeorcap-bot
     restart: unless-stopped
     env_file: .env
@@ -13,6 +12,7 @@ services:
       - FREELLMAPI_URL=http://freellmapi:3001
       - FREELLMAPI_FALLBACK_URL=${FREELLMAPI_FALLBACK_URL:-http://freellmapi-dev:3001}
       - FREELLMAPI_FALLBACK_KEY=${FREELLMAPI_FALLBACK_KEY:-freellmapi-98c9da4ce2b9a5149e83d5345b05bacabc2a4aab75a569bc}
+      - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-codeorcap@2026}
       # The VM is always prod: forces *_TELEGRAM_BOT_TOKEN_PROD variants regardless of .env
       - BOT_ENV=prod
       - TZ=Asia/Kolkata
@@ -98,7 +98,6 @@ services:
   # Dev Bot System (Runs isolated on dev branch and shorts-dev.duckdns.org)
   bot-dev:
     image: ${BOT_DEV_IMAGE:-ghcr.io/pradeep90043/shorts-automation:dev}
-    pull_policy: always
     container_name: codeorcap-bot-dev
     restart: unless-stopped
     env_file: ${BOT_DEV_ENV_FILE:-.env.dev}
@@ -109,6 +108,7 @@ services:
           memory: 350M
     environment:
       - FREELLMAPI_URL=http://freellmapi-dev:3001
+      - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-codeorcap@2026}
       - BOT_ENV=dev
       - TZ=Asia/Kolkata
     depends_on:
