@@ -100,7 +100,7 @@ export async function renderShortCloud(
   for (let attempt = 0; attempt < 20; attempt++) {
     await sleep(3000);
     try {
-      const runsRes = await fetchRetry(`https://api.github.com/repos/${repo}/actions/runs?event=workflow_dispatch&per_page=5`, {
+      const runsRes = await fetchRetry(`https://api.github.com/repos/${repo}/actions/workflows/render-short.yml/runs?event=workflow_dispatch&per_page=5`, {
         headers: authHeaders(token),
       });
       if (runsRes.ok) {
