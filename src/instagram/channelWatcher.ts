@@ -855,7 +855,7 @@ export class ChannelWatcher {
         await this.store.markFailed(inFlight.shortcode, job.error || "Pipeline failed");
         await this.history.markFailed(inFlight.shortcode, job.error || "Pipeline failed");
         pipelineLogger.warn(
-          `[${this.profile.brandName}] Reel @${inFlight.channel}/${inFlight.shortcode} marked failed — ${job.error}`,
+          `[${this.profile.brandName}] Reel @${inFlight.channel}/${inFlight.shortcode} marked failed — ${job.error || "Pipeline failed"}`,
           "ChannelWatcher",
         );
       }

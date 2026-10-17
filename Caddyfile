@@ -5,13 +5,56 @@
 # Base domain: shorts-automation.duckdns.org
 {$DUCKDNS_DOMAIN:shorts-automation.duckdns.org} {
 
-    # FreeLLMAPI Frontend JS/CSS Assets
+    # FreeLLMAPI Frontend JS/CSS/Favicon Assets
     handle /assets/* {
+        reverse_proxy freellmapi:3001
+    }
+    handle /favicon.svg {
         reverse_proxy freellmapi:3001
     }
 
     # FreeLLMAPI OpenAI API Endpoints
     handle /v1/* {
+        reverse_proxy freellmapi:3001
+    }
+
+    # Shorts-Automation Meta & YouTube OAuth
+    handle /api/auth/meta/* {
+        reverse_proxy bot:3002
+    }
+    handle /api/auth/youtube/* {
+        reverse_proxy bot:3002
+    }
+
+    # FreeLLMAPI Internal Backend API Endpoints
+    handle /api/auth/* {
+        reverse_proxy freellmapi:3001
+    }
+    handle /api/analytics/* {
+        reverse_proxy freellmapi:3001
+    }
+    handle /api/keys/* {
+        reverse_proxy freellmapi:3001
+    }
+    handle /api/models/* {
+        reverse_proxy freellmapi:3001
+    }
+    handle /api/settings/* {
+        reverse_proxy freellmapi:3001
+    }
+    handle /api/health* {
+        reverse_proxy freellmapi:3001
+    }
+    handle /api/embeddings/* {
+        reverse_proxy freellmapi:3001
+    }
+    handle /api/fallback/* {
+        reverse_proxy freellmapi:3001
+    }
+    handle /api/media/* {
+        reverse_proxy freellmapi:3001
+    }
+    handle /api/premium/* {
         reverse_proxy freellmapi:3001
     }
 
