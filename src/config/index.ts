@@ -88,6 +88,10 @@ export interface AppConfig {
     freellmapiKey: string;
     freellmapiModel: string;
     freellmapiVisionModel: string;
+    freellmapiFallbackUrl?: string;
+    freellmapiFallbackKey?: string;
+    freellmapiFallbackModel?: string;
+    freellmapiFallbackVisionModel?: string;
 
     geminiApiKey: string; // fallback AI provider used only when FreeLLMAPI fails
     pexelsApiKey: string; // Pexels / MoneyPrinterTurbo stock video b-roll API key
@@ -470,6 +474,10 @@ export const config: AppConfig = {
     freellmapiKey: process.env.FREELLMAPI_KEY || "",
     freellmapiModel: process.env.FREELLMAPI_MODEL || "auto",
     freellmapiVisionModel: process.env.FREELLMAPI_VISION_MODEL || "auto",
+    freellmapiFallbackUrl: process.env.FREELLMAPI_FALLBACK_URL || "",
+    freellmapiFallbackKey: process.env.FREELLMAPI_FALLBACK_KEY || "",
+    freellmapiFallbackModel: process.env.FREELLMAPI_FALLBACK_MODEL || "auto",
+    freellmapiFallbackVisionModel: process.env.FREELLMAPI_FALLBACK_VISION_MODEL || "auto",
 
     geminiApiKey: process.env.GEMINI_API_KEY || "",
     pexelsApiKey:

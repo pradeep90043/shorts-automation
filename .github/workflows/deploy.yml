@@ -149,7 +149,7 @@ jobs:
             done
             # Clear any stale/orphaned containers left with these fixed names so
             # `up` doesn't hit "name already in use" conflicts.
-            docker rm -f codeorcap-bot freellmapi duckdns caddy-proxy 2>/dev/null || true
+            docker rm -f codeorcap-bot freellmapi freellmapi-dev duckdns caddy-proxy 2>/dev/null || true
             docker compose up -d --remove-orphans
             docker logout ghcr.io || true
             docker image prune -f || true

@@ -11,11 +11,14 @@ services:
     shm_size: 1gb
     environment:
       - FREELLMAPI_URL=http://freellmapi:3001
+      - FREELLMAPI_FALLBACK_URL=http://freellmapi-dev:3001
+      - FREELLMAPI_FALLBACK_KEY=${FREELLMAPI_FALLBACK_KEY}
       # The VM is always prod: forces *_TELEGRAM_BOT_TOKEN_PROD variants regardless of .env
       - BOT_ENV=prod
       - TZ=Asia/Kolkata
     depends_on:
       - freellmapi
+      - freellmapi-dev
       - postgres
     volumes:
       - ./output:/app/output
@@ -42,6 +45,18 @@ services:
       - ENCRYPTION_KEY=${FREELLMAPI_ENCRYPTION_KEY}
     volumes:
       - freellmapi-data:/app/server/data
+
+  freellmapi-dev:
+    image: ghcr.io/tashfeenahmed/freellmapi:latest
+    container_name: freellmapi-dev
+    restart: unless-stopped
+    ports:
+      - "20128:3001"
+    environment:
+      - PORT=3001
+      - ENCRYPTION_KEY=${FREELLMAPI_DEV_ENCRYPTION_KEY}
+    volumes:
+      - ${FREELLMAPI_DEV_DATA_DIR:-/home/opc/freellmapi-dev/data}:/app/server/data
 
   postgres:
     image: postgres:15-alpine

@@ -6,6 +6,11 @@ export class FreeLlmApiClient {
   private model: string;
   private visionModel: string;
 
+  private fallbackUrl?: string;
+  private fallbackApiKey?: string;
+  private fallbackModel: string;
+  private fallbackVisionModel: string;
+
   constructor() {
     let bUrl = (config.ai.freellmapiUrl || "http://localhost:3001").trim().replace(/\/$/, '');
     if (!bUrl.startsWith('http://') && !bUrl.startsWith('https://')) {
@@ -13,15 +18,33 @@ export class FreeLlmApiClient {
     }
     this.baseUrl = bUrl;
     this.apiKey = config.ai.freellmapiKey;
-    this.model = "auto";
-    this.visionModel = "auto";
+    this.model = config.ai.freellmapiModel || "auto";
+    this.visionModel = config.ai.freellmapiVisionModel || "auto";
+
+    if (config.ai.freellmapiFallbackUrl) {
+      let fbUrl = config.ai.freellmapiFallbackUrl.trim().replace(/\/$/, '');
+      if (!fbUrl.startsWith('http://') && !fbUrl.startsWith('https://')) {
+        fbUrl = `http://${fbUrl.includes(':') ? fbUrl : `localhost:${fbUrl}`}`;
+      }
+      this.fallbackUrl = fbUrl;
+      this.fallbackApiKey = config.ai.freellmapiFallbackKey || this.apiKey;
+      this.fallbackModel = config.ai.freellmapiFallbackModel || this.model;
+      this.fallbackVisionModel = config.ai.freellmapiFallbackVisionModel || this.visionModel;
+    } else {
+      this.fallbackModel = "auto";
+      this.fallbackVisionModel = "auto";
+    }
   }
 
-  public async generateChat(messages: any[], isVision = false, timeoutOverrideMs?: number): Promise<string> {
-    const url = `${this.baseUrl}/v1/chat/completions`;
+  private async executeChatRequest(
+    targetUrl: string,
+    apiKey: string,
+    model: string,
+    messages: any[],
+    timeoutMs: number
+  ): Promise<string> {
+    const url = `${targetUrl}/v1/chat/completions`;
     const controller = new AbortController();
-    // Vision calls carry 4 base64 keyframes and a large prompt — give them longer
-    const timeoutMs = timeoutOverrideMs ?? (isVision ? 120000 : 60000);
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
@@ -29,29 +52,50 @@ export class FreeLlmApiClient {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.apiKey}`,
+          'Authorization': `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          model: isVision ? this.visionModel : this.model,
-          messages: messages,
+          model,
+          messages,
         }),
-        signal: controller.signal
+        signal: controller.signal,
       });
 
       if (!res.ok) {
         const errText = await res.text();
-        throw new Error(`FreeLLMAPI request failed with status ${res.status}: ${errText}`);
+        throw new Error(`FreeLLMAPI (${targetUrl}) request failed with status ${res.status}: ${errText}`);
       }
 
       const json = await res.json() as any;
       return json.choices?.[0]?.message?.content ?? '';
     } catch (err: any) {
       if (err.name === "AbortError") {
-        throw new Error(`FreeLLMAPI request timed out after ${timeoutMs / 1000} seconds`);
+        throw new Error(`FreeLLMAPI (${targetUrl}) request timed out after ${timeoutMs / 1000} seconds`);
       }
       throw err;
     } finally {
       clearTimeout(timeoutId);
+    }
+  }
+
+  public async generateChat(messages: any[], isVision = false, timeoutOverrideMs?: number): Promise<string> {
+    const timeoutMs = timeoutOverrideMs ?? (isVision ? 120000 : 60000);
+    const primaryModel = isVision ? this.visionModel : this.model;
+
+    try {
+      return await this.executeChatRequest(this.baseUrl, this.apiKey, primaryModel, messages, timeoutMs);
+    } catch (primaryErr: any) {
+      if (this.fallbackUrl && this.fallbackApiKey) {
+        const fbModel = isVision ? this.fallbackVisionModel : this.fallbackModel;
+        console.warn(`[FreeLLMAPI] Primary endpoint ${this.baseUrl} failed (${primaryErr.message}). Failing over to fallback ${this.fallbackUrl}...`);
+        try {
+          return await this.executeChatRequest(this.fallbackUrl, this.fallbackApiKey, fbModel, messages, timeoutMs);
+        } catch (fallbackErr: any) {
+          console.error(`[FreeLLMAPI] Fallback endpoint ${this.fallbackUrl} also failed: ${fallbackErr.message}`);
+          throw new Error(`FreeLLMAPI primary (${primaryErr.message}) and fallback (${fallbackErr.message}) both failed.`);
+        }
+      }
+      throw primaryErr;
     }
   }
 
