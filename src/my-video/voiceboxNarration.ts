@@ -104,7 +104,8 @@ export interface VoiceboxOptions {
 export async function generateVoiceboxNarration(opts: VoiceboxOptions): Promise<{ dir: string; files: number }> {
   const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
   if (!token) throw new Error("No GITHUB_TOKEN configured: the cloned voice is made on GitHub Actions");
-  const repo = opts.resume?.repo || process.env.VOICEBOX_GITHUB_REPO || "pradeep90043/shorts-automation";
+  const defaultRepo = process.env.BOT_ENV === "dev" ? "pradeep90043/shorts-automation-test" : "pradeep90043/shorts-automation";
+  const repo = opts.resume?.repo || process.env.VOICEBOX_GITHUB_REPO || defaultRepo;
   const emit = (fraction: number, detail: string) => opts.onProgress?.({ fraction: Math.min(1, Math.max(0, fraction)), detail });
   const gh = async (url: string, init?: RequestInit) => fetchRetry(`https://api.github.com/repos/${repo}${url}`, { ...init, headers: { ...authHeaders(token), ...(init?.headers || {}) } });
 

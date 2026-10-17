@@ -260,7 +260,8 @@ async function renderViaGithubActions(
   const ghToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
   if (!ghToken) throw new Error("No GITHUB_TOKEN configured for cloud rendering");
 
-  const repo = process.env.MY_VIDEO_GITHUB_REPO || "pradeep90043/my-video";
+  const defaultRepo = process.env.BOT_ENV === "dev" ? "pradeep90043/my-video-test" : "pradeep90043/my-video";
+  const repo = process.env.MY_VIDEO_GITHUB_REPO || process.env.RENDER_GITHUB_REPO || defaultRepo;
   const publicUrl = process.env.PUBLIC_URL || "https://shorts-automation.duckdns.org";
   const bundleUrl = `${publicUrl}/api/longvideo/bundle/${spec.slug}`;
   const progressToken = resume?.token ?? randomBytes(12).toString("hex");
