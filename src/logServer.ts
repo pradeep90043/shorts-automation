@@ -2003,28 +2003,7 @@ export function startLogServer(): void {
           tarProc.stdout.pipe(res);
           return;
         }
-        if (req.method === "GET" && route.startsWith("/api/short/bundle/")) {
-          const jobId = route.replace("/api/short/bundle/", "").trim();
-          const jobDir = path.join(config.paths.tempDir, jobId);
-          if (!fs.existsSync(jobDir)) {
-            return json(404, { success: false, message: `Short bundle not found for job: ${jobId}` });
-          }
-          res.writeHead(200, {
-            "Content-Type": "application/gzip",
-            "Content-Disposition": `attachment; filename="${jobId}.tar.gz"`,
-          });
-          const tarProc = spawn("tar", [
-            "-czf", "-",
-            "--exclude=video_raw.mp4",
-            "--exclude=video_stickered.mp4",
-            "--exclude=video_raw_captioned.mp4",
-            "--exclude=video_final.mp4",
-            "--exclude=pristine_video.mp4",
-            "-C", jobDir, "."
-          ]);
-          tarProc.stdout.pipe(res);
-          return;
-        }
+
         if (req.method === "GET" && route === "/api/longvideo/job") {
           const id = new URL(url, "http://localhost").searchParams.get("id") || "";
           const job = getStickmanJobForPoll(id);
@@ -2044,6 +2023,33 @@ export function startLogServer(): void {
         const busy = /already being created/.test(err?.message || "");
         return json(busy ? 409 : 500, { success: false, message: err?.message || "Long video request failed" });
       }
+    }
+
+    if (req.method === "GET" && (url.startsWith("/api/short/bundle/") || url.startsWith("/api/short/bundle?"))) {
+      const route = url.split("?")[0];
+      const jobId = route.replace("/api/short/bundle/", "").trim();
+      const jobDir = path.join(config.paths.tempDir, jobId);
+      if (!fs.existsSync(jobDir)) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: false, message: `Short bundle not found for job: ${jobId}` }));
+        return;
+      }
+      res.writeHead(200, {
+        "Content-Type": "application/gzip",
+        "Content-Disposition": `attachment; filename="${jobId}.tar.gz"`,
+        "Access-Control-Allow-Origin": "*",
+      });
+      const tarProc = spawn("tar", [
+        "-czf", "-",
+        "--exclude=video_raw.mp4",
+        "--exclude=video_stickered.mp4",
+        "--exclude=video_raw_captioned.mp4",
+        "--exclude=video_final.mp4",
+        "--exclude=pristine_video.mp4",
+        "-C", jobDir, "."
+      ]);
+      tarProc.stdout.pipe(res);
+      return;
     }
 
     if (url === "/api/dashboard" || url.startsWith("/api/dashboard?")) {
