@@ -14,7 +14,7 @@ import { TelegramService, escapeMarkdown } from "./telegram";
 import { PipelineContext, VideoMetadata } from "./types";
 import { pipelineLogger } from "./utils/logger";
 import { howItWorksLines, renderHowItWorksClip } from "./my-video/howItWorksClip";
-import { insightEnabledFor, insightFor, insightIntro } from "./my-video/insightClip";
+import { insightEnabledFor, insightFor, insightIntro, insightRuleFor } from "./my-video/insightClip";
 import { FreeLlmApiClient } from "./ai/freellmapi";
 import { GeminiClient } from "./ai/gemini";
 import { parseAiJson, extractJsonArrayField } from "./utils/json";
@@ -374,7 +374,7 @@ KEYWORDS: ${this.theme.keywordsRule}
 THUMBNAIL: Max 5 words, highly clickable, curiosity driven.
 FILENAME: SEO-friendly filename (e.g., short-video-2026.mp4).
 VOICEOVER: ${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} that describes the content. It should sound very natural, hook the viewer immediately, and explain what is happening or read the meme text in an entertaining way.
-HOW_IT_WORKS: A detailed, clear, and educational explanation (approx 2-3 sentences, 30-50 words) explaining how the code snippet, concept, or trick works step-by-step to add original educational value. NEVER return hashtags or generic labels.
+HOW_IT_WORKS: ${this.profile.key.toLowerCase() === "codeorcap" ? "A detailed, clear, and educational explanation (approx 2-3 sentences, 30-50 words) explaining how the code snippet, concept, or trick works step-by-step to add original educational value." : insightRuleFor(this.profile.key)} NEVER return hashtags or generic labels.
 ${this.theme.niche === "infoonspot" || this.profile.key.toLowerCase() === "infoonspot" ? `
 INFOONSPOT BROADCAST TEMPLATE FIELDS:
 - coverHeadline: A punchy 1-2 line UPPERCASE hook headline (max 6-8 words total, e.g. "NEW AI CREATES FULL 3D WORLDS IN SECONDS") to fill the top [BREAKING] headline banner.
@@ -1197,7 +1197,7 @@ Rules:
 - tags: 10-12 specific tags covering the topic, theme, and audience (no spaces in tags).
 - mood: Determine the emotional tone or theme of the content. Choose exactly one of: "funny", "sad", or "other" (for general, educational, or motivational content).
 - voiceoverScript: ${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} that describes the content. It should sound very natural, hook the viewer immediately, and explain what is happening or read the meme text in an entertaining way.
-- howItWorks: ${insightFor(this.profile.key).promptRule}
+- howItWorks: ${insightRuleFor(this.profile.key)}
 - diagramTitle: A brief 2-4 word title for the diagram (e.g. "Execution Flow", "State Lifecycle", "Timeline", "Fact Check", "How it works").
 - diagramWorkflow: A valid, simple Mermaid.js flowchart (graph TD or graph LR) explaining the logic, execution, process, timeline, or steps of the topic (3-5 nodes max). Use double quotes around node labels (e.g. A[\"Start\"] --> B[\"Check condition\"]). Node IDs must be simple alphanumeric characters. Keep it clean and valid.
 - ${this.theme.analysisRules}`;
@@ -1325,7 +1325,7 @@ KEYWORDS: ${this.theme.keywordsRule}
 THUMBNAIL: Max 5 words, highly clickable, curiosity driven.
 FILENAME: SEO-friendly filename (e.g., viral-short-video-2026.mp4).
 - MOOD: Determine emotional tone: "funny", "serious", "emotional", "motivational", "technical", "horror", "romantic", "sad", or "other".
-- howItWorks: ${insightFor(this.profile.key).promptRule}
+- howItWorks: ${insightRuleFor(this.profile.key)}
 - diagramTitle: A brief 2-4 word title for the diagram (e.g. "Execution Flow", "State Lifecycle", "Timeline", "Fact Check", "How it works").
 - diagramWorkflow: A valid, simple Mermaid.js flowchart (graph TD or graph LR) explaining the logic, execution, process, timeline, or steps of the topic (3-5 nodes max). Use double quotes around node labels (e.g. A[\"Start\"] --> B[\"Check condition\"]). Node IDs must be simple alphanumeric characters. Keep it clean and valid.
 ${this.theme.analysisRules}`;

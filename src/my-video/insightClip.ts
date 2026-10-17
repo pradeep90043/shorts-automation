@@ -81,7 +81,21 @@ export function insightEnabledFor(channelKey: string, outroVersion: string | und
   return insightChannels(env).has(channelKey.toLowerCase()) && (outroVersion || "v2") === "v2";
 }
 
-/** INSIGHT_CLIP_LANG=hi speaks the intro in Hindi (default en: the Shorts are English today). */
-export const insightLang = (env: NodeJS.ProcessEnv = process.env): "en" | "hi" => (/^hi/i.test(env.INSIGHT_CLIP_LANG ?? "") ? "hi" : "en");
+/**
+ * The language the clip speaks. INSIGHT_CLIP_LANG (hi | en) overrides everything; otherwise every channel with a Hindi voice
+ * (all but CodeOrCap, whose Shorts are English) speaks Hindi, so the middle clip never switches language halfway through a Short.
+ */
+export const insightLang = (env: NodeJS.ProcessEnv = process.env, channelKey = ""): "en" | "hi" => {
+  const forced = (env.INSIGHT_CLIP_LANG ?? "").trim();
+  if (forced) return /^hi/i.test(forced) ? "hi" : "en";
+  return channelKey && channelKey.toLowerCase() !== "codeorcap" ? "hi" : "en";
+};
 
-export const insightIntro = (channelKey: string, env: NodeJS.ProcessEnv = process.env): string => insightFor(channelKey).intro[insightLang(env)];
+export const insightIntro = (channelKey: string, env: NodeJS.ProcessEnv = process.env): string => insightFor(channelKey).intro[insightLang(env, channelKey)];
+
+/** The metadata instruction for `howItWorks`: the channel's rule, plus the language the clip is spoken in. */
+export const insightRuleFor = (channelKey: string, env: NodeJS.ProcessEnv = process.env): string =>
+  insightFor(channelKey).promptRule +
+  (insightLang(env, channelKey) === "hi"
+    ? " Write it in Hinglish (Hindi words in the English alphabet), the same language as the voiceover: it is turned into Devanagari for the Hindi voice."
+    : "");
