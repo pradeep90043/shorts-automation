@@ -173,10 +173,14 @@ export class DirectUploader {
     // CodeOrCap: the English voice reads ~2.4 words/s (measured), and the narration must run through the WHOLE video. The
     // old 1.7 words/s "safe" rate with an "or fewer" cap made the script read ~70% of the video, then silence. The voiceover is
     // also fitted to the exact video length after synthesis (see generateFittedVoiceover), so this only has to be close.
-    const fillWholeVideo = this.profile.key.toLowerCase() === "codeorcap";
-    // The cloned English voice (src/audio/clonedVoice.ts) reads ~3.2 words/s at natural speed (measured), the Edge voice ~2.4.
-    const cloned = fillWholeVideo && clonedVoiceEnabled(this.profile.key);
-    const wordsPerSecond = fillWholeVideo ? (cloned ? 3.0 : 2.3) : 1.7; // other channels keep the cautious rate
+    const english = this.profile.key.toLowerCase() === "codeorcap";
+    // Any channel with the cloned voice also fills the whole video (its audio is time-fitted afterwards, see generateFittedVoiceover):
+    // with the cautious rate below, Prompt Gag's 54 s reel got 30 s of narration and then silence.
+    const cloned = clonedVoiceEnabled(this.profile.key);
+    const fillWholeVideo = english || cloned;
+    // The cloned English voice (src/audio/clonedVoice.ts) reads ~3.2 words/s at natural speed (measured), the Edge voice ~2.4;
+    // the cloned Hinglish/Hindi voice ~2.7 words/s (311 characters in 20.1 s, measured on Prompt Gag).
+    const wordsPerSecond = cloned ? (english ? 3.0 : 2.6) : english ? 2.3 : 1.7; // other Edge channels keep the cautious rate
     const targetWords = Math.max(10, Math.min(fillWholeVideo ? (cloned ? 300 : 220) : 150, Math.round((duration - (fillWholeVideo ? 0.6 : 1.5)) * wordsPerSecond)));
     const lengthRule = fillWholeVideo
       ? `Write a highly engaging, natural-sounding script of about ${targetWords} words (never fewer than ${Math.round(targetWords * 0.9)}). ` +
@@ -2956,7 +2960,7 @@ ${this.theme.analysisRules}`;
         }
         // CodeOrCap: fit the voice to the reel so the narration runs to the end instead of stopping early.
         ttsPromise =
-          this.profile.key.toLowerCase() === "codeorcap" && reelSeconds && reelSeconds > 0
+          (this.profile.key.toLowerCase() === "codeorcap" || clonedVoiceEnabled(this.profile.key)) && reelSeconds && reelSeconds > 0
             ? this.tts.generateFittedVoiceover(context.metadata!.voiceoverScript!, voiceoverFile, reelSeconds - 0.3, this.profile.key)
             : this.tts.generateVoiceover(context.metadata!.voiceoverScript!, voiceoverFile, this.profile.key);
       }
