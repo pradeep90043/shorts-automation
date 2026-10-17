@@ -93,6 +93,9 @@ jobs:
             if [ -n "${GROQ_API_KEY}" ]; then printf 'GROQ_API_KEY=%s\n' "${GROQ_API_KEY}" >> .env.dev; fi
             if [ -n "${COVER_IMAGE_API_KEY}" ]; then printf 'COVER_IMAGE_API_KEY=%s\n' "${COVER_IMAGE_API_KEY}" >> .env.dev; fi
             if [ -n "${COVER_IMAGE_API_URL}" ]; then printf 'COVER_IMAGE_API_URL=%s\n' "${COVER_IMAGE_API_URL}" >> .env.dev; fi
+            printf 'VOICEBOX_GITHUB_REPO=pradeep90043/shorts-automation-test\n' >> .env.dev
+            printf 'MY_VIDEO_GITHUB_REPO=pradeep90043/my-video-test\n' >> .env.dev
+            printf 'RENDER_GITHUB_REPO=pradeep90043/my-video-test\n' >> .env.dev
           else
             printf '%s\n' "${PRODUCTION_ENV}" > .env
             printf '%s\n' "${PRODUCTION_COOKIES}" > cookies.txt
