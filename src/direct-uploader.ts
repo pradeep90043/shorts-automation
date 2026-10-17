@@ -14,7 +14,7 @@ import { TelegramService, escapeMarkdown } from "./telegram";
 import { PipelineContext, VideoMetadata } from "./types";
 import { pipelineLogger } from "./utils/logger";
 import { howItWorksLines, renderHowItWorksClip } from "./my-video/howItWorksClip";
-import { insightEnabledFor, insightFor, insightIntro } from "./my-video/insightClip";
+import { insightEnabledFor, insightFor, insightIntro, insightRuleFor } from "./my-video/insightClip";
 import { FreeLlmApiClient } from "./ai/freellmapi";
 import { GeminiClient } from "./ai/gemini";
 import { parseAiJson, extractJsonArrayField } from "./utils/json";
@@ -173,10 +173,14 @@ export class DirectUploader {
     // CodeOrCap: the English voice reads ~2.4 words/s (measured), and the narration must run through the WHOLE video. The
     // old 1.7 words/s "safe" rate with an "or fewer" cap made the script read ~70% of the video, then silence. The voiceover is
     // also fitted to the exact video length after synthesis (see generateFittedVoiceover), so this only has to be close.
-    const fillWholeVideo = this.profile.key.toLowerCase() === "codeorcap";
-    // The cloned English voice (src/audio/clonedVoice.ts) reads ~3.2 words/s at natural speed (measured), the Edge voice ~2.4.
-    const cloned = fillWholeVideo && clonedVoiceEnabled(this.profile.key);
-    const wordsPerSecond = fillWholeVideo ? (cloned ? 3.0 : 2.3) : 1.7; // other channels keep the cautious rate
+    const english = this.profile.key.toLowerCase() === "codeorcap";
+    // Any channel with the cloned voice also fills the whole video (its audio is time-fitted afterwards, see generateFittedVoiceover):
+    // with the cautious rate below, Prompt Gag's 54 s reel got 30 s of narration and then silence.
+    const cloned = clonedVoiceEnabled(this.profile.key);
+    const fillWholeVideo = english || cloned;
+    // The cloned English voice (src/audio/clonedVoice.ts) reads ~3.2 words/s at natural speed (measured), the Edge voice ~2.4;
+    // the cloned Hinglish/Hindi voice ~2.7 words/s (311 characters in 20.1 s, measured on Prompt Gag).
+    const wordsPerSecond = cloned ? (english ? 3.0 : 2.6) : english ? 2.3 : 1.7; // other Edge channels keep the cautious rate
     const targetWords = Math.max(10, Math.min(fillWholeVideo ? (cloned ? 300 : 220) : 150, Math.round((duration - (fillWholeVideo ? 0.6 : 1.5)) * wordsPerSecond)));
     const lengthRule = fillWholeVideo
       ? `Write a highly engaging, natural-sounding script of about ${targetWords} words (never fewer than ${Math.round(targetWords * 0.9)}). ` +
@@ -370,7 +374,7 @@ KEYWORDS: ${this.theme.keywordsRule}
 THUMBNAIL: Max 5 words, highly clickable, curiosity driven.
 FILENAME: SEO-friendly filename (e.g., short-video-2026.mp4).
 VOICEOVER: ${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} that describes the content. It should sound very natural, hook the viewer immediately, and explain what is happening or read the meme text in an entertaining way.
-HOW_IT_WORKS: A detailed, clear, and educational explanation (approx 2-3 sentences, 30-50 words) explaining how the code snippet, concept, or trick works step-by-step to add original educational value. NEVER return hashtags or generic labels.
+HOW_IT_WORKS: ${this.profile.key.toLowerCase() === "codeorcap" ? "A detailed, clear, and educational explanation (approx 2-3 sentences, 30-50 words) explaining how the code snippet, concept, or trick works step-by-step to add original educational value." : insightRuleFor(this.profile.key)} NEVER return hashtags or generic labels.
 ${this.theme.niche === "infoonspot" || this.profile.key.toLowerCase() === "infoonspot" ? `
 INFOONSPOT BROADCAST TEMPLATE FIELDS:
 - coverHeadline: A punchy 1-2 line UPPERCASE hook headline (max 6-8 words total, e.g. "NEW AI CREATES FULL 3D WORLDS IN SECONDS") to fill the top [BREAKING] headline banner.
@@ -1193,7 +1197,7 @@ Rules:
 - tags: 10-12 specific tags covering the topic, theme, and audience (no spaces in tags).
 - mood: Determine the emotional tone or theme of the content. Choose exactly one of: "funny", "sad", or "other" (for general, educational, or motivational content).
 - voiceoverScript: ${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} that describes the content. It should sound very natural, hook the viewer immediately, and explain what is happening or read the meme text in an entertaining way.
-- howItWorks: ${insightFor(this.profile.key).promptRule}
+- howItWorks: ${insightRuleFor(this.profile.key)}
 - diagramTitle: A brief 2-4 word title for the diagram (e.g. "Execution Flow", "State Lifecycle", "Timeline", "Fact Check", "How it works").
 - diagramWorkflow: A valid, simple Mermaid.js flowchart (graph TD or graph LR) explaining the logic, execution, process, timeline, or steps of the topic (3-5 nodes max). Use double quotes around node labels (e.g. A[\"Start\"] --> B[\"Check condition\"]). Node IDs must be simple alphanumeric characters. Keep it clean and valid.
 - ${this.theme.analysisRules}`;
@@ -1321,7 +1325,7 @@ KEYWORDS: ${this.theme.keywordsRule}
 THUMBNAIL: Max 5 words, highly clickable, curiosity driven.
 FILENAME: SEO-friendly filename (e.g., viral-short-video-2026.mp4).
 - MOOD: Determine emotional tone: "funny", "serious", "emotional", "motivational", "technical", "horror", "romantic", "sad", or "other".
-- howItWorks: ${insightFor(this.profile.key).promptRule}
+- howItWorks: ${insightRuleFor(this.profile.key)}
 - diagramTitle: A brief 2-4 word title for the diagram (e.g. "Execution Flow", "State Lifecycle", "Timeline", "Fact Check", "How it works").
 - diagramWorkflow: A valid, simple Mermaid.js flowchart (graph TD or graph LR) explaining the logic, execution, process, timeline, or steps of the topic (3-5 nodes max). Use double quotes around node labels (e.g. A[\"Start\"] --> B[\"Check condition\"]). Node IDs must be simple alphanumeric characters. Keep it clean and valid.
 ${this.theme.analysisRules}`;
@@ -2960,7 +2964,7 @@ ${this.theme.analysisRules}`;
         // run that starts now, while the reel is rendered. If it fails or is late, the Edge voice is used as before.
         if (clonedVoiceEnabled(this.profile.key) && context.metadata?.voiceoverScript) {
           const claim = context.metadata.voiceoverScript;
-          const hiw = this.profile.key.toLowerCase() === "codeorcap" && (this.profile.watch?.outroVersion || "v2") === "v2" ? howItWorksLines(this.deriveTranscriptionWorkflow(context).explanation, insightIntro(this.profile.key)) : [];
+          const hiw = insightEnabledFor(this.profile.key, this.profile.watch?.outroVersion) ? howItWorksLines(this.deriveTranscriptionWorkflow(context).explanation, insightIntro(this.profile.key)) : [];
           context.clonedHowItWorksLines = hiw;
           context.clonedVoice = startClonedLines(`short-${context.id.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 16) || Date.now()}`, [
             { name: "claim", text: spokenText(claim) },
@@ -2970,7 +2974,7 @@ ${this.theme.analysisRules}`;
         }
         // CodeOrCap: fit the voice to the reel so the narration runs to the end instead of stopping early.
         ttsPromise =
-          this.profile.key.toLowerCase() === "codeorcap" && reelSeconds && reelSeconds > 0
+          (this.profile.key.toLowerCase() === "codeorcap" || clonedVoiceEnabled(this.profile.key)) && reelSeconds && reelSeconds > 0
             ? this.tts.generateFittedVoiceover(context.metadata!.voiceoverScript!, voiceoverFile, reelSeconds - 0.3, this.profile.key)
             : this.tts.generateVoiceover(context.metadata!.voiceoverScript!, voiceoverFile, this.profile.key);
       }
@@ -5250,7 +5254,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
             : await this.tts.generateVoiceover(
                 speechScript,
                 transitionTtsPath,
-                "codeorcap",
+                profileKey,
               );
         } catch (err) {
           pipelineLogger.warn(
