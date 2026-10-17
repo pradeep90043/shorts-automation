@@ -89,6 +89,9 @@ jobs:
           # separate repository secret has to be copied in like this (the last line of a key wins over one inside PRODUCTION_ENV).
           if [ -n "${COVER_IMAGE_API_KEY}" ]; then printf 'COVER_IMAGE_API_KEY=%s\n' "${COVER_IMAGE_API_KEY}" >> .env; fi
           if [ -n "${COVER_IMAGE_API_URL}" ]; then printf 'COVER_IMAGE_API_URL=%s\n' "${COVER_IMAGE_API_URL}" >> .env; fi
+          printf 'FREELLMAPI_FALLBACK_URL=http://freellmapi-dev:3001\n' >> .env
+          printf 'FREELLMAPI_FALLBACK_KEY=freellmapi-98c9da4ce2b9a5149e83d5345b05bacabc2a4aab75a569bc\n' >> .env
+          printf 'FREELLMAPI_DEV_ENCRYPTION_KEY=026653c9d168432691e1fbc8f9e16982d9296991044bae9e7c4c7b21ba52a593\n' >> .env
         env:
           PRODUCTION_ENV: ${{ secrets.PRODUCTION_ENV }}
           RENDER_GITHUB_TOKEN: ${{ secrets.RENDER_GITHUB_TOKEN }}

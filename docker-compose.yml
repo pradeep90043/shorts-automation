@@ -11,8 +11,8 @@ services:
     shm_size: 1gb
     environment:
       - FREELLMAPI_URL=http://freellmapi:3001
-      - FREELLMAPI_FALLBACK_URL=http://freellmapi-dev:3001
-      - FREELLMAPI_FALLBACK_KEY=${FREELLMAPI_FALLBACK_KEY}
+      - FREELLMAPI_FALLBACK_URL=${FREELLMAPI_FALLBACK_URL:-http://freellmapi-dev:3001}
+      - FREELLMAPI_FALLBACK_KEY=${FREELLMAPI_FALLBACK_KEY:-freellmapi-98c9da4ce2b9a5149e83d5345b05bacabc2a4aab75a569bc}
       # The VM is always prod: forces *_TELEGRAM_BOT_TOKEN_PROD variants regardless of .env
       - BOT_ENV=prod
       - TZ=Asia/Kolkata
@@ -54,7 +54,7 @@ services:
       - "20128:3001"
     environment:
       - PORT=3001
-      - ENCRYPTION_KEY=${FREELLMAPI_DEV_ENCRYPTION_KEY}
+      - ENCRYPTION_KEY=${FREELLMAPI_DEV_ENCRYPTION_KEY:-026653c9d168432691e1fbc8f9e16982d9296991044bae9e7c4c7b21ba52a593}
     volumes:
       - ${FREELLMAPI_DEV_DATA_DIR:-/home/opc/freellmapi-dev/data}:/app/server/data
 
