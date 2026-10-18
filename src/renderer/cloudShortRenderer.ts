@@ -27,25 +27,34 @@ function unzip(zipFile: string, outDir: string): Promise<void> {
   return run("unzip", ["-o", zipFile, "-d", outDir]).catch(() => run("python3", ["-m", "zipfile", "-e", zipFile, outDir]));
 }
 
-/** Downloads the artifact zip with a hard time limit per attempt (a stalled transfer used to hang the job forever). */
+/**
+ * Downloads the artifact zip. A transfer that goes quiet is cut after 25 s (and a whole attempt after 4 min) and retried: on
+ * the small VM a stalled download used to hang the job for good.
+ */
 async function downloadArtifact(url: string, token: string, zipFile: string): Promise<boolean> {
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  for (let attempt = 1; attempt <= 4; attempt++) {
     const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), 180_000);
+    let idle: NodeJS.Timeout | undefined;
+    const kick = (ms: number) => { if (idle) clearTimeout(idle); idle = setTimeout(() => ctl.abort(), ms); };
+    const whole = setTimeout(() => ctl.abort(), 240_000);
     try {
-      const res = await fetchRetry(url, { headers: authHeaders(token), signal: ctl.signal });
+      kick(45_000); // time to the first byte (GitHub redirects to storage first)
+      const res = await fetchRetry(url, { headers: authHeaders(token), signal: ctl.signal }, 2);
       if (!res.ok || !res.body) {
-        logger.warn(`[CloudShortRenderer] Failed to download artifact: ${res.status} (attempt ${attempt}/3)`);
+        logger.warn(`[CloudShortRenderer] Failed to download artifact: ${res.status} (attempt ${attempt}/4)`);
       } else {
-        await pipeline(Readable.fromWeb(res.body as any), fs.createWriteStream(zipFile), { signal: ctl.signal });
+        const body = Readable.fromWeb(res.body as any);
+        body.on("data", () => kick(25_000)); // every chunk resets the stall timer
+        await pipeline(body, fs.createWriteStream(zipFile), { signal: ctl.signal });
         return true;
       }
     } catch (err) {
-      logger.warn(`[CloudShortRenderer] Artifact download attempt ${attempt}/3 failed: ${err instanceof Error ? err.message : err}`);
+      logger.warn(`[CloudShortRenderer] Artifact download attempt ${attempt}/4 failed: ${err instanceof Error ? err.message : err}`);
     } finally {
-      clearTimeout(timer);
+      if (idle) clearTimeout(idle);
+      clearTimeout(whole);
     }
-    await sleep(3000);
+    await sleep(2000);
   }
   return false;
 }

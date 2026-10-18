@@ -46,17 +46,28 @@ async function toDevanagari(lines: VoiceboxLine[]): Promise<VoiceboxLine[] | nul
     `Rewrite each Hinglish line below (Hindi written in the English alphabet) in Devanagari exactly as it is spoken, for a text-to-speech voice. ` +
     `Keep the meaning and every word; write English words in Devanagari too (e.g. "video" -> "वीडियो"); keep numbers and punctuation. ` +
     `Return ONLY a JSON array of ${lines.length} strings, in the same order, with nothing else.\n${JSON.stringify(lines.map((l) => l.text))}`;
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    const raw = await makeAsk({ timeoutMs: 60_000, hedgeMs: 15_000 })(prompt);
-    const m = raw.match(/\[[\s\S]*\]/);
+  const hasDevanagari = (t: string) => /[\u0900-\u097F]/.test(t);
+  // A line that is already Devanagari, or has no letters at all (a bare figure), is fine as it comes back.
+  const fine = (t: string, original: string) => hasDevanagari(t) || !/[A-Za-z]/.test(original);
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    let why = "";
     try {
+      const raw = await makeAsk({ timeoutMs: 75_000, hedgeMs: 15_000 })(prompt);
+      const m = raw.match(/\[[\s\S]*\]/);
       const arr = m ? JSON.parse(m[0]) : null;
-      if (Array.isArray(arr) && arr.length === lines.length && arr.every((t) => typeof t === "string" && /[\u0900-\u097F]/.test(t))) {
-        return lines.map((l, i) => ({ name: l.name, text: (arr[i] as string).trim() }));
+      if (!Array.isArray(arr)) why = `no JSON array in the answer ("${raw.slice(0, 80).replace(/\s+/g, " ")}")`;
+      else if (arr.length !== lines.length) why = `${arr.length} lines back, ${lines.length} sent`;
+      else if (!arr.every((t) => typeof t === "string")) why = "an entry is not text";
+      else {
+        const bad = arr.filter((t, i) => !fine(t as string, lines[i].text)).length;
+        // one stubborn line must not cost the whole voice: tolerate up to 1 in 5 lines still in the Latin alphabet
+        if (bad <= Math.floor(lines.length / 5)) return lines.map((l, i) => ({ name: l.name, text: (arr[i] as string).trim() }));
+        why = `${bad} of ${lines.length} lines came back without Devanagari`;
       }
-    } catch {
-      /* try again */
+    } catch (err) {
+      why = err instanceof Error ? err.message : String(err);
     }
+    pipelineLogger.warn(`Hindi text for the voice, attempt ${attempt}/3: ${why}`, "ClonedVoice");
   }
   return null;
 }
