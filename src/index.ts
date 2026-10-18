@@ -1,4 +1,5 @@
 import sharp from "sharp";
+import { startHostMonitor } from "./utils/hostStats";
 // Disable libvips cache to prevent file locking on Windows
 sharp.cache(false);
 
@@ -133,6 +134,8 @@ async function bootstrap() {
     );
     process.exit(1);
   }
+
+  startHostMonitor(); // log CPU throttling / memory / pressure every few minutes: the answer to "why is it slow"
 
   const activeServices: NotifyService[] = [];
 
