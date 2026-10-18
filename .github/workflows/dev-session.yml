@@ -131,6 +131,17 @@ jobs:
 
           # the unified key the bot calls FreeLLMAPI with (a fresh database makes a new one)
           KEY=$(sudo sqlite3 session/freellm-data/freeapi.db "select value from settings where key='unified_api_key';" 2>/dev/null || true)
+          # Prefer the shared dev LLM pool (the old dev FreeLLMAPI holds every provider key); its key is in the dev settings.
+          BACKEND=http://freellmapi-dev:3001
+          REMOTE_KEY=$(grep -E '^FREELLMAPI_KEY=' .env.dev | tail -1 | cut -d= -f2- | tr -d '"' || true)
+          if [ -n "$REMOTE_KEY" ]; then
+            echo "::add-mask::$REMOTE_KEY"
+            code=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $REMOTE_KEY" https://shorts-dev.duckdns.org/v1/models || true)
+            echo "shared dev LLM pool answered HTTP $code"
+            if [ "$code" = "200" ]; then BACKEND=https://shorts-dev.duckdns.org; KEY="$REMOTE_KEY"; fi
+          fi
+          echo "LLM backend: $BACKEND"
+          echo "LLM_BACKEND_URL=$BACKEND" >> "$GITHUB_ENV"
           [ -n "$KEY" ] && echo "::add-mask::$KEY"
           echo "FREELLMAPI_KEY=$KEY" >> "$GITHUB_ENV"
           echo "PUBLIC_URL=$APP_URL" >> "$GITHUB_ENV"

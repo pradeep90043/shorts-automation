@@ -32,7 +32,7 @@ services:
       - BOT_ENV=dev
       - TZ=Asia/Kolkata
       - DATABASE_URL=postgresql://botuser:botpass@postgres:5432/shortsbot
-      - FREELLMAPI_URL=http://freellmapi-dev:3001
+      - FREELLMAPI_URL=${LLM_BACKEND_URL:-http://freellmapi-dev:3001}
       - FREELLMAPI_KEY=${FREELLMAPI_KEY}
       - PUBLIC_URL=${PUBLIC_URL}
       - BASE_URL=${PUBLIC_URL}   # a BASE_URL in the dev settings (the old VM address) would otherwise win
