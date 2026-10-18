@@ -201,7 +201,7 @@ export class ProgressTracker {
     }
 
     // the stage that is running remembers the latest thing said about it
-    if (r.currentIdx >= 0 && !/Host|Timing|JobDatabase|IGMedia/.test(label || "")) {
+    if (r.currentIdx >= 0 && !/^(Host|Timing|JobDatabase|IGMedia|AutoLong|Supabase|DmKnowledgeBase|YouTubeService)$/.test(label || "") && !/\[AutoLong\]/.test(text)) {
       (r.stages[STAGES[r.currentIdx].id] ||= {}).last = clip(text);
     }
 

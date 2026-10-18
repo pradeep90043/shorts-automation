@@ -70,6 +70,10 @@ const slow = t2.snapshot(at("15:40:00"))[0];
 assert.strictEqual(slow.current?.slow, true);
 assert.ok((slow.stages.find((s) => s.id === "voice")!.overrunSec as number) > 600);
 
+// background noise (the long-video worker's heartbeat) is not "what this job is doing"
+t2.observe("[AutoLong][tick] blocked; 0 queued, 0 done, 0 failed", "AutoLong", "info", at("15:12:30"));
+assert.ok(!/AutoLong/.test(t2.snapshot(at("15:12:31"))[0].current?.detail ?? ""));
+
 // a restart cancels the running job and says why
 t2.observe("Cancelled old job gen-1792316043523-250 on startup.", "DirectUploader", "info", at("15:41:00"));
 const cancelled = t2.snapshot(at("15:41:30"))[0];
