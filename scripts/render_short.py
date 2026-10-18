@@ -64,6 +64,22 @@ def find_bg_music(repo_root: str, mood: str) -> str:
     return ""
 
 
+def get_media_duration(file_path: str) -> float:
+    """Uses ffprobe to inspect exact duration in seconds."""
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        file_path
+    ]
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        return float(res.stdout.strip())
+    except Exception as e:
+        print(f"⚠️ Warning: could not probe duration for {file_path}: {e}")
+        return 0.0
+
+
 def build_and_run_ffmpeg(work_dir: str, repo_root: str, out_path: str):
     spec_path = os.path.join(work_dir, "short_spec.json")
     if not os.path.exists(spec_path):
@@ -92,6 +108,14 @@ def build_and_run_ffmpeg(work_dir: str, repo_root: str, out_path: str):
 
     if not raw_video or not os.path.exists(raw_video):
         raise FileNotFoundError(f"Input video not found in bundle: {work_dir}")
+
+    # Determine base video duration so audio and video stop cleanly together
+    video_duration = float(spec.get("durationSeconds", 0))
+    if video_duration <= 0:
+        video_duration = get_media_duration(raw_video)
+    if video_duration <= 0:
+        video_duration = 59.0
+    print(f"⏱️ Base video duration determined as: {video_duration:.3f}s")
 
     # Build FFmpeg command inputs
     inputs = ["-i", raw_video]
@@ -199,21 +223,32 @@ def build_and_run_ffmpeg(work_dir: str, repo_root: str, out_path: str):
     has_audio_out = False
     
     if voice_idx != -1 and music_idx != -1:
-        # Voiceover + background music (duck music under voice)
-        # Voice: volume 1.35, Music: volume 0.18, ducked when voice speaks
-        a_filters.append(f"[{music_idx}:a]volume=0.20[bgm];[{voice_idx}:a]volume=1.35[vox];[bgm][vox]amix=inputs=2:duration=first:dropout_transition=2[afinal]")
+        # Voiceover + background music:
+        # apad ensures voiceover covers full duration; atrim prevents infinite looped music
+        # Voice: volume 1.35, Music: volume 0.18
+        a_filters.append(
+            f"[{voice_idx}:a]apad=whole_dur={video_duration:.3f},volume=1.35,atrim=0:{video_duration:.3f}[vox];"
+            f"[{music_idx}:a]volume=0.18,atrim=0:{video_duration:.3f}[bgm];"
+            f"[vox][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[afinal]"
+        )
         has_audio_out = True
     elif voice_idx != -1:
         # Voiceover only
-        a_filters.append(f"[{voice_idx}:a]volume=1.35[afinal]")
+        a_filters.append(
+            f"[{voice_idx}:a]apad=whole_dur={video_duration:.3f},volume=1.35,atrim=0:{video_duration:.3f}[afinal]"
+        )
         has_audio_out = True
     elif music_idx != -1:
         # Music only
-        a_filters.append(f"[{music_idx}:a]volume=0.6[afinal]")
+        a_filters.append(
+            f"[{music_idx}:a]volume=0.45,atrim=0:{video_duration:.3f}[afinal]"
+        )
         has_audio_out = True
     elif original_audio:
         # Original video audio
-        a_filters.append(f"[0:a]volume=1.0[afinal]")
+        a_filters.append(
+            f"[0:a]volume=1.0,atrim=0:{video_duration:.3f}[afinal]"
+        )
         has_audio_out = True
 
     filter_complex_parts = v_filters
@@ -237,6 +272,8 @@ def build_and_run_ffmpeg(work_dir: str, repo_root: str, out_path: str):
         "-crf", "22",
         "-pix_fmt", "yuv420p",
         "-r", "30",
+        "-shortest",
+        "-t", f"{video_duration:.3f}",
         "-movflags", "+faststart",
         out_path
     ])
@@ -244,10 +281,10 @@ def build_and_run_ffmpeg(work_dir: str, repo_root: str, out_path: str):
     print("🚀 Executing single-pass cloud FFmpeg command:")
     print(" ".join(cmd))
     
-    res = subprocess.run(cmd, capture_output=True, text=True)
+    # Run FFmpeg without capturing output so progress is streamed live to GitHub Actions runner logs
+    res = subprocess.run(cmd)
     if res.returncode != 0:
-        print(f"❌ FFmpeg error (code {res.returncode}):")
-        print(res.stderr[-2000:])
+        print(f"❌ FFmpeg error (code {res.returncode})")
         raise RuntimeError(f"FFmpeg render failed with exit code {res.returncode}")
 
     print(f"✅ Cloud video render completed successfully: {out_path} ({os.path.getsize(out_path)} bytes)")
