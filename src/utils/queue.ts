@@ -14,10 +14,11 @@ export class JobQueue {
   private maxConcurrency: number;
 
   // All channel queues share the same small VM: cap total simultaneous pipelines
-  // (Whisper + OCR + ffmpeg each) so they stop starving the API and long renders.
+  // (Whisper + OCR + ffmpeg each) so they stop starving the API and long renders. ONE at a time by default (MAX_PARALLEL_PIPELINES
+  // raises it): the channels share the same free AI keys, and parallel Shorts rate-limit them.
   private static all = new Set<JobQueue>();
   private static globalActive = 0;
-  private static readonly GLOBAL_LIMIT = Math.max(1, Number(process.env.MAX_PARALLEL_PIPELINES) || 2);
+  private static readonly GLOBAL_LIMIT = Math.max(1, Number(process.env.MAX_PARALLEL_PIPELINES) || 1);
 
   constructor(maxConcurrency = 1) {
     this.maxConcurrency = maxConcurrency;

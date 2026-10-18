@@ -36,6 +36,9 @@ const at = (hms: string) => {
 };
 
 const t = new ProgressTracker(new StageStats()); // no file: defaults
+RUN.splice(RUN.findIndex((r) => /Instagram frame ready/.test(r[3])) + 1, 0,
+  ["15:04:07", "info", "JobQueue", "Job gen-1792316043523-250 successfully added to queue. Queue length: 1"],
+  ["15:04:07", "info", "JobQueue", "Starting execution of job gen-1792316043523-250. Active jobs: 1"]);
 for (const [time, level, label, msg] of RUN) t.observe(msg, label, level, at(time));
 const done = t.snapshot(at("15:30:00"))[0];
 
@@ -44,7 +47,7 @@ assert.strictEqual(done.channel, "PromptGag");
 assert.strictEqual(done.state, "review", "a manual inject ends waiting for the owner");
 assert.strictEqual(done.elapsedSec, 1330, "15:04:03 -> 15:26:13");
 const by = Object.fromEntries(done.stages.map((s) => [s.id, s]));
-for (const id of ["download", "prepare", "vision", "voice", "render", "v2", "assemble"]) assert.strictEqual(by[id].state, "done", id + " is done");
+for (const id of ["download", "queue", "prepare", "vision", "voice", "render", "v2", "assemble"]) assert.strictEqual(by[id].state, "done", id + " is done");
 assert.strictEqual(by.publish.state, "pending");
 assert.strictEqual(by.publish.typicalSec, 0, "a manual inject is published by the owner: no estimate");
 assert.ok(/approve/.test(by.publish.label));
@@ -96,6 +99,7 @@ assert.strictEqual(new StageStats().typical("voice", 860), 860);
   p.observe("Running unified AI Vision for metadata", "DirectUploader", "info", at("10:00:21"), A);
   p.observe("Kicking off TTS generation asynchronously...", "DirectUploader", "info", at("10:01:00"), A);
   p.observe("Instagram frame ready (video)", "Pipeline", "info", at("10:01:10"), B);
+  p.observe(`Starting execution of job ${B}. Active jobs: 1`, "JobQueue", "info", at("10:01:11"), B);
   const jobs = Object.fromEntries(p.snapshot(at("10:01:30")).map((j) => [j.id, j]));
   assert.strictEqual(jobs[A].current?.id, "voice", "job A is in the voice stage");
   assert.strictEqual(jobs[B].current?.id, "prepare", "job B is still preparing, although it started last");
@@ -112,5 +116,20 @@ assert.strictEqual(new StageStats().typical("voice", 860), 860);
   p.observe("Instagram frame ready (video)", "Pipeline", "info", at("10:00:10"), A);
   p.observe("Cloned voice (storiyum): 4 line(s) -> GitHub Actions (give up after 20 min)", "ClonedVoice", "info", at("10:01:00"), A);
   assert.strictEqual(p.snapshot(at("10:02:00"))[0].current?.id, "voice");
+}
+
+// one Short at a time: a job that is queued behind another shows "Waiting for its turn" and is not counted as preparing
+{
+  const p = new ProgressTracker(new StageStats());
+  const A = "gen-1000000000010-1";
+  p.observe(`[Storiyum] Interactive manual ingest triggered for reel @manual_inject/x (jobId: ${A})`, "ChannelWatcher", "info", at("11:00:00"));
+  p.observe("Instagram frame ready (video) — starting pipeline", "Pipeline", "info", at("11:00:10"), A);
+  p.observe(`Job ${A} successfully added to queue. Queue length: 2`, "JobQueue", "info", at("11:00:10"), A);
+  const waiting = p.snapshot(at("11:05:10"))[0];
+  assert.strictEqual(waiting.current?.id, "queue");
+  assert.strictEqual(waiting.current?.sinceSec, 300, "five minutes in the queue");
+  assert.strictEqual(waiting.stages.find((s) => s.id === "prepare")!.state, "pending");
+  p.observe(`Starting execution of job ${A}. Active jobs: 1`, "JobQueue", "info", at("11:05:20"), A);
+  assert.strictEqual(p.snapshot(at("11:05:21"))[0].current?.id, "prepare");
 }
 console.log("✓ job progress");
