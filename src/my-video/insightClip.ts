@@ -13,8 +13,9 @@ export interface InsightKind {
   key: InsightKey;
   /** the spoken first line of the clip, by clip language */
   intro: { en: string; hi: string };
-  /** the on-screen title of the first scene */
+  /** the on-screen title of the first scene (English, and Hindi for the Hindi channels) */
   title: string;
+  titleHi: string;
   /** instruction for the metadata field `howItWorks`, which is the text the clip narrates */
   promptRule: string;
 }
@@ -29,12 +30,14 @@ const KINDS: Record<InsightKey, InsightKind> = {
     key: "how",
     intro: { en: "Let us check how is it working.", hi: "चलिए देखते हैं ये कैसे काम करता है।" },
     title: "HOW IT WORKS",
+    titleHi: "ये कैसे काम करता है",
     promptRule: HOW_RULE,
   },
   moral: {
     key: "moral",
     intro: { en: "Here is the lesson of this story.", hi: "इस कहानी की सीख।" },
     title: "THE LESSON",
+    titleHi: "इस कहानी की सीख",
     promptRule:
       "The lesson of this clip, in 2-3 short sentences (30-50 words): the moral of the story, then one memorable closing punchline. " +
       "State it plainly as the creator's own reflection; do not retell the whole clip and do not invent facts about people in it.",
@@ -43,6 +46,7 @@ const KINDS: Record<InsightKey, InsightKind> = {
     key: "market",
     intro: { en: "Here is what is happening in the market.", hi: "अभी मार्केट में क्या चल रहा है।" },
     title: "MARKET VIEW",
+    titleHi: "मार्केट व्यू",
     promptRule:
       "The market context of this clip in 2-3 short sentences (30-50 words): what is happening right now and why it matters, then ONE balanced opinion that also names the risk. " +
       "Educational only: no buy/sell advice, no promises of returns, and no price or percentage that the clip itself does not show.",
@@ -51,6 +55,7 @@ const KINDS: Record<InsightKey, InsightKind> = {
     key: "reaction",
     intro: { en: "Here is my take.", hi: "मेरी राय।" },
     title: "MY TAKE",
+    titleHi: "मेरी राय",
     promptRule:
       "A short opinion or reaction to this clip in 2-3 sentences (30-50 words): what stands out, whether it holds up, and what a viewer should keep in mind. " +
       "Keep it credible and non-clickbait; no guarantees and no claims the clip does not support.",
@@ -132,5 +137,11 @@ export function looksEnglish(text: string): boolean {
   const en = words.filter((w) => ENGLISH_WORDS.has(w)).length / words.length;
   const hi = words.filter((w) => HINGLISH_WORDS.has(w)).length / words.length;
   return en >= 0.2 && hi < 0.06;
+}
+
+/** The on-screen title of the clip's first scene, in the clip's language. */
+export function insightTitle(channelKey: string, env: NodeJS.ProcessEnv = process.env): string {
+  const kind = insightFor(channelKey);
+  return insightLang(env, channelKey) === "hi" ? kind.titleHi : kind.title;
 }
 

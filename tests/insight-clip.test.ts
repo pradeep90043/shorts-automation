@@ -1,4 +1,4 @@
-import { dropUnsupportedFigures, looksEnglish } from "../src/my-video/insightClip";
+import { dropUnsupportedFigures, insightTitle, looksEnglish } from "../src/my-video/insightClip";
 import assert from "assert";
 import { insightChannels, insightEnabledFor, insightFor, insightIntro, insightLang, insightRuleFor } from "../src/my-video/insightClip";
 import { howItWorksLines } from "../src/my-video/howItWorksClip";
@@ -61,4 +61,6 @@ assert.strictEqual(dropUnsupportedFigures("Rates may rise 7.25% soon.", "no numb
 assert.strictEqual(looksEnglish("The RBI is expected to raise the interest rate and this will affect home loans in the country"), true);
 assert.strictEqual(looksEnglish("RBI ka rate badh sakta hai aur isse aapki EMI bhi badh jayegi, ye hai sabse badi baat"), false);
 assert.strictEqual(looksEnglish("आरबीआई ब्याज दर बढ़ा सकता है और ईएमआई बढ़ेगी"), false);
+assert.strictEqual(insightTitle("prompt_gag", {} as any), "मार्केट व्यू");
+assert.strictEqual(insightTitle("codeorcap", {} as any), "HOW IT WORKS");
 console.log("✓ insight clip");

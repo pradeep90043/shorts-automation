@@ -15,7 +15,7 @@ import { NotifyService, escapeMarkdown } from "./notify";
 import { PipelineContext, VideoMetadata } from "./types";
 import { pipelineLogger } from "./utils/logger";
 import { howItWorksLines, renderHowItWorksClip } from "./my-video/howItWorksClip";
-import { dropUnsupportedFigures, insightEnabledFor, insightFor, insightIntro, insightLang, insightRuleFor, looksEnglish } from "./my-video/insightClip";
+import { dropUnsupportedFigures, insightEnabledFor, insightIntro, insightLang, insightRuleFor, insightTitle, looksEnglish } from "./my-video/insightClip";
 import { makeAsk } from "./longvideo-auto/llm";
 import { toDevanagari } from "./audio/clonedVoice";
 import { FreeLlmApiClient } from "./ai/freellmapi";
@@ -5265,7 +5265,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
           const myVideoClip = path.join(tempDir, "hiw_myvideo.mp4");
           const rendered = await renderHowItWorksClip(
             // the short's own diagram (not the generic placeholder deriveTranscriptionWorkflow invents when it is missing)
-            { explanation: rawExplanation, intro: insightIntro(profileKey), title2: insightFor(profileKey).title, language: insightLang(process.env, profileKey), title: context.metadata?.title, mermaid: context.metadata?.diagramWorkflow, diagramTitle: workflowData.diagramTitle, narrationFiles: clonedHiwFiles },
+            { explanation: rawExplanation, intro: insightIntro(profileKey), title2: insightTitle(profileKey), language: insightLang(process.env, profileKey), title: context.metadata?.title, mermaid: context.metadata?.diagramWorkflow, diagramTitle: workflowData.diagramTitle, narrationFiles: clonedHiwFiles },
             myVideoClip,
           );
           if (rendered) {

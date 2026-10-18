@@ -176,7 +176,7 @@ export class VideoRenderer implements IVideoRenderer {
     
     // Headline sizing: fit the widest line into ~940px.
     const maxChars = Math.max(...lines.map((l) => l.length), 1);
-    const fontSize = Math.max(70, Math.min(150, Math.round(940 / (maxChars * 0.62))));
+    const fontSize = Math.max(70, Math.min(150, Math.round(940 / (maxChars * 0.8))));
     const lineH = Math.round(fontSize * 1.06);
     // Bottom Hook layout: position the hook card near the bottom of the video frame
     const bottomPadding = 160;
