@@ -180,7 +180,9 @@ export class VideoRenderer implements IVideoRenderer {
     const lineH = Math.round(fontSize * 1.06);
     // Bottom Hook layout: position the hook card near the bottom of the video frame
     const bottomPadding = 160;
-    const blockHeight = lines.length * lineH + 90; // headline height + pill height
+    const pillH = 64;
+    const headlineOffset = pillH + 22 + Math.round(fontSize * 0.82); // first baseline: below the pill, glyphs never touch it
+    const blockHeight = headlineOffset + (lines.length - 1) * lineH + Math.round(fontSize * 0.25);
     const blockTop = H - bottomPadding - blockHeight;
     const textLeft = 70;
 
@@ -192,7 +194,7 @@ export class VideoRenderer implements IVideoRenderer {
     const brandW = Math.round(brandLabel.length * 21 + 36);
     const pillY = blockTop;
 
-    const headlineStartY = pillY + 95;
+    const headlineStartY = pillY + headlineOffset;
     const headlineTspans = lines
       .map((l, i) => {
         const fill = i === 0 ? "#FFB800" : "#FFFFFF";

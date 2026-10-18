@@ -17,6 +17,7 @@ import { pipelineLogger } from "./utils/logger";
 import { howItWorksLines, renderHowItWorksClip } from "./my-video/howItWorksClip";
 import { dropUnsupportedFigures, insightEnabledFor, insightFor, insightIntro, insightLang, insightRuleFor, looksEnglish } from "./my-video/insightClip";
 import { makeAsk } from "./longvideo-auto/llm";
+import { toDevanagari } from "./audio/clonedVoice";
 import { FreeLlmApiClient } from "./ai/freellmapi";
 import { GeminiClient } from "./ai/gemini";
 import { parseAiJson, extractJsonArrayField } from "./utils/json";
@@ -3767,6 +3768,11 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       let cloudDone = false;
       if (process.env.CLOUD_RENDER_SHORTS !== "false") {
         try {
+          // the runner burns captions only when captions.ass is in the bundle
+          if (settings.captions) {
+            const captionsPath = await this.writeCaptionsAss(context, context.originalVideoPath || path.join(tempDir, "video_raw.mp4"), useVoice);
+            if (captionsPath) pipelineLogger.info("Captions prepared for the cloud render", "DirectUploader");
+          }
           const cloudOut = await renderShortCloud(context, (detail) => {
             this.db.updateJob(id, { currentStep: detail });
           });
@@ -4125,12 +4131,11 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
   }
 
   /**
-   * Burn timed subtitles onto the video in a standalone pass. Caption text comes
-   * from the voiceover script (estimated timings) when a voiceover is in use,
-   * otherwise from the Whisper transcript (real word timings). Returns the
-   * captioned file path, or null when no caption source is available.
+   * The caption file (captions.ass) for a Short: text from the generated voiceover (word timings from Whisper, told the voice is Hindi
+   * so the words come back in Devanagari) or, without a voiceover, from the reel's own transcript. Used by the local burn below and
+   * by the cloud render, which only burns captions when this file is in its bundle. Returns null when there is nothing to caption.
    */
-  private async burnCaptions(
+  private async writeCaptionsAss(
     context: PipelineContext,
     inputPath: string,
     useVoice: boolean,
@@ -4174,6 +4179,28 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
 
       const assPath = path.join(tempDir, "captions.ass");
       generateASSFile(groupWordsIntoLines(wordTimings), assPath);
+      return assPath;
+    } catch (err) {
+      pipelineLogger.warn(`Caption file could not be made: ${err instanceof Error ? err.message : err}`, "DirectUploader");
+      return null;
+    }
+  }
+
+  /**
+   * Burn timed subtitles onto the video in a standalone pass. Caption text comes
+   * from the voiceover script (estimated timings) when a voiceover is in use,
+   * otherwise from the Whisper transcript (real word timings). Returns the
+   * captioned file path, or null when no caption source is available.
+   */
+  private async burnCaptions(
+    context: PipelineContext,
+    inputPath: string,
+    useVoice: boolean,
+  ): Promise<string | null> {
+    const tempDir = context.tempDir;
+    try {
+      const assPath = await this.writeCaptionsAss(context, inputPath, useVoice);
+      if (!assPath) return null;
 
       const escapedAssPath = assPath
         .replace(/\\/g, "/")
@@ -5554,6 +5581,17 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       } else {
         pipelineLogger.warn("V2 clip text was English and could not be rewritten: the reel's own words are used", "DirectUploader");
         text = "";
+      }
+    }
+    // Hindi channel: the clip's captions are the lines it narrates, so they are written in Devanagari (the voice reads Devanagari too)
+    if (text && insightLang(process.env, key) === "hi" && !/[\u0900-\u097F]/.test(text)) {
+      const sentences = text.split(/(?<=[.!?।])\s+/).filter(Boolean);
+      const converted = await toDevanagari(sentences.map((t, i) => ({ name: `s${i}`, text: t })));
+      if (converted) {
+        text = converted.map((l) => l.text).join(" ");
+        pipelineLogger.info("V2 clip text written in Devanagari", "DirectUploader");
+      } else {
+        pipelineLogger.warn("V2 clip text could not be converted to Devanagari: it stays in Hinglish", "DirectUploader");
       }
     }
     meta.howItWorks = text; // "" -> deriveTranscriptionWorkflow uses the reel's transcript / caption
