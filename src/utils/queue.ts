@@ -1,4 +1,5 @@
 import { pipelineLogger } from "./logger";
+import { jobContext } from "./jobContext";
 
 export interface QueueJob {
   id: string;
@@ -88,8 +89,8 @@ export class JobQueue {
       "JobQueue",
     );
 
-    job
-      .workerFn()
+    jobContext
+      .run({ jobId: job.id }, () => job.workerFn())
       .then(() => {
         this.activeCount--;
         JobQueue.globalActive--;

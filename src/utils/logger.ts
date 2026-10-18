@@ -3,13 +3,22 @@ import path from "path";
 import fs from "fs";
 import { config } from "../config";
 import { BroadcastTransport } from "./logBroadcast";
+import { currentJobId } from "./jobContext";
 
 // Ensure log directory exists
 if (!fs.existsSync(config.paths.logDir)) {
   fs.mkdirSync(config.paths.logDir, { recursive: true });
 }
 
+// every line made while a job runs carries that job's id (see jobContext.ts)
+const stampJob = winston.format((info) => {
+  const id = currentJobId();
+  if (id) (info as any).jobId = id;
+  return info;
+});
+
 const logFormat = winston.format.combine(
+  stampJob(),
   winston.format.timestamp({ format: "YYYY-MM-DD HH:mm:ss" }),
   winston.format.errors({ stack: true }),
   winston.format.splat(),

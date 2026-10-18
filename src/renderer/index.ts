@@ -115,7 +115,7 @@ export class VideoRenderer implements IVideoRenderer {
 
   // Per-profile diagonal corner watermark asset, generated on first use.
   // The default profile keeps using the legacy assets/watermark.png.
-  private async ensureBrandWatermark(): Promise<string> {
+  public async ensureBrandWatermark(): Promise<string> {
     const handleKey = this.brandHandle.replace(/^@/, "").toLowerCase();
     const fileName =
       handleKey === "codeorcap" ? "watermark.png" : `watermark_${handleKey}.png`;

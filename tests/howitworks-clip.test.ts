@@ -96,5 +96,12 @@ const autoMermaid = `graph TD\n  A["📥 1. Receive Input: Spring Boot REST API"
     if (v === undefined) delete process.env[k]; else process.env[k] = v;
   }
 
-  console.log("✓ how-it-works clip: diagram, narration, spec, safe fallback");
+  
+// a model's reasoning is never shown as the diagram title; the clip's own (Hindi) title is used instead
+{
+  const spec = buildHowItWorksSpec({ explanation: "RBI ne rate badhaya. Isse EMI badhegi.", title2: "मार्केट व्यू", diagramTitle: "The user wants a rewrite of the Hinglish text" }, "t1");
+  assert.strictEqual(spec.title, "मार्केट व्यू");
+  assert.strictEqual(buildHowItWorksSpec({ explanation: "RBI ne rate badhaya. Isse EMI badhegi.", diagramTitle: "Interest Rate Chain" }, "t2").title, "Interest Rate Chain");
+}
+console.log("✓ how-it-works clip: diagram, narration, spec, safe fallback");
 })().catch((e) => { console.error(e); process.exit(1); });

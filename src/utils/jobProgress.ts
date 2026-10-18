@@ -152,7 +152,7 @@ export class ProgressTracker {
   }
 
   /** Feed one log line. `now` is injectable for tests. */
-  observe(message: string, label: string, level: string, now = Date.now()): void {
+  observe(message: string, label: string, level: string, now = Date.now(), jobId?: string): void {
     const text = message || "";
 
     // a job begins
@@ -169,7 +169,9 @@ export class ProgressTracker {
     }
 
     // which job does this line belong to: the one it names, else the one that started last and is still running
-    const named = ID_RE.exec(text)?.[1];
+    // the logger names the job when the line is made inside a job (jobContext); else the id in the text; else the job that started last
+    if (jobId && !this.jobs.has(jobId)) return; // a job this tracker did not see begin (e.g. a long video): not ours to follow
+    const named = jobId || ID_RE.exec(text)?.[1];
     const target = (named && this.jobs.get(named)) || (this.lastActive ? this.jobs.get(this.lastActive) : undefined);
     if (!target || target.state === "done" || target.state === "failed") return;
     const r = target;

@@ -146,7 +146,9 @@ function visualFromSentence(text: string, k: number, count: number, nodes: strin
  * derived from the sentence itself.
  */
 export function buildHowItWorksSpec(input: HowItWorksInput, slug: string, directed?: Map<number, any>): StickmanVideoSpec {
-  const heading = (input.diagramTitle || "How it works").trim().slice(0, 40);
+  // a model sometimes answers with its own reasoning ("The user wants a rewrite of the Hinglish ..."): never show that as a title
+  const titleOk = (t: string | undefined): t is string => !!t && t.trim().split(/\s+/).length <= 6 && t.length <= 60 && !/\b(the user|rewrite|as an ai|here is|here's|sure,)\b/i.test(t);
+  const heading = (titleOk(input.diagramTitle) ? input.diagramTitle : input.title2 || "How it works").trim().slice(0, 40);
   const beats = explanationBeats(input.explanation);
   let nodes = mermaidNodes(input.mermaid);
   if (nodes.length < 2 && beats.length >= 2) {

@@ -87,7 +87,8 @@ export async function renderShortCloud(
   // 1. Write short_spec.json for the runner
   const spec = {
     jobId: id,
-    profile: (context.channel || "codeorcap").toLowerCase(),
+    // the CHANNEL (codeorcap, storiyum, ...): context.channel is the source creator (or "manual_inject"), which picked no sticker and fell back to CodeOrCap's watermark
+    profile: (context.channelProfileKey || "codeorcap").toLowerCase(),
     mood: (context.metadata?.mood || "technical").toLowerCase(),
     cropTopPct: settings.cropTopPct ?? 0,
     cropBottomPct: settings.cropBottomPct ?? 0,

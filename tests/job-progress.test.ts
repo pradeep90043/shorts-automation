@@ -85,4 +85,22 @@ const st = new StageStats();
 st.record("voice", 800); st.record("voice", 900); st.record("voice", 1000);
 assert.strictEqual(st.typical("voice", 860), 900);
 assert.strictEqual(new StageStats().typical("voice", 860), 860);
+
+// two Shorts at once: lines stamped with their job id (jobContext) land on the right job, whatever started last
+{
+  const p = new ProgressTracker(new StageStats());
+  const A = "gen-1000000000000-1", B = "gen-1000000000001-2";
+  p.observe(`Interactive manual ingest triggered for reel @manual_inject/aaa (jobId: ${A})`, "ChannelWatcher", "info", at("10:00:00"));
+  p.observe(`[PromptGag] Interactive manual ingest triggered for reel @manual_inject/bbb (jobId: ${B})`, "ChannelWatcher", "info", at("10:00:05"));
+  p.observe("Instagram frame ready (video)", "Pipeline", "info", at("10:00:20"), A);
+  p.observe("Running unified AI Vision for metadata", "DirectUploader", "info", at("10:00:21"), A);
+  p.observe("Kicking off TTS generation asynchronously...", "DirectUploader", "info", at("10:01:00"), A);
+  p.observe("Instagram frame ready (video)", "Pipeline", "info", at("10:01:10"), B);
+  const jobs = Object.fromEntries(p.snapshot(at("10:01:30")).map((j) => [j.id, j]));
+  assert.strictEqual(jobs[A].current?.id, "voice", "job A is in the voice stage");
+  assert.strictEqual(jobs[B].current?.id, "prepare", "job B is still preparing, although it started last");
+  // a stamped line of a job the tracker never saw begin is ignored, not given to another job
+  p.observe("Kicking off TTS generation asynchronously...", "DirectUploader", "info", at("10:01:40"), "gen-999-9");
+  assert.strictEqual(Object.fromEntries(p.snapshot(at("10:01:41")).map((j) => [j.id, j]))[B].current?.id, "prepare");
+}
 console.log("✓ job progress");

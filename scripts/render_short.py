@@ -142,8 +142,11 @@ def build_and_run_ffmpeg(work_dir: str, repo_root: str, out_path: str):
     # Watermark
     wm_idx = -1
     if use_watermark:
-        wm_file = os.path.join(repo_root, "assets", f"watermark_{profile}.png")
+        # the channel's own watermark comes in the bundle; else its committed asset; CodeOrCap's generic one only for CodeOrCap
+        wm_file = os.path.join(work_dir, "brand_watermark.png")
         if not os.path.exists(wm_file):
+            wm_file = os.path.join(repo_root, "assets", f"watermark_{profile}.png")
+        if not os.path.exists(wm_file) and profile == "codeorcap":
             wm_file = os.path.join(repo_root, "assets", "watermark.png")
         if os.path.exists(wm_file):
             inputs.extend(["-i", wm_file])

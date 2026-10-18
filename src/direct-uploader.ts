@@ -3778,6 +3778,13 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       let cloudDone = false;
       if (process.env.CLOUD_RENDER_SHORTS !== "false") {
         try {
+          // the channel's own watermark travels in the bundle: the runner only has the committed assets, and used CodeOrCap's for any other channel
+          try {
+            const wm = await this.getRenderer(context).ensureBrandWatermark();
+            if (wm && fs.existsSync(wm)) fs.copyFileSync(wm, path.join(tempDir, "brand_watermark.png"));
+          } catch (wmErr) {
+            pipelineLogger.warn(`Brand watermark for the cloud render: ${wmErr instanceof Error ? wmErr.message : wmErr}`, "DirectUploader");
+          }
           // the runner burns captions only when captions.ass is in the bundle
           if (settings.captions) {
             const captionsPath = await this.writeCaptionsAss(context, context.originalVideoPath || path.join(tempDir, "video_raw.mp4"), useVoice);

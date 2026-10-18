@@ -38,7 +38,7 @@ export class BroadcastTransport extends Transport {
     setImmediate(() => this.emit("logged", info));
     try {
       // follow each job through its stages (dashboard "live job" card, /api/pipeline/live)
-      jobProgress().observe(String(info?.message ?? ""), String(info?.label ?? ""), String(info?.level ?? "info"));
+      jobProgress().observe(String(info?.message ?? ""), String(info?.label ?? ""), String(info?.level ?? "info"), Date.now(), info?.jobId ? String(info.jobId) : undefined);
     } catch {
       // progress tracking must never break logging
     }
