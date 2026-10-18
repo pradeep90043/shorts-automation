@@ -2,7 +2,7 @@ import path from "path";
 import fs from "fs";
 import {
   PipelineContext,
-  ITelegramService,
+  INotifyService,
   IImageAnalyzer,
   IBrandingDetector,
   IBrandingRemover,
@@ -29,7 +29,7 @@ import { config } from "./config";
 import { pipelineLogger } from "./utils/logger";
 
 export class PipelineOrchestrator {
-  private telegramService: ITelegramService;
+  private notifyService: INotifyService;
   private analyzer: IImageAnalyzer;
   private detector: IBrandingDetector;
   private remover: IBrandingRemover;
@@ -42,8 +42,8 @@ export class PipelineOrchestrator {
   private music: IMusicService;
   private youtube: IYouTubeService;
 
-  constructor(telegramService: ITelegramService) {
-    this.telegramService = telegramService;
+  constructor(notifyService: INotifyService) {
+    this.notifyService = notifyService;
     this.analyzer = new ImageAnalyzer();
     this.detector = new BrandingDetector();
     this.remover = new BrandingRemover();
@@ -65,10 +65,10 @@ export class PipelineOrchestrator {
       `Resuming pipeline ${context.id} from manual review override.`,
       "Orchestrator",
     );
-    await this.telegramService.sendMessage(
-      context.telegramMeta.chatId,
+    await this.notifyService.sendMessage(
+      context.sourceMeta.chatId,
       `✅ *Manual review approved!* Resuming pipeline from layout generation...`,
-      context.telegramMeta.messageId,
+      context.sourceMeta.messageId,
     );
 
     // Mark as approved and bypass branding removal failure
@@ -93,8 +93,8 @@ export class PipelineOrchestrator {
    * Main entry point to run a newly received image pipeline
    */
   public async run(context: PipelineContext): Promise<void> {
-    const chatId = context.telegramMeta.chatId;
-    const messageId = context.telegramMeta.messageId;
+    const chatId = context.sourceMeta.chatId;
+    const messageId = context.sourceMeta.messageId;
 
     try {
       // 1. Analyze Image
@@ -157,7 +157,7 @@ export class PipelineOrchestrator {
         // Save the context state so it can be resumed
         this.saveContextState(context);
 
-        await this.telegramService.sendMessage(
+        await this.notifyService.sendMessage(
           chatId,
           `⚠️ *Branding Removal Alert:*\n` +
             `Automated branding removal bypassed to prevent artifacts:\n` +
@@ -183,8 +183,8 @@ export class PipelineOrchestrator {
     context: PipelineContext,
     startStage: "ocr" | "generating_layout",
   ): Promise<void> {
-    const chatId = context.telegramMeta.chatId;
-    const messageId = context.telegramMeta.messageId;
+    const chatId = context.sourceMeta.chatId;
+    const messageId = context.sourceMeta.messageId;
     const workingImage = context.cleanedImagePath || context.originalImagePath;
 
     try {
@@ -276,7 +276,7 @@ export class PipelineOrchestrator {
 
       // 10. Upload to YouTube Shorts
       context.status = "uploading";
-      await this.telegramService.sendMessage(
+      await this.notifyService.sendMessage(
         chatId,
         `🚀 *Rendering completed!* Uploading to YouTube Shorts...`,
         messageId,
@@ -297,7 +297,7 @@ export class PipelineOrchestrator {
         `Gen ID: ${context.id}`,
       );
 
-      await this.telegramService.sendMessage(
+      await this.notifyService.sendMessage(
         chatId,
         `🎉 *Short Uploaded Successfully!*\n\n` +
           `*Title:* ${context.metadata.title}\n` +
@@ -376,12 +376,12 @@ export class PipelineOrchestrator {
     pipelineLogger.checkpoint("Pipeline execution failed", false, errMsg);
     this.saveContextState(context);
 
-    await this.telegramService.sendMessage(
-      context.telegramMeta.chatId,
+    await this.notifyService.sendMessage(
+      context.sourceMeta.chatId,
       `❌ *Pipeline execution failed!*\n\n` +
         `*Error:* \`${errMsg}\`\n\n` +
         `Check logs for details. Gen ID: \`${context.id}\``,
-      context.telegramMeta.messageId,
+      context.sourceMeta.messageId,
     );
   }
 }

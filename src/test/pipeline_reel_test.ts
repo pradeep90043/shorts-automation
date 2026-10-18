@@ -7,9 +7,9 @@ import { AssetKind, PipelineContext } from '../types';
 import { UploadResult } from '../youtube';
 
 // -------------------------------------------------------------------
-// Mock TelegramService – logs instead of sending anything to Telegram
+// Mock NotifyService – logs instead of sending anything to Telegram
 // -------------------------------------------------------------------
-class MockTelegramService {
+class MockNotifyService {
   async sendVideoForReview(chatId: number, videoPath: string, caption: string, id: string, _replyToMessageId?: number): Promise<number> {
     console.log('[MOCK] sendVideoForReview', { chatId, videoPath, caption, id });
     return 1;
@@ -56,7 +56,7 @@ function createFakeContext(tempDir: string, dummyVideoPath: string): PipelineCon
   return {
     id: 'reel-test-001',
     tempDir,
-    telegramMeta: {
+    sourceMeta: {
       messageId: 0,
       chatId: 12345,
       userId: 999,
@@ -87,7 +87,7 @@ function createFakeContext(tempDir: string, dummyVideoPath: string): PipelineCon
     execSync(`ffmpeg -f lavfi -i color=c=black:s=640x360:d=1 -c:v libx264 -pix_fmt yuv420p "${dummyVideo}"`);
   }
 
-  const mockTelegram = new MockTelegramService();
+  const mockTelegram = new MockNotifyService();
   const uploader = new DirectUploader(mockTelegram as any);
   // Replace YouTube service with mock
   (uploader as any).youtube = new MockYouTubeService();

@@ -7,7 +7,7 @@ export enum AssetKind {
   Infographic = "Infographic"
 }
 
-export interface TelegramMetadata {
+export interface SourceMetadata {
   messageId: number;
   chatId: number;
   userId?: number;
@@ -140,7 +140,7 @@ export interface PipelineContext {
   id: string; // Unique Generation ID
   assetKind: AssetKind; // Type of asset
   tempDir: string;
-  telegramMeta: TelegramMetadata;
+  sourceMeta: SourceMetadata;
 
   // Pipeline file paths & results
   originalImagePath: string;
@@ -250,7 +250,7 @@ export interface PipelineContext {
   moodPinned?: string; // user explicitly picked this mood via the settings review — force it onto whatever the next AI regeneration returns, regardless of the AI's own classification
 }
 
-export interface ITelegramService {
+export interface INotifyService {
   start(): Promise<void>;
   downloadFile(fileId: string, destPath: string): Promise<void>;
   sendMessage(

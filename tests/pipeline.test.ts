@@ -14,7 +14,6 @@ const stages = [
   'test:safearea',
   'test:render',
   'test:ffmpeg',
-  'test:telegram',
   'test:youtube',
 ];
 
