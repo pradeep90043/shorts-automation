@@ -106,9 +106,6 @@ jobs:
             # This VM has 1 GB for everything: one Short at a time, a small Node heap
             printf 'MAX_PARALLEL_PIPELINES=1\n' >> .env
             printf 'NODE_OPTIONS=--max-old-space-size=450\n' >> .env
-            printf 'FREELLMAPI_FALLBACK_URL=http://freellmapi-dev:3001\n' >> .env
-            printf 'FREELLMAPI_FALLBACK_KEY=freellmapi-98c9da4ce2b9a5149e83d5345b05bacabc2a4aab75a569bc\n' >> .env
-            printf 'FREELLMAPI_DEV_ENCRYPTION_KEY=026653c9d168432691e1fbc8f9e16982d9296991044bae9e7c4c7b21ba52a593\n' >> .env
           fi
         env:
           PRODUCTION_ENV: ${{ secrets.PRODUCTION_ENV }}
@@ -192,7 +189,7 @@ jobs:
                   sleep 10
                 }
               done
-              docker compose up -d --remove-orphans bot freellmapi freellmapi-dev duckdns duckdns-dev caddy postgres
+              docker compose up -d --remove-orphans bot freellmapi duckdns duckdns-dev caddy postgres
             fi
 
             docker logout ghcr.io || true

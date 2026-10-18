@@ -10,8 +10,6 @@ services:
     shm_size: 1gb
     environment:
       - FREELLMAPI_URL=http://freellmapi:3001
-      - FREELLMAPI_FALLBACK_URL=${FREELLMAPI_FALLBACK_URL:-http://freellmapi-dev:3001}
-      - FREELLMAPI_FALLBACK_KEY=${FREELLMAPI_FALLBACK_KEY:-freellmapi-98c9da4ce2b9a5149e83d5345b05bacabc2a4aab75a569bc}
       - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-codeorcap@2026}
       - GROQ_API_KEY=${GROQ_API_KEY:-}
       # The VM is always prod: forces *_TELEGRAM_BOT_TOKEN_PROD variants regardless of .env
@@ -19,7 +17,6 @@ services:
       - TZ=Asia/Kolkata
     depends_on:
       - freellmapi
-      - freellmapi-dev
       - postgres
     volumes:
       - ./output:/app/output
@@ -48,18 +45,6 @@ services:
     volumes:
       - freellmapi-data:/app/server/data
 
-  freellmapi-dev:
-    image: ghcr.io/tashfeenahmed/freellmapi:latest
-    container_name: freellmapi-dev
-    restart: unless-stopped
-    ports:
-      - "20128:3001"
-    environment:
-      - PORT=3001
-      - NODE_OPTIONS=--max-old-space-size=128
-      - ENCRYPTION_KEY=${FREELLMAPI_DEV_ENCRYPTION_KEY:-026653c9d168432691e1fbc8f9e16982d9296991044bae9e7c4c7b21ba52a593}
-    volumes:
-      - ${FREELLMAPI_DEV_DATA_DIR:-/home/opc/freellmapi-dev/data}:/app/server/data
 
   postgres:
     image: postgres:15-alpine
@@ -100,9 +85,8 @@ services:
       - SUBDOMAINS=${DEV_DUCKDNS_SUBDOMAIN:-shorts-dev}
       - TOKEN=${DEV_DUCKDNS_TOKEN:-0c4336fe-1453-4aa3-ad42-feea06535294}
 
-  # Dev no longer runs here: it runs on a GitHub-hosted runner (.github/workflows/dev-session.yml), where it has 16 GB instead of
-  # sharing this VM's 1 GB with production. Only the dev FreeLLMAPI stays: production uses it as a fallback and the dev
-  # sessions share its provider keys.
+  # Dev environment (bot + FreeLLMAPI) runs entirely on GitHub-hosted runners (.github/workflows/dev-session.yml).
+  # This Oracle VM runs production only.
 
   # Caddy Reverse Proxy (Free Automatic HTTPS SSL Cert for DuckDNS)
   caddy:
