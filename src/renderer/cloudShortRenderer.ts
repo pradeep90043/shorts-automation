@@ -19,11 +19,35 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 function unzip(zipFile: string, outDir: string): Promise<void> {
   const run = (cmd: string, args: string[]) =>
     new Promise<void>((resolve, reject) => {
-      const p = spawn("nice", ["-n", "15", cmd, ...args], { stdio: "ignore" });
-      p.on("error", reject);
-      p.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`${cmd} exited ${code}`))));
+      const p = spawn(cmd, args, { stdio: "ignore" });
+      const timer = setTimeout(() => { p.kill("SIGKILL"); reject(new Error(`${cmd} timed out after 120 s`)); }, 120_000);
+      p.on("error", (e) => { clearTimeout(timer); reject(e); });
+      p.on("close", (code) => { clearTimeout(timer); code === 0 ? resolve() : reject(new Error(`${cmd} exited ${code}`)); });
     });
   return run("unzip", ["-o", zipFile, "-d", outDir]).catch(() => run("python3", ["-m", "zipfile", "-e", zipFile, outDir]));
+}
+
+/** Downloads the artifact zip with a hard time limit per attempt (a stalled transfer used to hang the job forever). */
+async function downloadArtifact(url: string, token: string, zipFile: string): Promise<boolean> {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 180_000);
+    try {
+      const res = await fetchRetry(url, { headers: authHeaders(token), signal: ctl.signal });
+      if (!res.ok || !res.body) {
+        logger.warn(`[CloudShortRenderer] Failed to download artifact: ${res.status} (attempt ${attempt}/3)`);
+      } else {
+        await pipeline(Readable.fromWeb(res.body as any), fs.createWriteStream(zipFile), { signal: ctl.signal });
+        return true;
+      }
+    } catch (err) {
+      logger.warn(`[CloudShortRenderer] Artifact download attempt ${attempt}/3 failed: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      clearTimeout(timer);
+    }
+    await sleep(3000);
+  }
+  return false;
 }
 
 /**
@@ -166,16 +190,8 @@ export async function renderShortCloud(
   }
 
   logger.info(`[CloudShortRenderer] Downloading artifact ${artifact.name} (${artifact.size_in_bytes} bytes)...`);
-  const downloadRes = await fetchRetry(artifact.archive_download_url, {
-    headers: authHeaders(token),
-  });
-  if (!downloadRes.ok || !downloadRes.body) {
-    logger.warn(`[CloudShortRenderer] Failed to download artifact: ${downloadRes.status}`);
-    return null;
-  }
-
   const zipFile = path.join(tempDir, `short-${id}.zip`);
-  await pipeline(Readable.fromWeb(downloadRes.body as any), fs.createWriteStream(zipFile));
+  if (!(await downloadArtifact(artifact.archive_download_url, token, zipFile))) return null;
 
   // Unzip artifact
   await unzip(zipFile, tempDir);
