@@ -131,19 +131,9 @@ jobs:
 
           # the unified key the bot calls FreeLLMAPI with (a fresh database makes a new one)
           KEY=$(sudo sqlite3 session/freellm-data/freeapi.db "select value from settings where key='unified_api_key';" 2>/dev/null || true)
-          # The session's own FreeLLMAPI is the primary (fast, on this runner). The shared dev pool on the Oracle VM (it holds every
-          # provider key) is only the fallback: when it is slow or down, the session still works.
-          REMOTE_KEY=$(grep -E '^FREELLMAPI_KEY=' .env.dev | tail -1 | cut -d= -f2- | tr -d '"' || true)
-          FALLBACK_URL=""
-          if [ -n "$REMOTE_KEY" ]; then
-            echo "::add-mask::$REMOTE_KEY"
-            code=$(curl -s -m 15 -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $REMOTE_KEY" https://shorts-dev.duckdns.org/v1/models || true)
-            echo "shared dev LLM pool answered HTTP $code"
-            # always configured when there is a key: the pool may be slow right now, but it is the only place that holds every provider key
-            FALLBACK_URL=https://shorts-dev.duckdns.org
-          fi
-          echo "LLM_FALLBACK_URL=$FALLBACK_URL" >> "$GITHUB_ENV"
-          echo "LLM_FALLBACK_KEY=$REMOTE_KEY" >> "$GITHUB_ENV"
+          # The session's own FreeLLMAPI runs locally on this runner (fast, zero cross-continent latency).
+          echo "LLM_FALLBACK_URL=" >> "$GITHUB_ENV"
+          echo "LLM_FALLBACK_KEY=" >> "$GITHUB_ENV"
           [ -n "$KEY" ] && echo "::add-mask::$KEY"
           echo "FREELLMAPI_KEY=$KEY" >> "$GITHUB_ENV"
           echo "PUBLIC_URL=$APP_URL" >> "$GITHUB_ENV"
