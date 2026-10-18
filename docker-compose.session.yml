@@ -31,6 +31,7 @@ services:
     environment:
       - BOT_ENV=dev
       - SHORTS_GRID=off
+      - MAX_PARALLEL_PIPELINES=3   # the runner has 16 GB: several channels can be tested at once
       - CHANNEL_WATCHER=off   # a dev session only runs what you inject: no automatic reel picking
       - TZ=Asia/Kolkata
       - DATABASE_URL=postgresql://botuser:botpass@postgres:5432/shortsbot

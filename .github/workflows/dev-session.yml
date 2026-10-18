@@ -139,7 +139,8 @@ jobs:
             echo "::add-mask::$REMOTE_KEY"
             code=$(curl -s -m 15 -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $REMOTE_KEY" https://shorts-dev.duckdns.org/v1/models || true)
             echo "shared dev LLM pool answered HTTP $code"
-            if [ "$code" = "200" ]; then FALLBACK_URL=https://shorts-dev.duckdns.org; fi
+            # always configured when there is a key: the pool may be slow right now, but it is the only place that holds every provider key
+            FALLBACK_URL=https://shorts-dev.duckdns.org
           fi
           echo "LLM_FALLBACK_URL=$FALLBACK_URL" >> "$GITHUB_ENV"
           echo "LLM_FALLBACK_KEY=$REMOTE_KEY" >> "$GITHUB_ENV"
