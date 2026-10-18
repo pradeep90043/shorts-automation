@@ -17,7 +17,7 @@ import { pipelineLogger } from "./utils/logger";
 import { howItWorksLines, renderHowItWorksClip } from "./my-video/howItWorksClip";
 import { dropUnsupportedFigures, insightEnabledFor, insightIntro, insightLang, insightRuleFor, insightTitle, looksEnglish } from "./my-video/insightClip";
 import { makeAsk } from "./longvideo-auto/llm";
-import { toDevanagari } from "./audio/clonedVoice";
+import { splitForVoice, toDevanagari } from "./audio/clonedVoice";
 import { FreeLlmApiClient } from "./ai/freellmapi";
 import { GeminiClient } from "./ai/gemini";
 import { parseAiJson, extractJsonArrayField } from "./utils/json";
@@ -2921,11 +2921,21 @@ ${this.theme.analysisRules}`;
           const claim = context.metadata.voiceoverScript;
           const hiw = insightEnabledFor(this.profile.key, this.profile.watch?.outroVersion) ? howItWorksLines(this.deriveTranscriptionWorkflow(context).explanation, insightIntro(this.profile.key)) : [];
           context.clonedHowItWorksLines = hiw;
+          // the claim is spoken in sentence-sized pieces on separate runners (one long line is the slowest, and the one that times out)
+          const claimParts = splitForVoice(spokenText(claim));
           context.clonedVoice = startClonedLines(`short-${context.id.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 16) || Date.now()}`, [
-            { name: "claim", text: spokenText(claim) },
+            ...claimParts.map((text, i) => ({ name: `claim_${i}`, text })),
             ...hiw.map((text, i) => ({ name: `hiw_${i}`, text: spokenText(text) })),
           ], this.profile.key);
-          this.tts.registerCloned(this.profile.key, claim, context.clonedVoice.then((set) => set?.file("claim") ?? null));
+          this.tts.registerCloned(this.profile.key, claim, context.clonedVoice.then(async (set) => {
+            if (!set) return null;
+            const files = claimParts.map((_, i) => set.file(`claim_${i}`));
+            if (files.some((f) => !f)) return null;
+            if (files.length === 1) return files[0] as string;
+            const joined = path.join(set.dir, "claim.mp3");
+            await concatAudio(files as string[], joined, 0.12); // a short natural pause between sentences
+            return joined;
+          }));
         }
         // CodeOrCap: fit the voice to the reel so the narration runs to the end instead of stopping early.
         ttsPromise =
