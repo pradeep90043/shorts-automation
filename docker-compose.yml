@@ -43,6 +43,7 @@ services:
       - "3001:3001"
     environment:
       - PORT=3001
+      - NODE_OPTIONS=--max-old-space-size=128
       - ENCRYPTION_KEY=${FREELLMAPI_ENCRYPTION_KEY}
     volumes:
       - freellmapi-data:/app/server/data
@@ -55,6 +56,7 @@ services:
       - "20128:3001"
     environment:
       - PORT=3001
+      - NODE_OPTIONS=--max-old-space-size=128
       - ENCRYPTION_KEY=${FREELLMAPI_DEV_ENCRYPTION_KEY:-026653c9d168432691e1fbc8f9e16982d9296991044bae9e7c4c7b21ba52a593}
     volumes:
       - ${FREELLMAPI_DEV_DATA_DIR:-/home/opc/freellmapi-dev/data}:/app/server/data
@@ -67,6 +69,8 @@ services:
       - POSTGRES_USER=botuser
       - POSTGRES_PASSWORD=botpass
       - POSTGRES_DB=shortsbot
+    # The default settings assume a big server; this VM has 1 GB for everything.
+    command: ["postgres", "-c", "shared_buffers=32MB", "-c", "max_connections=40", "-c", "work_mem=2MB", "-c", "maintenance_work_mem=16MB", "-c", "effective_cache_size=128MB"]
     volumes:
       - postgres-data:/var/lib/postgresql/data
     ports:
@@ -96,36 +100,9 @@ services:
       - SUBDOMAINS=${DEV_DUCKDNS_SUBDOMAIN:-shorts-dev}
       - TOKEN=${DEV_DUCKDNS_TOKEN:-0c4336fe-1453-4aa3-ad42-feea06535294}
 
-  # Dev Bot System (Runs isolated on dev branch and shorts-dev.duckdns.org)
-  bot-dev:
-    image: ${BOT_DEV_IMAGE:-ghcr.io/pradeep90043/shorts-automation:dev}
-    container_name: codeorcap-bot-dev
-    restart: unless-stopped
-    env_file: ${BOT_DEV_ENV_FILE:-.env.dev}
-    shm_size: 512mb
-    deploy:
-      resources:
-        limits:
-          memory: 650M
-    environment:
-      - FREELLMAPI_URL=http://freellmapi-dev:3001
-      - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-codeorcap@2026}
-      - GROQ_API_KEY=${GROQ_API_KEY:-}
-      - BOT_ENV=dev
-      - TZ=Asia/Kolkata
-    depends_on:
-      - freellmapi-dev
-      - postgres
-    volumes:
-      - ./output-dev:/app/output
-      - ./assets/music:/app/assets/music
-      - ./assets/stickers:/app/assets/stickers
-      - ./assets/templates:/app/assets/templates
-      - ./logs-dev:/app/logs
-      - ./data-dev:/root/.shorts-automation
-    ports:
-      - "127.0.0.1:3004:3000"
-      - "127.0.0.1:3005:3002"
+  # Dev no longer runs here: it runs on a GitHub-hosted runner (.github/workflows/dev-session.yml), where it has 16 GB instead of
+  # sharing this VM's 1 GB with production. Only the dev FreeLLMAPI stays: production uses it as a fallback and the dev
+  # sessions share its provider keys.
 
   # Caddy Reverse Proxy (Free Automatic HTTPS SSL Cert for DuckDNS)
   caddy:

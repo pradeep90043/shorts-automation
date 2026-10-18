@@ -125,8 +125,9 @@
     }
 
     # Dev Live Log Dashboard & Bot System (Default Root)
+    # The dev app runs on a GitHub runner now; its address is the "dev-session" status of the latest commit on the dev branch.
     handle {
-        reverse_proxy bot-dev:3002
+        respond "Dev runs on GitHub: open the dev-session status of the latest commit on the dev branch." 200
     }
 }
 
