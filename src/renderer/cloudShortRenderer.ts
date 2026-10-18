@@ -16,6 +16,15 @@ const authHeaders = (token: string) => ({
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** The newest infoonspot_overlay_*.png the app made for this job, if any. */
+function infoOverlayFile(dir: string): string | undefined {
+  try {
+    return fs.readdirSync(dir).filter((f) => /^infoonspot_overlay_.*\.png$/.test(f)).sort().pop();
+  } catch {
+    return undefined;
+  }
+}
+
 function unzip(zipFile: string, outDir: string): Promise<void> {
   const run = (cmd: string, args: string[]) =>
     new Promise<void>((resolve, reject) => {
@@ -100,6 +109,8 @@ export async function renderShortCloud(
     useVoiceover: !!context.useVoiceover,
     durationSeconds: context.videoDurationSeconds || 0,
     blurRegions: context.brandingDetection?.zones || [],
+    // InfoOnSpot's branded broadcast frame is built by the app (infoonspotTemplate.ts); the runner lays it over the video
+    ...(((context.channelProfileKey || "").toLowerCase() === "infoonspot" && infoOverlayFile(tempDir)) ? { infoOverlay: infoOverlayFile(tempDir) } : {}),
   };
 
   const specPath = path.join(tempDir, "short_spec.json");

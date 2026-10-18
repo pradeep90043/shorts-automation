@@ -138,6 +138,16 @@ def build_and_run_ffmpeg(work_dir: str, repo_root: str, out_path: str):
     # Build FFmpeg command inputs
     inputs = ["-i", raw_video]
     next_input_idx = 1
+
+    # InfoOnSpot broadcast template: the video sits in a 1140 px window and the branded frame (made by the app, in the bundle) goes over it
+    info_idx = -1
+    info_overlay = spec.get("infoOverlay")
+    if info_overlay and os.path.exists(os.path.join(work_dir, info_overlay)):
+        inputs.extend(["-i", os.path.join(work_dir, info_overlay)])
+        info_idx = next_input_idx
+        next_input_idx += 1
+        use_watermark = False  # the template carries the brand
+        use_cover = False
     
     # Watermark
     wm_idx = -1
@@ -211,7 +221,11 @@ def build_and_run_ffmpeg(work_dir: str, repo_root: str, out_path: str):
     # Crop calculation: remove crop_top and crop_bottom percent
     crop_h = f"ih*(1-{crop_top:.3f}-{crop_bottom:.3f})"
     crop_y = f"ih*{crop_top:.3f}"
-    v_filters.append(f"[0:v]crop=iw:{crop_h}:0:{crop_y},scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black[base]")
+    if info_idx != -1:
+        v_filters.append("[0:v]scale=1080:1140:force_original_aspect_ratio=increase,crop=1080:1140,pad=1080:1920:0:446:black[tbg]")
+        v_filters.append(f"[tbg][{info_idx}:v]overlay=0:0[base]")
+    else:
+        v_filters.append(f"[0:v]crop=iw:{crop_h}:0:{crop_y},scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black[base]")
     current_v = "[base]"
 
     # 2. Watermark overlay (bottom right)
