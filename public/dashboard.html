@@ -3692,8 +3692,24 @@
     if (!out || !vid) return;
     const url = videoUrl || (BASE_URL + '/api/video-preview?t=' + Date.now());
     if (vid.src !== url) {
+      vid.dataset.retries = '0';
       vid.src = url;
       vid.load();
+    }
+    // The file can still be finishing (425/404) or the first request can fail: retry a few times instead of staying broken.
+    if (!vid.dataset.retryWired) {
+      vid.dataset.retryWired = '1';
+      vid.addEventListener('error', () => {
+        const n = parseInt(vid.dataset.retries || '0', 10);
+        if (n >= 10) return;
+        vid.dataset.retries = String(n + 1);
+        setTimeout(() => {
+          const base = vid.src.split('&t=')[0].split('?t=')[0];
+          const sep = base.includes('?') ? '&' : '?';
+          vid.src = base + sep + 't=' + Date.now();
+          vid.load();
+        }, 2000);
+      });
     }
     out.style.display = '';
     const badge = document.getElementById('stepper-status-badge');

@@ -2958,41 +2958,66 @@ export function startLogServer(): void {
       return;
     }
 
-    // ── /api/video-preview — serve latest rendered mp4 for preview ──────────
-    if (req.method === "GET" && url.startsWith("/api/video-preview")) {
+    // ── /api/video-preview — serve the rendered mp4 for a job (or the newest one) ───────────────────────────
+    // Browsers (Safari and mobile Chrome above all) will not play or seek a video unless the server answers byte-range
+    // requests, so this answers 206 Partial Content. A job's own file is never swapped for another job's video, and a
+    // file that is still being copied (size still changing) is reported as "not ready" so the page retries.
+    if ((req.method === "GET" || req.method === "HEAD") && url.startsWith("/api/video-preview")) {
+      const send = (code: number, body: object) => {
+        res.writeHead(code, { "Content-Type": "application/json", "Cache-Control": "no-store", "Retry-After": "2" });
+        res.end(JSON.stringify(body));
+      };
       try {
         const pUrl = new URL(url, `http://localhost`);
-        const jobId = pUrl.searchParams.get("jobId") || "";
-        const outputDir = path.join(process.cwd(), "output");
-        let targetFile = "";
-        if (jobId) {
-          const files = fs.readdirSync(outputDir).filter(f => f.includes(jobId) && f.endsWith(".mp4"));
-          if (files.length) targetFile = path.join(outputDir, files[0]);
-        }
-        if (!targetFile) {
-          // fallback: most recently modified mp4 in output/
-          const files = fs.readdirSync(outputDir)
-            .filter(f => f.endsWith(".mp4"))
-            .map(f => ({ f, t: fs.statSync(path.join(outputDir, f)).mtimeMs }))
-            .sort((a, b) => b.t - a.t);
-          if (files.length) targetFile = path.join(outputDir, files[0].f);
-        }
-        if (!targetFile || !fs.existsSync(targetFile)) {
-          res.writeHead(404, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
-          res.end(JSON.stringify({ success: false, message: "No preview video found yet" }));
+        const jobId = (pUrl.searchParams.get("jobId") || "").replace(/[^A-Za-z0-9_-]/g, "");
+        const outputDir = path.resolve(config.paths.outputDir || path.join(process.cwd(), "output"));
+        const mp4s = fs.existsSync(outputDir)
+          ? fs.readdirSync(outputDir)
+              .filter((f) => f.endsWith(".mp4"))
+              .map((f) => ({ f, t: fs.statSync(path.join(outputDir, f)).mtimeMs }))
+              .sort((x, y) => y.t - x.t)
+          : [];
+        const pick = jobId ? mp4s.find((x) => x.f.includes(jobId)) : mp4s[0];
+        if (!pick) {
+          send(404, { success: false, message: jobId ? `No preview video for ${jobId} yet` : "No preview video found yet" });
           return;
         }
-        const stat = fs.statSync(targetFile);
-        res.writeHead(200, {
+        const targetFile = path.join(outputDir, pick.f);
+        const size = fs.statSync(targetFile).size;
+        // Still being written? (modified in the last 2 s, or empty)
+        if (size === 0 || Date.now() - pick.t < 2000) {
+          send(425, { success: false, message: "Video is still being written" });
+          return;
+        }
+        const headers: Record<string, string | number> = {
           "Content-Type": "video/mp4",
-          "Content-Length": stat.size,
-          "Access-Control-Allow-Origin": "*",
-          "Cache-Control": "no-cache",
-        });
-        fs.createReadStream(targetFile).pipe(res);
+          "Accept-Ranges": "bytes",
+          "Cache-Control": "no-store",
+        };
+        const m = /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range || ""));
+        let start = 0;
+        let end = size - 1;
+        let code = 200;
+        if (m && (m[1] !== "" || m[2] !== "")) {
+          if (m[1] === "") { start = Math.max(0, size - parseInt(m[2], 10)); }
+          else { start = parseInt(m[1], 10); if (m[2] !== "") end = Math.min(end, parseInt(m[2], 10)); }
+          if (start > end || start >= size) {
+            res.writeHead(416, { "Content-Range": `bytes */${size}` });
+            res.end();
+            return;
+          }
+          code = 206;
+          headers["Content-Range"] = `bytes ${start}-${end}/${size}`;
+        }
+        headers["Content-Length"] = end - start + 1;
+        res.writeHead(code, headers);
+        if (req.method === "HEAD") { res.end(); return; }
+        const stream = fs.createReadStream(targetFile, { start, end });
+        stream.on("error", () => res.destroy());
+        res.on("close", () => stream.destroy());
+        stream.pipe(res);
       } catch (err) {
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ success: false, message: "Error serving preview" }));
+        send(500, { success: false, message: "Error serving preview" });
       }
       return;
     }
