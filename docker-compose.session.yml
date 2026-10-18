@@ -34,7 +34,9 @@ services:
       - CHANNEL_WATCHER=off   # a dev session only runs what you inject: no automatic reel picking
       - TZ=Asia/Kolkata
       - DATABASE_URL=postgresql://botuser:botpass@postgres:5432/shortsbot
-      - FREELLMAPI_URL=${LLM_BACKEND_URL:-http://freellmapi-dev:3001}
+      - FREELLMAPI_URL=http://freellmapi-dev:3001
+      - FREELLMAPI_FALLBACK_URL=${LLM_FALLBACK_URL:-}
+      - FREELLMAPI_FALLBACK_KEY=${LLM_FALLBACK_KEY:-}
       - FREELLMAPI_KEY=${FREELLMAPI_KEY}
       - PUBLIC_URL=${PUBLIC_URL}
       - BASE_URL=${PUBLIC_URL}   # a BASE_URL in the dev settings (the old VM address) would otherwise win
