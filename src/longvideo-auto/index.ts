@@ -3,7 +3,7 @@ import { describeSwitch } from "../utils/switches";
 import { CHANNEL_ORDER, DEFAULT_GRID, gridFromEnv, hhmm, longReleaseSlots, shortSlots, shortsGridActive } from "../schedule/shortsGrid";
 import { insightChannels } from "../my-video/insightClip";
 import { autoLongChannels, dailyLongEnabled } from "./config";
-import { checkScript } from "./guardrails";
+import { checkScript, cleanScriptMarkers } from "./guardrails";
 import type { Ask } from "./llm";
 import { LongQueue, planDay, runNext } from "./queue";
 import { assignRelease } from "./release";
@@ -74,6 +74,9 @@ export async function produceLongVideo(
       deps.ask,
     ),
   );
+
+  pkg.script = cleanScriptMarkers(pkg.script);
+  pkg.title = cleanScriptMarkers(pkg.title).trim();
 
   await runStage(req.id, "guardrails", async () => {
     const guard = checkScript({

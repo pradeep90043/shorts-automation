@@ -51,6 +51,20 @@ const FINANCE_BANNED: RegExp[] = [
 
 const DISCLAIMER = /(वित्तीय\s*सलाह\s*नहीं|निवेश\s*सलाह\s*नहीं|सिर्फ\s*जानकारी\s*के\s*लिए|not\s+(a\s+)?financial\s+advice|educational\s+purposes?)/i;
 
+/**
+ * Harmless markup a model leaves in a spoken script: citation marks like [1], stage directions like [संगीत] / [pause], and
+ * line-break tags. These are removed instead of failing a whole script. Anything that LOOKS like a template slot
+ * ("[channel name]", "[यहाँ नाम]", "<insert ...>") is kept, so checkScript still rejects it.
+ */
+const SLOT_WORDS = /\b(name|insert|here|your|channel|topic|title|xx+|placeholder|todo|tbd)\b|यहाँ|यहां|नाम|डालें|डालिए/i;
+export function cleanScriptMarkers(text: string): string {
+  return text
+    .replace(/\[[^\]]{0,40}\]/g, (m) => (SLOT_WORDS.test(m) ? m : ""))
+    .replace(/<\/?(?:br|p|b|i|u|em|strong|span)\s*\/?>/gi, " ")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/ +([,.!?।])/g, "$1");
+}
+
 export function checkScript(input: GuardInput): GuardResult {
   const problems: string[] = [];
   const words = wordsOf(input.script);
@@ -62,7 +76,8 @@ export function checkScript(input: GuardInput): GuardResult {
   if (!input.title.trim()) problems.push("empty title");
   else if (input.title.length > 100) problems.push(`title is ${input.title.length} characters (max 100)`);
 
-  if (PLACEHOLDER.test(input.script) || PLACEHOLDER.test(input.title)) problems.push("unfilled placeholder in the script or title");
+  const slot = PLACEHOLDER.exec(input.script) || PLACEHOLDER.exec(input.title);
+  if (slot) problems.push(`unfilled placeholder in the script or title: "${slot[0].slice(0, 40)}"`);
 
   const source = new Set(numbersIn(input.sourceText));
   const unsupportedNumbers = numbersIn(input.script).filter((n) => !source.has(n));

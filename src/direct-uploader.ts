@@ -4174,9 +4174,9 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         .replace(/:/g, "\\:")
         .replace(/'/g, "'\\\\''");
       const outPath = path.join(tempDir, "video_raw_captioned.mp4");
-      const cmd = `${config.binaries.ffmpeg} -y -i "${inputPath}" -vf "subtitles='${escapedAssPath}'" -c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p -c:a copy "${outPath}"`;
+      const cmd = `${config.binaries.ffmpeg} -nostdin -hide_banner -loglevel error -y -i "${inputPath}" -vf "subtitles='${escapedAssPath}'" -c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p -c:a copy -movflags +faststart "${outPath}"`;
       await new Promise<void>((resolve, reject) => {
-        exec(cmd, (error) => (error ? reject(error) : resolve()));
+        exec(cmd, { maxBuffer: 64 * 1024 * 1024 }, (error) => (error ? reject(error) : resolve()));
       });
       pipelineLogger.info("Burned timed captions onto video.", "DirectUploader");
       return outPath;

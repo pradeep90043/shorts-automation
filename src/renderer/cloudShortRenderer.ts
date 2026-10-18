@@ -1,4 +1,5 @@
 import fs from "fs";
+import { publicBaseUrl } from "../utils/publicUrl";
 import path from "path";
 import { spawn } from "child_process";
 import { pipeline } from "stream/promises";
@@ -44,10 +45,7 @@ export async function renderShortCloud(
     : "pradeep90043/shorts-automation";
   const repo = process.env.VOICEBOX_GITHUB_REPO || defaultRepo;
 
-  const defaultBaseUrl = process.env.BOT_ENV === "dev"
-    ? "https://shorts-dev.duckdns.org"
-    : "https://shorts-automation.duckdns.org";
-  const baseUrl = (process.env.BASE_URL || process.env.PUBLIC_URL || defaultBaseUrl).replace(/\/+$/, "");
+  const baseUrl = publicBaseUrl();
 
   const id = context.id;
   const tempDir = context.tempDir;
