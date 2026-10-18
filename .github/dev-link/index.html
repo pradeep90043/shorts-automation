@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Shorts Automation – dev</title>
+<style>
+  :root{color-scheme:dark light}
+  body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b0b0b;color:#eee;font:16px system-ui,sans-serif}
+  main{width:min(460px,88vw);display:grid;gap:14px;text-align:center}
+  h1{margin:0;font-size:20px;color:#ffb800}
+  a.btn{display:block;padding:14px;border-radius:10px;background:#ffb800;color:#111;font-weight:700;text-decoration:none}
+  small{color:#999}
+  code{background:#1a1a1a;padding:2px 6px;border-radius:6px}
+</style></head>
+<body><main>
+  <h1>Dev environment</h1>
+  <p id="msg">Looking for the running dev session…</p>
+  <a id="go" class="btn" style="display:none" href="#">Open the dev dashboard</a>
+  <small id="meta"></small>
+</main>
+<script>
+  (async () => {
+    const msg = document.getElementById("msg"), go = document.getElementById("go"), meta = document.getElementById("meta");
+    try {
+      // a unique query string: the page is static, the answer must always be fresh
+      const r = await fetch("current.json?t=" + Date.now(), { cache: "no-store" });
+      const d = await r.json();
+      if (d.url) {
+        msg.textContent = "A dev session is running. Opening it…";
+        go.href = d.url; go.style.display = "block";
+        meta.textContent = "started " + new Date(d.started).toLocaleString() + " · commit " + String(d.commit || "").slice(0, 7) + " · lasts about " + (d.hours || 5) + " h";
+        setTimeout(() => location.replace(d.url), 1200);
+      } else {
+        msg.innerHTML = "No dev session is running right now.";
+        meta.innerHTML = "Start one: <code>git push origin dev:dev-session -f</code> (or run the “Dev session” workflow). It is ready in about 6 minutes and this page then forwards to it.";
+      }
+    } catch (e) {
+      msg.textContent = "Could not read the session status. Try again in a minute.";
+    }
+  })();
+</script></body></html>

@@ -1,15 +1,15 @@
 name: Dev session (GitHub-hosted dev server)
 
-# A push to `dev` (or `dev-session`, to try this file) builds the app, starts the dev stack on a GitHub runner (4 CPUs, 16 GB,
-# free for a public repo) and opens it to the internet with Cloudflare quick tunnels. The URLs are printed in the run summary and
-# attached to the commit as the "dev-session" status. The session lasts `hours` (max 5.5), then the runner is gone: a new push
-# starts a new one. Build, deploy and publish behave exactly as in production; only the host differs. It has its own
-# concurrency group, so it never blocks or delays a production deploy.
+# Builds the app from the `dev` branch, starts the dev stack on a GitHub runner (4 CPUs, 16 GB, free for a public repo) and opens it
+# to the internet with Cloudflare quick tunnels. A session is started ON PURPOSE (push to the `dev-session` branch, or run this
+# workflow by hand): a push to `dev`, by anyone or any tool, does NOT restart it, so a running test is never killed and the link
+# does not change underneath you. The tunnel address changes per session, so the session also publishes it to a STABLE page,
+# https://<owner>.github.io/<repo>/ , which always forwards to the current one. Build, deploy and publish behave exactly as in
+# production; only the host differs. It has its own concurrency group, so it never blocks or delays a production deploy.
 
 on:
   push:
     branches:
-      - dev
       - dev-session
   workflow_dispatch:
     inputs:
@@ -22,7 +22,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write   # publishes the stable link page (gh-pages)
   statuses: write
 
 jobs:
@@ -36,6 +36,7 @@ jobs:
       - name: Checkout (with my-video submodule)
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && 'dev' || github.sha }}
           submodules: ${{ secrets.MY_VIDEO_TOKEN != '' }}
           token: ${{ secrets.MY_VIDEO_TOKEN || github.token }}
 
@@ -131,9 +132,18 @@ jobs:
 
           # the unified key the bot calls FreeLLMAPI with (a fresh database makes a new one)
           KEY=$(sudo sqlite3 session/freellm-data/freeapi.db "select value from settings where key='unified_api_key';" 2>/dev/null || true)
-          # The session's own FreeLLMAPI runs locally on this runner (fast, zero cross-continent latency).
-          echo "LLM_FALLBACK_URL=" >> "$GITHUB_ENV"
-          echo "LLM_FALLBACK_KEY=" >> "$GITHUB_ENV"
+          # The session's own FreeLLMAPI is the primary (fast, on this runner). It gets its provider keys from the DEV_FREELLM_KEYS secret
+          # (see export-freellm-keys-to-github.sh). While that secret is missing, the shared dev pool on the Oracle VM (it holds the keys)
+          # is the fallback, so the AI never fails with "no usable provider key".
+          REMOTE_KEY=$(grep -E '^FREELLMAPI_KEY=' .env.dev | tail -1 | cut -d= -f2- | tr -d '"' || true)
+          FALLBACK_URL=""
+          if [ -n "$REMOTE_KEY" ]; then
+            echo "::add-mask::$REMOTE_KEY"
+            FALLBACK_URL=https://shorts-dev.duckdns.org
+          fi
+          if [ -z "${DEV_FREELLM_KEYS}" ]; then echo "::warning::DEV_FREELLM_KEYS is not set: only the Groq key is local; the shared pool is the fallback"; fi
+          echo "LLM_FALLBACK_URL=$FALLBACK_URL" >> "$GITHUB_ENV"
+          echo "LLM_FALLBACK_KEY=$REMOTE_KEY" >> "$GITHUB_ENV"
           [ -n "$KEY" ] && echo "::add-mask::$KEY"
           echo "FREELLMAPI_KEY=$KEY" >> "$GITHUB_ENV"
           echo "PUBLIC_URL=$APP_URL" >> "$GITHUB_ENV"
@@ -166,6 +176,16 @@ jobs:
             -f state=success -f context="dev-session" -f description="Dev server is up" -f target_url="$APP_URL" > /dev/null
           echo "DEV URL: $APP_URL"
 
+      - name: Publish the stable link
+        run: |
+          rm -rf /tmp/pages && mkdir /tmp/pages && cd /tmp/pages && git init -q -b gh-pages
+          printf '{"url":"%s","llm":"%s","started":"%s","commit":"%s","hours":%s}\n' "$APP_URL" "$LLM_URL" "$(date -u +%FT%TZ)" "${GITHUB_SHA}" "$HOURS" > current.json
+          cp "$GITHUB_WORKSPACE/.github/dev-link/index.html" index.html
+          touch .nojekyll
+          git add -A && git -c user.name="dev-session" -c user.email="dev-session@users.noreply.github.com" commit -q -m "dev session ${GITHUB_SHA:0:7}"
+          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" gh-pages
+          echo "stable link: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Keep the session up
         run: |
           END=$(( $(date +%s) + $(python3 -c "import os;print(int(float(os.environ['HOURS'])*3600))") ))
@@ -174,6 +194,16 @@ jobs:
             sleep 60
           done
           echo "session time is up"
+
+      - name: Mark the stable link as "no session"
+        if: always()
+        run: |
+          rm -rf /tmp/pages && mkdir /tmp/pages && cd /tmp/pages && git init -q -b gh-pages
+          printf '{"url":"","started":"%s","commit":"%s"}\n' "$(date -u +%FT%TZ)" "${GITHUB_SHA}" > current.json
+          cp "$GITHUB_WORKSPACE/.github/dev-link/index.html" index.html
+          touch .nojekyll
+          git add -A && git -c user.name="dev-session" -c user.email="dev-session@users.noreply.github.com" commit -q -m "dev session ended"
+          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" gh-pages || true
 
       - name: Collect logs
         if: always()
