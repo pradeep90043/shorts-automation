@@ -1,4 +1,5 @@
 import { ChannelProfile, config } from "../config";
+import { isOffValue } from "../utils/switches";
 import { NotifyService } from "../notify";
 import { WatchStore, QueuedReel } from "../utils/watchStore";
 import { CHANNEL_ORDER, channelSlotIndex, gridFromEnv, hhmm, pickMinute, shortSlots, shortsGridActive } from "../schedule/shortsGrid";
@@ -447,9 +448,13 @@ export class ChannelWatcher {
 
     // Run missed batch selection immediately on startup if we are past the scheduled time
     // and no batch has run today yet (helps recover from restarts, redeployments, or crashes)
-    this.checkAndRunMissedBatch();
-
-    this.scheduleDailyBatch();
+    // CHANNEL_WATCHER=off (dev sessions): the queue still runs what is injected, but no reels are picked on a schedule
+    if (isOffValue(process.env.CHANNEL_WATCHER)) {
+      pipelineLogger.info(`[${this.profile.brandName}] CHANNEL_WATCHER=off: no automatic reel picking (dashboard injects only)`, "ChannelWatcher");
+    } else {
+      this.checkAndRunMissedBatch();
+      this.scheduleDailyBatch();
+    }
     setInterval(() => {
       this.processQueue().catch((err) => {
         pipelineLogger.error(

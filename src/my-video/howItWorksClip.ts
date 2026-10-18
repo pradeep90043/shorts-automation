@@ -81,7 +81,7 @@ const STOP = new Set(("the a an and or but of to in on for with from by at as is
 
 /** A 1-3 word topic label for a sentence ("Water absorbs thermal energy from the chips" -> "Water Absorbs Thermal"). */
 export function keyPhrase(sentence: string): string {
-  const words = sentence.replace(/[^\p{L}\p{N}\s'-]/gu, " ").split(/\s+/).filter(Boolean);
+  const words = sentence.replace(/[^\p{L}\p{M}\p{N}\s'-]/gu, " ").split(/\s+/).filter(Boolean); // \p{M} keeps Devanagari vowel signs (combining marks)
   const content = words.filter((w) => !STOP.has(w.toLowerCase()));
   const picked = (content.length ? content : words).slice(0, 3);
   const title = (ws: string[]) => ws.map((w) => w[0].toUpperCase() + w.slice(1)).join(" ");

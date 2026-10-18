@@ -38,7 +38,7 @@ import { prepareScoreAudio } from "./audio/verdictNumber";
 import { clonedVoiceEnabled, spokenText, startClonedLines } from "./audio/clonedVoice";
 import { buildClonedCtaAudio, buildClonedVerdictAudio, STORIYUM_CTA_PARTS } from "./audio/clonedVerdict";
 import { concatAudio } from "./audio/retime";
-import { estimateWordTimings, groupWordsIntoLines, generateASSFile } from "./audio/subtitles";
+import { alignScriptToSpan, estimateWordTimings, groupWordsIntoLines, generateASSFile } from "./audio/subtitles";
 import { TranscriptionService } from "./audio/transcription";
 import { PexelsService } from "./video/pexelsService";
 import { MultiSceneGenerator } from "./video/multiSceneGenerator";
@@ -4147,6 +4147,17 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         const ttsTimings = await this.getVoiceoverTranscript(context);
         if (ttsTimings) {
           wordTimings = ttsTimings;
+          // Hindi channels: caption the script that was actually spoken (Devanagari), timed by where the voice was heard
+          try {
+            const set = context.clonedVoice ? await context.clonedVoice : null;
+            const spoken = set?.spokenText("claim");
+            if (spoken && /[\u0900-\u097F]/.test(spoken) && ttsTimings.length) {
+              const aligned = alignScriptToSpan(spoken, ttsTimings[0].start, ttsTimings[ttsTimings.length - 1].end);
+              if (aligned.length) wordTimings = aligned;
+            }
+          } catch {
+            /* keep Whisper's words */
+          }
         } else {
           wordTimings = estimateWordTimings(
             context.metadata.voiceoverScript,
@@ -5593,6 +5604,11 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       } else {
         pipelineLogger.warn("V2 clip text could not be converted to Devanagari: it stays in Hinglish", "DirectUploader");
       }
+    }
+    // the diagram title is shown on screen: Hindi too
+    if (insightLang(process.env, key) === "hi" && meta.diagramTitle && !/[\u0900-\u097F]/.test(meta.diagramTitle)) {
+      const t = await toDevanagari([{ name: "title", text: meta.diagramTitle }]);
+      if (t) meta.diagramTitle = t[0].text;
     }
     meta.howItWorks = text; // "" -> deriveTranscriptionWorkflow uses the reel's transcript / caption
   }

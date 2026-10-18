@@ -224,3 +224,24 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   fs.writeFileSync(outputPath, header + events, "utf8");
   pipelineLogger.info(`Generated ASS subtitles (${style} style): ${outputPath}`, "Subtitles");
 }
+
+/**
+ * Captions that say exactly what the voice says: the words of the spoken script, timed across the span in which the voice was
+ * actually heard (first to last word Whisper found, so it is right even after the voiceover was sped up or slowed down). Each
+ * word gets time in proportion to its length. Whisper's own words are only a guess at Hinglish and can be garbled.
+ */
+export function alignScriptToSpan(script: string, spanStart: number, spanEnd: number): WordTiming[] {
+  const words = script.split(/\s+/).filter(Boolean);
+  if (!words.length || spanEnd <= spanStart) return [];
+  const weights = words.map((w) => Math.max(2, [...w].length) + (/[,.;:!?।]$/.test(w) ? 2 : 0)); // a pause after punctuation
+  const total = weights.reduce((a, b) => a + b, 0);
+  const out: WordTiming[] = [];
+  let t = spanStart;
+  words.forEach((word, i) => {
+    const d = ((spanEnd - spanStart) * weights[i]) / total;
+    out.push({ word, start: t, end: t + d });
+    t += d;
+  });
+  return out;
+}
+

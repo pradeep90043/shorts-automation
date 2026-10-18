@@ -16,6 +16,8 @@ export interface ClonedLineSet {
   dir: string;
   /** the mp3 of a line, or undefined when it is missing */
   file(name: string): string | undefined;
+  /** the text of a line exactly as it was spoken (Devanagari on the Hindi channels), for captions */
+  spokenText(name: string): string | undefined;
 }
 
 const off = (v: string | undefined): boolean => /^(off|false|0|no)$/i.test((v ?? "").trim());
@@ -93,9 +95,11 @@ export function startClonedLines(slug: string, lines: VoiceboxLine[], profileKey
   const english = profileKey.toLowerCase() === "codeorcap";
   pipelineLogger.info(`Cloned voice (${profileKey}): ${lines.length} line(s) -> GitHub Actions (give up after ${timeoutMin} min)`, "ClonedVoice");
   // English: no denoise (the user compared 4 variants against their own voice and the undenoised one (turbo, 1.0x) sounded closest)
+  let spokenLines: VoiceboxLine[] = lines;
   const run = async () => {
     const spoken = english ? lines : await toDevanagari(lines);
     if (!spoken) throw new Error("the Hindi text could not be prepared");
+    spokenLines = spoken;
     return generateVoiceboxNarration({
       slug,
       lines: spoken,
@@ -114,6 +118,7 @@ export function startClonedLines(slug: string, lines: VoiceboxLine[], profileKey
           const f = path.join(r.dir, `${name}.mp3`);
           return fs.existsSync(f) ? f : undefined;
         },
+        spokenText: (name: string) => spokenLines.find((l) => l.name === name)?.text,
       } as ClonedLineSet;
     })
     .catch((err) => {

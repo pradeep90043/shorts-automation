@@ -30,7 +30,8 @@ services:
     shm_size: 1gb
     environment:
       - BOT_ENV=dev
-      - SHORTS_GRID=off   # a dev session only runs what you inject
+      - SHORTS_GRID=off
+      - CHANNEL_WATCHER=off   # a dev session only runs what you inject: no automatic reel picking
       - TZ=Asia/Kolkata
       - DATABASE_URL=postgresql://botuser:botpass@postgres:5432/shortsbot
       - FREELLMAPI_URL=${LLM_BACKEND_URL:-http://freellmapi-dev:3001}

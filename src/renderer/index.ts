@@ -172,7 +172,7 @@ export class VideoRenderer implements IVideoRenderer {
     if (lines.length === 0) return "";
 
     const W = 1080, H = 1920;
-    const cat = (m?.coverCategory || "UPDATE").toUpperCase().replace(/[^A-Z]/g, "").slice(0, 12) || "UPDATE";
+    const cat = (m?.coverCategory || "UPDATE").toUpperCase().replace(/[^A-Z]/g, "").slice(0, 16) || "UPDATE";
     
     // Headline sizing: fit the widest line into ~940px.
     const maxChars = Math.max(...lines.map((l) => l.length), 1);

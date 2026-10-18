@@ -16,3 +16,16 @@ generateASSFile(line("RBI may raise the rate"), en, "classic");
 assert.ok(fs.readFileSync(en, "utf8").includes("Style: Default,Arial Black,"), "English captions keep Arial Black");
 fs.rmSync(dir, { recursive: true, force: true });
 console.log("✓ ass font");
+
+// captions that say what the voice says, timed across the heard span
+import { alignScriptToSpan } from "../src/audio/subtitles";
+import { keyPhrase } from "../src/my-video/howItWorksClip";
+const al = alignScriptToSpan("आरबीआई ब्याज दर बढ़ा सकता है।", 2, 8);
+assert.strictEqual(al.length, 6);
+assert.strictEqual(al[0].start, 2);
+assert.ok(Math.abs(al[al.length - 1].end - 8) < 1e-9);
+assert.ok(al.every((w, i) => i === 0 || Math.abs(w.start - al[i - 1].end) < 1e-9));
+assert.deepStrictEqual(alignScriptToSpan("", 0, 5), []);
+// Devanagari vowel signs survive the diagram-label cleaning
+assert.ok(keyPhrase("आरबीआई ब्याज दर बढ़ा सकता है।").includes("आरबीआई"));
+console.log("✓ alignment + devanagari labels");
