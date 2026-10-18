@@ -66,6 +66,7 @@ export async function renderShortCloud(
     captions: settings.captions ?? true,
     originalAudio: settings.originalAudio ?? false,
     useVoiceover: !!context.useVoiceover,
+    durationSeconds: context.videoDurationSeconds || 0,
     blurRegions: context.brandingDetection?.zones || [],
   };
 
