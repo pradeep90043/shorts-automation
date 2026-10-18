@@ -1,3 +1,4 @@
+import { jobProgress } from "./utils/jobProgress";
 import http from "http";
 import fs from "fs";
 import path from "path";
@@ -2048,6 +2049,13 @@ export function startLogServer(): void {
         "-C", jobDir, "."
       ]);
       tarProc.stdout.pipe(res);
+      return;
+    }
+
+    // ── /api/pipeline/live — where each job is, elapsed and estimated time (polled by the dashboard; needs no log stream) ──
+    if (req.method === "GET" && (url === "/api/pipeline/live" || url.startsWith("/api/pipeline/live?"))) {
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ now: Date.now(), jobs: jobProgress().snapshot().slice(0, 6) }));
       return;
     }
 

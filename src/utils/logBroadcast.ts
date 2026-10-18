@@ -1,5 +1,6 @@
 import { ServerResponse } from "http";
 import Transport from "winston-transport";
+import { jobProgress } from "./jobProgress";
 
 const clients = new Set<ServerResponse>();
 
@@ -35,6 +36,12 @@ function safeStringify(obj: any): string {
 export class BroadcastTransport extends Transport {
   log(info: any, callback: () => void): void {
     setImmediate(() => this.emit("logged", info));
+    try {
+      // follow each job through its stages (dashboard "live job" card, /api/pipeline/live)
+      jobProgress().observe(String(info?.message ?? ""), String(info?.label ?? ""), String(info?.level ?? "info"));
+    } catch {
+      // progress tracking must never break logging
+    }
     try {
       const data = safeStringify(info);
       for (const res of clients) {
