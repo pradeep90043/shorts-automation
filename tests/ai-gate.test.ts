@@ -68,7 +68,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
     q1.addJob("three", work("three"));
     for (let i = 0; i < 40 && events.length < 6; i++) await sleep(25);
     assert.strictEqual(maxRunning, 1, "two Shorts never ran at the same time");
-    assert.deepStrictEqual(events.filter((e) => e.startsWith("start")).length, 3);
+    assert.deepStrictEqual(events.filter((e) => e.startsWith("start")), ["start one", "start two", "start three"], "first come, first served across channels");
   }
 
   console.log("✓ ai gate + one pipeline at a time");

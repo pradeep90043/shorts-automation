@@ -146,6 +146,27 @@ jobs:
           echo "LLM_FALLBACK_KEY=$REMOTE_KEY" >> "$GITHUB_ENV"
           [ -n "$KEY" ] && echo "::add-mask::$KEY"
           echo "FREELLMAPI_KEY=$KEY" >> "$GITHUB_ENV"
+
+          # Self-test from THIS runner (free providers may throttle GitHub's shared addresses): a text and a vision request, and every
+          # key's status. Published next to the stable link as llm-status.json (no keys in it).
+          sleep 5
+          PNG='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEklEQVR4nGP8z8DwnwEJMGIXAAA8vgIAwHfBiwAAAABJRU5ErkJggg=='
+          ask() { curl -s -m 90 -w '\n%{http_code}' -X POST localhost:3001/v1/chat/completions -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' -d "$1"; }
+          T=$(ask '{"model":"auto","messages":[{"role":"user","content":"Reply with the single word: ok"}],"max_tokens":8}')
+          V=$(ask "{\"model\":\"auto\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"What colour is this image? One word.\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"$PNG\"}}]}],\"max_tokens\":8}")
+          KEYS=$(curl -s -m 20 -H "Authorization: Bearer $TOKEN" localhost:3001/api/keys || true)
+          T_CODE=$(echo "$T" | tail -n1) T_BODY=$(echo "$T" | sed '$d' | head -c 400) V_CODE=$(echo "$V" | tail -n1) V_BODY=$(echo "$V" | sed '$d' | head -c 400) KEYS_JSON="$KEYS" \
+          python3 - <<'PY'
+          import json, os
+          try:
+              d = json.loads(os.environ.get("KEYS_JSON") or "[]")
+              ks = d if isinstance(d, list) else d.get("keys", [])
+              keys = [{"platform": k.get("platform"), "status": k.get("status"), "enabled": k.get("enabled"), "label": k.get("label")} for k in ks]
+          except Exception as e:
+              keys = [{"error": str(e)[:100]}]
+          json.dump({"text": {"http": os.environ.get("T_CODE"), "body": os.environ.get("T_BODY")}, "vision": {"http": os.environ.get("V_CODE"), "body": os.environ.get("V_BODY")}, "keys": keys}, open("/tmp/llm-status.json", "w"))
+          PY
+          echo "LLM self-test: text HTTP $T_CODE, vision HTTP $V_CODE"
           echo "PUBLIC_URL=$APP_URL" >> "$GITHUB_ENV"
         env:
           DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
@@ -181,6 +202,7 @@ jobs:
           rm -rf /tmp/pages && mkdir /tmp/pages && cd /tmp/pages && git init -q -b gh-pages
           printf '{"url":"%s","llm":"%s","started":"%s","commit":"%s","hours":%s}\n' "$APP_URL" "$LLM_URL" "$(date -u +%FT%TZ)" "${GITHUB_SHA}" "$HOURS" > current.json
           cp "$GITHUB_WORKSPACE/.github/dev-link/index.html" index.html
+          [ -f /tmp/llm-status.json ] && cp /tmp/llm-status.json llm-status.json
           touch .nojekyll
           git add -A && git -c user.name="dev-session" -c user.email="dev-session@users.noreply.github.com" commit -q -m "dev session ${GITHUB_SHA:0:7}"
           git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" gh-pages
