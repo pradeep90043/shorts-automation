@@ -6,7 +6,7 @@ const RUN: Array<[string, string, string, string]> = [
   ["15:04:03", "info", "Notify", "[PromptGag] Injected reel, downloading... (gen-1792316043523-250)"],
   ["15:04:03", "info", "ChannelWatcher", "[PromptGag] Interactive manual ingest triggered for reel @manual_inject/Dd9SV8HNFFO (jobId: gen-1792316043523-250)"],
   ["15:04:07", "info", "Pipeline", "✓ Instagram frame ready (video) — starting pipeline (/app/temp/gen-1792316043523-250/original.jpg)"],
-  ["15:04:30", "info", "DirectUploader", "Running unified AI vision for metadata and branding detection…"],
+  ["15:04:30", "info", "DirectUploader", "Running unified AI Vision for metadata and branding detection…"],
   ["15:05:29", "info", "Pipeline", "✓ Unified AI vision completed (Metadata: \"Will RBI Hike Rates? Impact on Home Loans Explained 🏠\", Branding zones: 1)"],
   ["15:05:29", "info", "Shazam", "[Shazam] Running audio identification on reel_video.mp4..."],
   ["15:05:30", "info", "Shazam", "[Shazam] No commercial match found for reel_video.mp4 (likely royalty-free or original audio)"],

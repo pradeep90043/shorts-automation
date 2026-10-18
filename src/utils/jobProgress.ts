@@ -22,7 +22,7 @@ export interface StageDef {
 export const STAGES: StageDef[] = [
   { id: "download", label: "Download the reel", what: "fetching the reel and its caption from Instagram", typicalSec: 45, start: /Interactive manual ingest triggered|Auto-publishing reel|Injected reel, downloading|Reel received, downloading/ },
   { id: "prepare", label: "Prepare the video", what: "trimming, transcribing the audio and reading the on-screen text", typicalSec: 100, start: /Instagram frame ready|Instagram frame extracted/ },
-  { id: "vision", label: "AI: title, captions, branding", what: "the AI is reading the frames and writing the title and script", typicalSec: 60, start: /Running unified AI vision/ },
+  { id: "vision", label: "AI: title, captions, branding", what: "the AI is reading the frames and writing the title and script", typicalSec: 60, start: /Running unified AI vision|Attempting metadata generation via/i },
   { id: "voice", label: "Voiceover (cloned voice)", what: "the cloned voice is being made on a GitHub runner (about 14 minutes)", typicalSec: 860, start: /Kicking off TTS generation/ },
   { id: "render", label: "Render the Short", what: "a GitHub runner is cropping, branding, captioning and mixing the audio", typicalSec: 150, start: /Dispatching short render|Cloud render was not completed|Executing FFmpeg video processing/ },
   { id: "v2", label: "V2 middle clip", what: "making the explainer clip that goes in the middle", typicalSec: 330, start: /Generating V2 transition clip/ },
