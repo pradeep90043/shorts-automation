@@ -35,6 +35,7 @@ services:
       - FREELLMAPI_URL=http://freellmapi-dev:3001
       - FREELLMAPI_KEY=${FREELLMAPI_KEY}
       - PUBLIC_URL=${PUBLIC_URL}
+      - BASE_URL=${PUBLIC_URL}   # a BASE_URL in the dev settings (the old VM address) would otherwise win
     depends_on:
       - postgres
       - freellmapi-dev

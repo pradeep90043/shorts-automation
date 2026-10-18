@@ -117,7 +117,10 @@ jobs:
           if [ -n "$TOKEN" ]; then
             add() { curl -s -o /dev/null -w "  $1 key: %{http_code}\n" -X POST localhost:3001/api/keys -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
                       -d "$(python3 -c "import json,sys;print(json.dumps({'platform':sys.argv[1],'key':sys.argv[2],'label':'dev-session'}))" "$1" "$2")"; }
-            if [ -n "${GROQ_API_KEY}" ]; then add groq "${GROQ_API_KEY}"; fi
+            # the Groq key is the one in the dev settings (DEV_ENV), or a GROQ_API_KEY secret when there is one
+            GROQ=$(grep -E '^GROQ_API_KEY=' .env.dev | tail -1 | cut -d= -f2- | tr -d '"' || true)
+            [ -n "$GROQ" ] && echo "::add-mask::$GROQ"
+            if [ -n "$GROQ" ]; then add groq "$GROQ"; else echo "::warning::no Groq key in the dev settings: FreeLLMAPI starts with no provider"; fi
             # optional: more providers, one "platform=key" per line in the DEV_FREELLM_KEYS secret
             printf '%s\n' "${DEV_FREELLM_KEYS}" | while IFS='=' read -r p k; do if [ -n "$p" ] && [ -n "$k" ]; then add "$p" "$k"; fi; done
           else
