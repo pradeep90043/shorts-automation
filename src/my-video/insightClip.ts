@@ -1,4 +1,5 @@
 import { isOffValue } from "../utils/switches";
+import { numbersIn } from "../longvideo-auto/guardrails";
 
 /**
  * The stickman clip in the middle of a V2 Short. CodeOrCap's is "how it works"; the other channels get the insight that
@@ -99,3 +100,37 @@ export const insightRuleFor = (channelKey: string, env: NodeJS.ProcessEnv = proc
   (insightLang(env, channelKey) === "hi"
     ? " Write it in Hinglish (Hindi words in the English alphabet), the same language as the voiceover: it is turned into Devanagari for the Hindi voice."
     : "");
+
+/** Sentences of a short text, Devanagari danda included. */
+const sentencesOf = (text: string): string[] => text.split(/(?<=[.!?।])\s+/).map((x) => x.trim()).filter(Boolean);
+
+/**
+ * A finance explainer may only state figures the reel itself shows or says. Sentences with a number (a rate, a percentage,
+ * a price) that is not in `source` are dropped; the rest is kept. An empty result tells the caller to fall back to the
+ * reel's own words. (The model writes "6.5% -> 7.0%" for a reel that says 5.50%.)
+ */
+export function dropUnsupportedFigures(text: string, source: string): { text: string; dropped: number } {
+  const allowed = new Set(numbersIn(source).map((n) => String(parseFloat(n))));
+  const kept: string[] = [];
+  let dropped = 0;
+  for (const sentence of sentencesOf(text)) {
+    const unsupported = numbersIn(sentence).some((n) => !allowed.has(String(parseFloat(n))));
+    if (unsupported) dropped++;
+    else kept.push(sentence);
+  }
+  return { text: kept.join(" "), dropped };
+}
+
+const ENGLISH_WORDS = new Set("the and to of in is are a an for on with that this it as be will by from at or can has have may could would should their its was were been being which what when where while than then into over under about".split(" "));
+const HINGLISH_WORDS = new Set("hai hain ki ke ka ko se mein me nahi nahin aur yeh ye toh to bhi kya hota hoga honge raha rahi rahe kar karna karo liye jab lekin par agar bahut abhi sabse apne aap tum hum".split(" "));
+
+/** True for text written in English (no Devanagari, English function words, hardly any Hindi ones). */
+export function looksEnglish(text: string): boolean {
+  if (/[\u0900-\u097F]/.test(text)) return false;
+  const words = (text.toLowerCase().match(/[a-z']+/g) ?? []);
+  if (words.length < 6) return false;
+  const en = words.filter((w) => ENGLISH_WORDS.has(w)).length / words.length;
+  const hi = words.filter((w) => HINGLISH_WORDS.has(w)).length / words.length;
+  return en >= 0.2 && hi < 0.06;
+}
+

@@ -1,3 +1,4 @@
+import { dropUnsupportedFigures, looksEnglish } from "../src/my-video/insightClip";
 import assert from "assert";
 import { insightChannels, insightEnabledFor, insightFor, insightIntro, insightLang, insightRuleFor } from "../src/my-video/insightClip";
 import { howItWorksLines } from "../src/my-video/howItWorksClip";
@@ -50,4 +51,14 @@ const hi = howItWorksLines("बाज़ार आज तेज़ी से ग
 assert.strictEqual(hi.length, 3);
 assert.strictEqual(hi[1], "बाज़ार आज तेज़ी से गिरा।");
 
+// figures must come from the reel; English is detected
+const src = "RBI to raise interest rates to 5.50% in October as inflation broadens. India inflation rises to 4.82% in August.";
+const kept = dropUnsupportedFigures("RBI may raise the rate to 5.50% soon. The rate could go from 6.5% to 7.0% next year. Inflation is 4.82% now.", src);
+assert.strictEqual(kept.dropped, 1);
+assert.ok(kept.text.includes("5.50%") && kept.text.includes("4.82%") && !kept.text.includes("7.0"));
+assert.strictEqual(dropUnsupportedFigures("ब्याज दर 5.50% तक जा सकती है।", src).dropped, 0);
+assert.strictEqual(dropUnsupportedFigures("Rates may rise 7.25% soon.", "no numbers here").text, "");
+assert.strictEqual(looksEnglish("The RBI is expected to raise the interest rate and this will affect home loans in the country"), true);
+assert.strictEqual(looksEnglish("RBI ka rate badh sakta hai aur isse aapki EMI bhi badh jayegi, ye hai sabse badi baat"), false);
+assert.strictEqual(looksEnglish("आरबीआई ब्याज दर बढ़ा सकता है और ईएमआई बढ़ेगी"), false);
 console.log("✓ insight clip");

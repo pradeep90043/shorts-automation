@@ -14,7 +14,8 @@ import { NotifyService, escapeMarkdown } from "./notify";
 import { PipelineContext, VideoMetadata } from "./types";
 import { pipelineLogger } from "./utils/logger";
 import { howItWorksLines, renderHowItWorksClip } from "./my-video/howItWorksClip";
-import { insightEnabledFor, insightFor, insightIntro, insightRuleFor } from "./my-video/insightClip";
+import { dropUnsupportedFigures, insightEnabledFor, insightFor, insightIntro, insightLang, insightRuleFor, looksEnglish } from "./my-video/insightClip";
+import { makeAsk } from "./longvideo-auto/llm";
 import { FreeLlmApiClient } from "./ai/freellmapi";
 import { GeminiClient } from "./ai/gemini";
 import { parseAiJson, extractJsonArrayField } from "./utils/json";
@@ -2902,6 +2903,8 @@ ${this.theme.analysisRules}`;
 
       // Kick off TTS in parallel with the video render (the image branch
       // generates it synchronously because it needs the duration up front).
+      await this.refineInsight(context);
+
       let ttsPromise: Promise<number> | undefined;
       if (context.useVoiceover && isVideo) {
         pipelineLogger.info(
@@ -4100,9 +4103,11 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         "DirectUploader",
       );
       try {
+        // Hindi voice (every channel but CodeOrCap): tell Whisper, so the captions come back in Devanagari, not Roman Hinglish
         const ttsTranscript = await TranscriptionService.transcribeFile(
           voiceoverPath,
           context.tempDir,
+          this.profile.key.toLowerCase() === "codeorcap" ? undefined : { language: "hi" },
         );
         if (ttsTranscript && ttsTranscript.words && ttsTranscript.words.length > 0) {
           (context as any).ttsTranscript = ttsTranscript;
@@ -5221,7 +5226,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
           const myVideoClip = path.join(tempDir, "hiw_myvideo.mp4");
           const rendered = await renderHowItWorksClip(
             // the short's own diagram (not the generic placeholder deriveTranscriptionWorkflow invents when it is missing)
-            { explanation: rawExplanation, intro: insightIntro(profileKey), title2: insightFor(profileKey).title, title: context.metadata?.title, mermaid: context.metadata?.diagramWorkflow, diagramTitle: workflowData.diagramTitle, narrationFiles: clonedHiwFiles },
+            { explanation: rawExplanation, intro: insightIntro(profileKey), title2: insightFor(profileKey).title, language: insightLang(process.env, profileKey), title: context.metadata?.title, mermaid: context.metadata?.diagramWorkflow, diagramTitle: workflowData.diagramTitle, narrationFiles: clonedHiwFiles },
             myVideoClip,
           );
           if (rendered) {
@@ -5510,6 +5515,49 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
    * Derives a structured explanation and a clean Mermaid flowchart from
    * reel transcription, caption, and AI metadata to power the V2 transition clip.
    */
+  /**
+   * Makes the V2 middle clip's text safe before anything is voiced or drawn: (1) a figure the reel does not contain is never
+   * stated (the sentence is dropped), (2) on a Hindi channel English text is rewritten in Hinglish; when that fails or nothing
+   * is left, the clip falls back to the reel's own words (deriveTranscriptionWorkflow). Runs once, before the voice and the clip.
+   */
+  private async refineInsight(context: PipelineContext): Promise<void> {
+    const key = this.profile.key.toLowerCase();
+    const meta = context.metadata;
+    if (key === "codeorcap" || !meta?.howItWorks?.trim()) return;
+    if (!insightEnabledFor(key, this.profile.watch?.outroVersion)) return;
+
+    const source = [context.transcript?.text, context.captionMetadata?.description, context.ocr?.text, meta.title, meta.description]
+      .filter(Boolean)
+      .join("\n");
+    const before = meta.howItWorks.trim();
+    const figures = dropUnsupportedFigures(before, source);
+    let text = figures.text;
+    if (figures.dropped) {
+      pipelineLogger.warn(`V2 clip: ${figures.dropped} sentence(s) with figures that are not in the reel were dropped`, "DirectUploader");
+    }
+
+    if (text && insightLang(process.env, key) === "hi" && looksEnglish(text)) {
+      let rewritten = "";
+      try {
+        rewritten = await makeAsk({ timeoutMs: 60_000, hedgeMs: 15_000 })(
+          `Rewrite this text in Hinglish (Hindi written in the English alphabet), the way an Indian creator speaks, in the same number of sentences. ` +
+            `Keep the meaning. Do not add any fact, name, number or percentage that is not in the text. Return ONLY the rewritten text.\n\n${text}`,
+        );
+      } catch {
+        /* fall back below */
+      }
+      rewritten = rewritten.replace(/^["'\s]+|["'\s]+$/g, "");
+      if (rewritten && !looksEnglish(rewritten) && !dropUnsupportedFigures(rewritten, source).dropped) {
+        pipelineLogger.info("V2 clip text was English: rewritten in Hinglish", "DirectUploader");
+        text = rewritten;
+      } else {
+        pipelineLogger.warn("V2 clip text was English and could not be rewritten: the reel's own words are used", "DirectUploader");
+        text = "";
+      }
+    }
+    meta.howItWorks = text; // "" -> deriveTranscriptionWorkflow uses the reel's transcript / caption
+  }
+
   private deriveTranscriptionWorkflow(context: PipelineContext): {
     explanation: string;
     diagramTitle: string;

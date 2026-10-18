@@ -150,8 +150,8 @@ export class VideoRenderer implements IVideoRenderer {
   /**
    * InfoOnSpot cover card: a full-frame (1080x1920) transparent PNG with a
    * category badge + reaction emoji top-left, a 2-3 line accent/white headline,
-   * and an INFOONSPOT bug bottom-right. Returns "" when the metadata has no
-   * coverHeadline (i.e. every non-InfoOnSpot profile).
+   * and the channel's own name bottom-right. Returns "" when the metadata has no
+   * coverHeadline.
    */
   private async buildInfoOnSpotCover(
     context: PipelineContext,
@@ -173,8 +173,7 @@ export class VideoRenderer implements IVideoRenderer {
 
     const W = 1080, H = 1920;
     const cat = (m?.coverCategory || "UPDATE").toUpperCase().replace(/[^A-Z]/g, "").slice(0, 12) || "UPDATE";
-    const emoji = (m?.coverEmoji || "⚡").trim().slice(0, 4);
-
+    
     // Headline sizing: fit the widest line into ~940px.
     const maxChars = Math.max(...lines.map((l) => l.length), 1);
     const fontSize = Math.max(70, Math.min(150, Math.round(940 / (maxChars * 0.62))));
@@ -185,8 +184,12 @@ export class VideoRenderer implements IVideoRenderer {
     const blockTop = H - bottomPadding - blockHeight;
     const textLeft = 70;
 
-    const catText = `${emoji}  ${cat}`;
+    // Emoji and symbols (the old "◉") have no glyph in the server's SVG renderer and came out as empty squares: the pill
+    // carries the category word only, and the brand mark is a drawn circle.
+    const catText = cat;
     const pillW = Math.round(catText.length * 24 + 56);
+    const brandLabel = (this.brandName || "").replace(/[^\p{L}\p{N} ]/gu, "").trim().toUpperCase() || "";
+    const brandW = Math.round(brandLabel.length * 21 + 36);
     const pillY = blockTop;
 
     const headlineStartY = pillY + 95;
@@ -210,13 +213,14 @@ export class VideoRenderer implements IVideoRenderer {
       <rect x="${textLeft}" y="${pillY}" width="${pillW}" height="64" rx="14" fill="#0B0B0B" fill-opacity="0.95" stroke="#FFB800" stroke-width="2.5"/>
       <text x="${textLeft + pillW / 2}" y="${pillY + 44}" font-family="-apple-system,'Segoe UI',Arial,sans-serif" font-size="30" font-weight="800" fill="#FFFFFF" text-anchor="middle" letter-spacing="1">${esc(catText)}</text>
       ${headlineTspans}
-      <text x="${W - 60}" y="${H - 70}" font-family="-apple-system,'Segoe UI',Arial,sans-serif" font-size="28" font-weight="800" fill="#FFFFFF" fill-opacity="0.92" text-anchor="end" letter-spacing="2">◉ INFOONSPOT</text>
+      ${brandLabel ? `<circle cx="${W - 60 - brandW}" cy="${H - 79}" r="9" fill="#FFB800"/>
+      <text x="${W - 60}" y="${H - 70}" font-family="-apple-system,'Segoe UI',Arial,sans-serif" font-size="28" font-weight="800" fill="#FFFFFF" fill-opacity="0.92" text-anchor="end" letter-spacing="2">${esc(brandLabel)}</text>` : ""}
     </svg>`;
 
     const outPath = path.join(dir, "infoonspot_cover.png");
     await sharp(Buffer.from(svg)).png().toFile(outPath);
     pipelineLogger.info(
-      `InfoOnSpot cover card generated (${lines.length} line(s), category "${cat}")`,
+      `Cover card generated for ${this.brandName} (${lines.length} line(s), category "${cat}")`,
       "VideoRenderer",
     );
     return outPath;

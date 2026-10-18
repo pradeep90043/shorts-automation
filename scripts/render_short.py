@@ -24,6 +24,24 @@ import tempfile
 import glob
 
 
+def ensure_devanagari_font():
+    """Hindi captions need a Devanagari font; the GitHub runner image has none, so libass would draw empty boxes.
+    Installs Noto (time-limited, never fatal: without it the render still finishes, only the Hindi glyphs are missing)."""
+    try:
+        have = subprocess.run(["fc-list", ":lang=hi"], capture_output=True, text=True, timeout=30).stdout.strip()
+        if have:
+            return
+        print("🔤 Installing a Devanagari font for Hindi captions...")
+        for cmd in (["sudo", "apt-get", "-o", "Acquire::Retries=2", "-o", "Acquire::http::Timeout=20", "update", "-qq"],
+                    ["sudo", "apt-get", "-o", "Acquire::Retries=2", "install", "-y", "-qq", "fonts-noto-core"],
+                    ["sudo", "fc-cache", "-f"]):
+            subprocess.run(cmd, timeout=150, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        ok = subprocess.run(["fc-list", ":lang=hi"], capture_output=True, text=True, timeout=30).stdout.strip()
+        print("✓ Devanagari font ready" if ok else "⚠ Devanagari font not available: Hindi captions may show empty boxes")
+    except Exception as exc:  # noqa: BLE001
+        print(f"⚠ font setup skipped: {exc}")
+
+
 def download_and_extract_bundle(bundle_url: str, dest_dir: str):
     print(f"📥 Downloading bundle from: {bundle_url}")
     tar_path = os.path.join(dest_dir, "bundle.tar.gz")
@@ -300,6 +318,7 @@ def main():
     temp_dir = tempfile.mkdtemp(prefix="short_cloud_")
     try:
         download_and_extract_bundle(args.bundle, temp_dir)
+        ensure_devanagari_font()
         build_and_run_ffmpeg(temp_dir, repo_root, args.out)
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)

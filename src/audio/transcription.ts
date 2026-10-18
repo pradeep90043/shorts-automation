@@ -15,6 +15,7 @@ export class TranscriptionService {
   public static async transcribeFile(
     filePath: string,
     tempDir: string,
+    opts?: { language?: string },
   ): Promise<{ text: string; words: Array<{ word: string; start: number; end: number }> } | null> {
     if (!filePath || !fs.existsSync(filePath)) {
       return null;
@@ -102,6 +103,7 @@ export class TranscriptionService {
           model: groqModel,
           response_format: "verbose_json",
           timestamp_granularities: ["word"],
+          ...(opts?.language ? { language: opts.language } : {}),
         });
 
         const text = response.text || "";
@@ -142,6 +144,7 @@ export class TranscriptionService {
           model: model,
           response_format: "verbose_json",
           timestamp_granularities: ["word"],
+          ...(opts?.language ? { language: opts.language } : {}),
         });
 
         const text = response.text || "";
@@ -171,6 +174,7 @@ export class TranscriptionService {
           model: "whisper-1",
           response_format: "verbose_json",
           timestamp_granularities: ["word"],
+          ...(opts?.language ? { language: opts.language } : {}),
         });
 
         const text = response.text || "";

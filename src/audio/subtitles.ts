@@ -152,6 +152,9 @@ export function generateASSFile(
     return;
   }
 
+  // Hindi captions: Arial Black has no Devanagari glyphs, so libass would draw empty boxes
+  const hindi = lines.some((l) => /[\u0900-\u097F]/.test(l.text));
+  const fontName = hindi ? "Noto Sans Devanagari" : "Arial Black";
   const fontSize = style === "minimal" ? 64 : 85;
   const outline = style === "minimal" ? 4 : 8;
   const marginV = style === "minimal" ? 180 : 250;
@@ -166,7 +169,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColor, SecondaryColor, OutlineColor, BackColor, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial Black,${fontSize},&H00FFFFFF,&H00FFFFFF,&H000B0B0B,&H000B0B0B,-1,0,0,0,100,100,0,0,3,${outline},0,8,80,80,${marginV},1
+Style: Default,${fontName},${fontSize},&H00FFFFFF,&H00FFFFFF,&H000B0B0B,&H000B0B0B,-1,0,0,0,100,100,0,0,3,${outline},0,8,80,80,${marginV},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
