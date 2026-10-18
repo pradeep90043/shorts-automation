@@ -103,4 +103,14 @@ assert.strictEqual(new StageStats().typical("voice", 860), 860);
   p.observe("Kicking off TTS generation asynchronously...", "DirectUploader", "info", at("10:01:40"), "gen-999-9");
   assert.strictEqual(Object.fromEntries(p.snapshot(at("10:01:41")).map((j) => [j.id, j]))[B].current?.id, "prepare");
 }
+
+// the voice stage also starts on the cloned-voice line (some flows never log "Kicking off TTS")
+{
+  const p = new ProgressTracker(new StageStats());
+  const A = "gen-1000000000002-3";
+  p.observe(`[Storiyum] Interactive manual ingest triggered for reel @manual_inject/x (jobId: ${A})`, "ChannelWatcher", "info", at("10:00:00"));
+  p.observe("Instagram frame ready (video)", "Pipeline", "info", at("10:00:10"), A);
+  p.observe("Cloned voice (storiyum): 4 line(s) -> GitHub Actions (give up after 20 min)", "ClonedVoice", "info", at("10:01:00"), A);
+  assert.strictEqual(p.snapshot(at("10:02:00"))[0].current?.id, "voice");
+}
 console.log("✓ job progress");
