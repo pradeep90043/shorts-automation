@@ -1567,7 +1567,6 @@ export function startLogServer(): void {
             theme: resolveTheme(storedConfig.niche, storedConfig.brandName),
             isDefault: Boolean(storedConfig.isDefault),
             isWatchOnly: Boolean(storedConfig.isWatchOnly),
-            telegramToken: config.telegramToken,
             youtube: {
               clientId: storedConfig.youtubeClientId || process.env.YOUTUBE_CLIENT_ID || "",
               clientSecret: storedConfig.youtubeClientSecret || process.env.YOUTUBE_CLIENT_SECRET || "",

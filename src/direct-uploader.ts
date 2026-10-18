@@ -10,7 +10,7 @@ import { MusicService, normalizeMood, ambientBedPath } from "./music";
 import { YouTubeService, UploadResult } from "./youtube";
 import { InstagramPublisher, InstagramUploadResult } from "./instagram/publisher";
 import { FacebookPublisher, FacebookUploadResult } from "./facebook/publisher";
-import { TelegramService, escapeMarkdown } from "./telegram";
+import { NotifyService, escapeMarkdown } from "./notify";
 import { PipelineContext, VideoMetadata } from "./types";
 import { pipelineLogger } from "./utils/logger";
 import { howItWorksLines, renderHowItWorksClip } from "./my-video/howItWorksClip";
@@ -36,7 +36,6 @@ import { clonedVoiceEnabled, spokenText, startClonedLines } from "./audio/cloned
 import { buildClonedCtaAudio, buildClonedVerdictAudio, STORIYUM_CTA_PARTS } from "./audio/clonedVerdict";
 import { concatAudio } from "./audio/retime";
 import { estimateWordTimings, groupWordsIntoLines, generateASSFile } from "./audio/subtitles";
-import { buildGridPreview } from "./utils/gridPreview";
 import { TranscriptionService } from "./audio/transcription";
 import { PexelsService } from "./video/pexelsService";
 import { MultiSceneGenerator } from "./video/multiSceneGenerator";
@@ -145,7 +144,7 @@ export class DirectUploader {
   private youtube: YouTubeService;
   private instagram: InstagramPublisher;
   private facebook: FacebookPublisher;
-  private telegram: TelegramService;
+  private notify: NotifyService;
   private db: JobDatabase;
   public profile: ChannelProfile;
   private tts: TTSService;
@@ -214,8 +213,8 @@ export class DirectUploader {
   >();
   private jobResolvers = new Map<string, () => void>();
 
-  constructor(telegram: TelegramService, profile?: ChannelProfile) {
-    this.profile = profile || telegram.profile;
+  constructor(notify: NotifyService, profile?: ChannelProfile) {
+    this.profile = profile || notify.profile;
     if (config.ai.provider === "freellmapi") {
       this.freellmapi = new FreeLlmApiClient();
     }
@@ -234,12 +233,12 @@ export class DirectUploader {
     this.db = new JobDatabase(
       this.profile.isDefault ? undefined : this.profile.key,
     );
-    this.telegram = telegram;
+    this.notify = notify;
     this.tts = new TTSService();
     DirectUploader.instances.push(this);
 
-    // Wire up inline-button callbacks from Telegram
-    telegram.registerReviewCallback((action, id) => {
+    // Review callbacks (kept for the notifier interface; the dashboard drives review)
+    notify.registerReviewCallback((action, id) => {
       if (action === "publish") this.onPublish(id);
       else if (action === "cancel") this.onCancel(id);
       else if (action === "regenerate") this.onRegenerate(id, false);
@@ -248,7 +247,7 @@ export class DirectUploader {
       else if (action === "replace_music") {
         const pending = this.pending.get(id);
         if (pending) {
-          this.telegram.sendMessage(
+          this.notify.sendMessage(
             pending.chatId,
             `🎵 *Please upload or send an audio file* (MP3, WAV, M4A, AAC, OGG) or record a voice note now to replace the background music for this Short.`,
             pending.reviewMessageId
@@ -257,19 +256,19 @@ export class DirectUploader {
       }
     });
 
-    telegram.registerRevokeCallback(async (id) => {
+    notify.registerRevokeCallback(async (id) => {
       await this.onRevoke(id);
     });
 
-    telegram.registerAudioUploadCallback(async (chatId, fileId, fileName, messageId) => {
+    notify.registerAudioUploadCallback(async (chatId, fileId, fileName, messageId) => {
       return this.handleUserAudioUpload(chatId, fileId, fileName, messageId);
     });
 
-    telegram.registerSettingsReviewCallback((code, id) => {
+    notify.registerSettingsReviewCallback((code, id) => {
       this.onSettingsAction(code, id);
     });
 
-    telegram.registerTextPromptCallback(async (chatId, text, messageId) => {
+    notify.registerTextPromptCallback(async (chatId, text, messageId) => {
       return this.handleUserTextPrompt(chatId, text, messageId);
     });
 
@@ -797,10 +796,10 @@ Use this to write a voiceover script that matches the content arc of the video. 
             data.qualityScore.readability < 50 ||
             data.qualityScore.watermarkRisk > 70
           ) {
-            const chatId = context.telegramMeta?.chatId;
-            const messageId = context.telegramMeta?.messageId;
+            const chatId = context.sourceMeta?.chatId;
+            const messageId = context.sourceMeta?.messageId;
             if (chatId) {
-              this.telegram
+              this.notify
                 .sendMessage(
                   chatId,
                   `⚠️ *AI Quality Check Warning:*\n` +
@@ -853,11 +852,11 @@ Use this to write a voiceover script that matches the content arc of the video. 
       const msg = err instanceof Error ? err.message : String(err);
       pipelineLogger.error("Unified AI vision failed", err, "DirectUploader");
 
-      const chatId = context.telegramMeta?.chatId;
-      const messageId = context.telegramMeta?.messageId;
+      const chatId = context.sourceMeta?.chatId;
+      const messageId = context.sourceMeta?.messageId;
       if (chatId) {
         if (/quota|limit|429|resource_exhausted/i.test(msg)) {
-          this.telegram
+          this.notify
             .sendMessage(
               chatId,
               `⚠️ *AI Vision Quota Error:* Your FreeLLMAPI key has exceeded its quota.\n\n` +
@@ -867,7 +866,7 @@ Use this to write a voiceover script that matches the content arc of the video. 
             )
             .catch(() => {});
         } else {
-          this.telegram
+          this.notify
             .sendMessage(
               chatId,
               `⚠️ *AI Vision Error:* Failed to analyze frame: \`${msg.slice(0, 150)}\`\n\n` +
@@ -1136,15 +1135,15 @@ Description: ${description}\n`;
       // Surface the failure in Telegram — otherwise the video silently goes to
       // review with a generic template title
       if (context) context.metadataIsFallback = true;
-      const chatId = context?.telegramMeta?.chatId;
+      const chatId = context?.sourceMeta?.chatId;
       if (chatId) {
-        this.telegram
+        this.notify
           .sendMessage(
             chatId,
             `❌ *AI metadata generation failed* (FreeLLMAPI, model: auto)\n` +
               `\`${msg.replace(/`/g, "'").slice(0, 200)}\`\n\n` +
               `_Using a generic template title/description instead. Tap 🔄 Regenerate on the review message to retry AI generation._`,
-            context?.telegramMeta?.messageId,
+            context?.sourceMeta?.messageId,
           )
           .catch(() => {});
       }
@@ -1524,7 +1523,7 @@ ${this.theme.analysisRules}`;
     }
 
     // Remove the inline buttons from the review message
-    await this.telegram.removeInlineButtons(chatId, reviewMessageId);
+    await this.notify.removeInlineButtons(chatId, reviewMessageId);
 
     // Refresh credentials dynamically from DB in case new channels/accounts were added on dashboard
     try {
@@ -1554,7 +1553,7 @@ ${this.theme.analysisRules}`;
       pipelineLogger.warn(`[onPublish] Could not refresh channel configs from DB: ${e.message}`, "DirectUploader");
     }
 
-    await this.telegram.sendMessage(
+    await this.notify.sendMessage(
       chatId,
       `🚀 *Uploading to ${this.profile.youtube.channels.length} YouTube channel(s), ${this.profile.instagram.accounts.length} Instagram account(s), and Facebook Page…*`,
       messageId,
@@ -1633,7 +1632,7 @@ ${this.theme.analysisRules}`;
         (sourceLine ? `\n${sourceLine}\n` : "") +
         `\n*ID:* ${escapeMarkdown(id)}`;
 
-      const successMessageId = await this.telegram.sendSuccessMessageWithRevoke(
+      const successMessageId = await this.notify.sendSuccessMessageWithRevoke(
         chatId,
         successText,
         id,
@@ -1684,7 +1683,7 @@ ${this.theme.analysisRules}`;
         const compressedVideoPath = path.join(path.dirname(finalVideoPath), "video_compressed.mp4");
         const videoToSend = fs.existsSync(compressedVideoPath) ? compressedVideoPath : finalVideoPath;
 
-        const messageId = await this.telegram.sendRawVideo(
+        const messageId = await this.notify.sendRawVideo(
           chatId,
           videoToSend,
           `*Title:* ${escapeMarkdown(metadata.title)}`,
@@ -1702,7 +1701,7 @@ ${this.theme.analysisRules}`;
           fullDescription = fullDescription.substring(0, 4000) + '...';
         }
         
-        await this.telegram.sendMessage(
+        await this.notify.sendMessage(
           chatId,
           fullDescription,
           messageId
@@ -1720,7 +1719,7 @@ ${this.theme.analysisRules}`;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       pipelineLogger.error(`Upload failed for ${id}`, err, "DirectUploader");
-      await this.telegram.sendMessage(
+      await this.notify.sendMessage(
         chatId,
         `❌ *Upload failed*\n\`${msg.slice(0, 300)}\``,
         messageId,
@@ -1810,7 +1809,7 @@ ${this.theme.analysisRules}`;
         );
 
         if (chatId) {
-          await this.telegram.sendMessage(
+          await this.notify.sendMessage(
             chatId,
             `🎬 *Companion 5-Minute Long Video Published on YouTube!*\n\n*Topic:* ${escapeMarkdown(metadata.title)}\n*Watch Full Video:* ${escapeMarkdown(firstUrl)}`,
           );
@@ -1840,8 +1839,8 @@ ${this.theme.analysisRules}`;
     if (!pending) return;
     if (pending.timer) clearTimeout(pending.timer);
     this.pending.delete(id);
-    this.telegram.removeInlineButtons(pending.chatId, pending.reviewMessageId);
-    this.telegram.sendMessage(
+    this.notify.removeInlineButtons(pending.chatId, pending.reviewMessageId);
+    this.notify.sendMessage(
       pending.chatId,
       `❌ *Cancelled.* Video files have been cleaned up.`,
       pending.messageId,
@@ -1891,7 +1890,7 @@ ${this.theme.analysisRules}`;
     if (!fs.existsSync(finalNoVoicePath) && !fs.existsSync(finalVoicePath)) {
       const pendingEntry = this.pending.get(id);
       if (pendingEntry) {
-        await this.telegram
+        await this.notify
           .sendMessage(
             pendingEntry.chatId,
             `🔇 *Voiceover toggle unavailable for this job* — send a text prompt to regenerate with different settings instead.`,
@@ -1960,7 +1959,7 @@ ${this.theme.analysisRules}`;
       statusText + `\n\n` +
       timerText;
 
-    if (job.context.telegramMeta.messageId) {
+    if (job.context.sourceMeta.messageId) {
       // Compress if needed for Telegram
       let reviewVideoPath = finalVideoPath;
       const stats = fs.statSync(finalVideoPath);
@@ -1980,9 +1979,9 @@ ${this.theme.analysisRules}`;
         });
       }
 
-      await this.telegram.editReviewVideo(
-        job.context.telegramMeta.chatId,
-        job.context.telegramMeta.messageId,
+      await this.notify.editReviewVideo(
+        job.context.sourceMeta.chatId,
+        job.context.sourceMeta.messageId,
         reviewVideoPath,
         caption,
         id
@@ -2031,9 +2030,6 @@ ${this.theme.analysisRules}`;
     // Re-entry from the failure-path manual review: settings were already chosen.
     if (context.settingsReviewDone) return "proceed";
 
-    const id = context.id;
-    const { chatId, messageId } = context.telegramMeta;
-
     if (!context.reviewSettings) {
       context.reviewSettings = {
         voiceover: true,
@@ -2046,55 +2042,8 @@ ${this.theme.analysisRules}`;
       };
     }
 
-    // First-frame preview with the crop grid so the user can judge the crop
-    // buttons against the actual content (labels sit on the grid lines).
-    const previewSource = context.isVideo
-      ? path.join(context.tempDir, "frame_0.jpg")
-      : context.originalImagePath;
-    const previewImagePath = await buildGridPreview(
-      previewSource,
-      path.join(context.tempDir, "settings_preview.png"),
-    );
-
-    const reviewMessageId = await this.telegram.sendSettingsReview(
-      chatId,
-      this.buildSettingsReviewText(context),
-      id,
-      context.reviewSettings,
-      normalizeMood(context.metadata?.mood),
-      messageId,
-      previewImagePath ?? undefined,
-    );
-    (context as any).settingsReviewMessageId = reviewMessageId;
-
-    this.db.updateJob(id, {
-      status: "settings_review",
-      currentStep: "Waiting for settings confirmation (60s)",
-      context,
-    });
-
-    pipelineLogger.info(
-      `Holding pipeline ${id} for 60s settings review...`,
-      "DirectUploader",
-    );
-
-    return new Promise((resolve) => {
-      this.pendingSettingsReviews.set(id, {
-        context,
-        resolve,
-        timer: setTimeout(() => {
-          pipelineLogger.info(
-            `Settings review timeout for ${id} — proceeding with current settings.`,
-            "DirectUploader",
-          );
-          this.onSettingsAction("go", id);
-        }, 60000),
-        reviewMessageId,
-        chatId,
-        messageId,
-        startTime: Date.now(),
-      });
-    });
+    // There is no chat to confirm settings in: continue straight away with the channel and AI-recommended settings.
+    return "proceed";
   }
 
   /** Handles st_* button taps (and the 60s timeout, which fires "go"). */
@@ -2106,10 +2055,10 @@ ${this.theme.analysisRules}`;
     if (code === "go") {
       clearTimeout(entry.timer);
       this.pendingSettingsReviews.delete(id);
-      this.telegram
+      this.notify
         .removeInlineButtons(entry.chatId, entry.reviewMessageId)
         .catch(() => {});
-      this.telegram
+      this.notify
         .sendMessage(
           entry.chatId,
           `▶️ *Processing with selected settings…*`,
@@ -2123,10 +2072,10 @@ ${this.theme.analysisRules}`;
     if (code === "can") {
       clearTimeout(entry.timer);
       this.pendingSettingsReviews.delete(id);
-      this.telegram
+      this.notify
         .removeInlineButtons(entry.chatId, entry.reviewMessageId)
         .catch(() => {});
-      this.telegram
+      this.notify
         .sendMessage(
           entry.chatId,
           `❌ *Generation cancelled by user.*`,
@@ -2149,10 +2098,10 @@ ${this.theme.analysisRules}`;
 
       clearTimeout(entry.timer);
       this.pendingSettingsReviews.delete(id);
-      this.telegram
+      this.notify
         .removeInlineButtons(entry.chatId, entry.reviewMessageId)
         .catch(() => {});
-      this.telegram
+      this.notify
         .sendMessage(
           entry.chatId,
           `🔄 *Changing mood to ${requestedMood}…*\n\nRewriting the title, description, and voiceover script to match — this can take up to a minute.`,
@@ -2214,7 +2163,7 @@ ${this.theme.analysisRules}`;
       this.onSettingsAction("go", id);
     }, 60000);
 
-    this.telegram
+    this.notify
       .updateSettingsReview(
         entry.chatId,
         entry.reviewMessageId,
@@ -2271,7 +2220,7 @@ ${this.theme.analysisRules}`;
           (pending.musicCaptionLine || "") +
           timerText;
 
-        await this.telegram.updateReviewCaption(
+        await this.notify.updateReviewCaption(
           pending.chatId,
           pending.reviewMessageId,
           caption,
@@ -2281,7 +2230,7 @@ ${this.theme.analysisRules}`;
       .catch(async (err) => {
         const msg = err instanceof Error ? err.message : String(err);
         pipelineLogger.error(`Regenerate failed for ${id}`, err, "DirectUploader");
-        await this.telegram.sendMessage(
+        await this.notify.sendMessage(
           pending.chatId,
           `❌ *Metadata regeneration failed* (FreeLLMAPI, model: auto)\n` +
             `\`${msg.replace(/`/g, "'").slice(0, 200)}\`\n\n` +
@@ -2317,10 +2266,10 @@ ${this.theme.analysisRules}`;
     const { channelResults, chatId, successMessageId } = uploadedData;
 
     // Remove the revoke inline button immediately to prevent double-clicks
-    await this.telegram.removeInlineButtons(chatId, successMessageId);
+    await this.notify.removeInlineButtons(chatId, successMessageId);
 
     // Notify user we are starting revocation
-    await this.telegram.sendMessage(
+    await this.notify.sendMessage(
       chatId,
       `⏳ *Revoking upload from all channels…*`,
       successMessageId,
@@ -2340,7 +2289,7 @@ ${this.theme.analysisRules}`;
 
     if (successDeletions.length === deletionResults.length) {
       // All deleted successfully
-      await this.telegram.sendMessage(
+      await this.notify.sendMessage(
         chatId,
         `🗑️ *Revoked successfully!*\n\n` +
           `Deleted video from all ${successDeletions.length} channel(s) on YouTube.`,
@@ -2362,7 +2311,7 @@ ${this.theme.analysisRules}`;
       if (successLines) errorText += `${successLines}\n`;
       if (failedLines) errorText += `${failedLines}\n`;
 
-      await this.telegram.sendMessage(chatId, errorText, successMessageId);
+      await this.notify.sendMessage(chatId, errorText, successMessageId);
     }
 
     // Clean up from map
@@ -2378,8 +2327,8 @@ ${this.theme.analysisRules}`;
   }
 
   private async executePipeline(context: PipelineContext): Promise<void> {
-    const { id, tempDir, originalImagePath, telegramMeta } = context;
-    const { chatId, messageId } = telegramMeta;
+    const { id, tempDir, originalImagePath, sourceMeta } = context;
+    const { chatId, messageId } = sourceMeta;
     const isVideo = Boolean(
       context.isVideo === true &&
       context.originalVideoPath &&
@@ -2451,7 +2400,7 @@ ${this.theme.analysisRules}`;
             `[DirectUploader] Shortcode "${context.shortcode}" has already been published in the past — blocking duplicate re-upload!`,
             "DirectUploader"
           );
-          await this.telegram.sendMessage(
+          await this.notify.sendMessage(
             chatId,
             `⚠️ *Duplicate Content Detected!*\n\nReel \`#${context.shortcode}\` has already been published. Skipping to avoid duplicate content on social channels.`,
             messageId,
@@ -2475,7 +2424,7 @@ ${this.theme.analysisRules}`;
         context,
       });
 
-      await this.telegram.sendMessage(
+      await this.notify.sendMessage(
         chatId,
         `⚙️ *Processing your ${mediaLabel}…*\n\`ID: ${id}\`\n\nGenerating metadata, editing video, adding music…`,
         messageId,
@@ -2776,9 +2725,9 @@ ${this.theme.analysisRules}`;
             );
 
           const adminChatId =
-            context.telegramMeta?.chatId || this.profile.watch.adminChatId || 0;
+            context.sourceMeta?.chatId || this.profile.watch.adminChatId || 0;
           if (adminChatId) {
-            await this.telegram
+            await this.notify
               .sendMessage(
                 adminChatId,
                 `🎯 *Auto-Recognized Channel:* *${targetUploader.profile.brandName}*\n` +
@@ -3742,7 +3691,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         err,
         "DirectUploader",
       );
-      await this.telegram.sendMessage(
+      await this.notify.sendMessage(
         chatId,
         `❌ *Processing failed*\n\`${context.error?.slice(0, 300)}\``,
         messageId,
@@ -3772,8 +3721,8 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     const tempDir = context.tempDir;
     const metadata = context.metadata!;
     const rawVideoPath = path.join(tempDir, "video_raw.mp4");
-    const chatId = context.telegramMeta.chatId;
-    const messageId = context.telegramMeta.messageId;
+    const chatId = context.sourceMeta.chatId;
+    const messageId = context.sourceMeta.messageId;
     const settings = context.reviewSettings!;
 
     try {
@@ -3988,7 +3937,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         }
       }
 
-      await this.telegram.sendMessage(
+      await this.notify.sendMessage(
         chatId,
         `❌ *Video compilation failed:* \`${msg.slice(0, 300)}\``,
         messageId,
@@ -4358,8 +4307,8 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     const id = context.id;
     const tempDir = context.tempDir;
     const metadata = context.metadata!;
-    const chatId = context.telegramMeta.chatId;
-    const messageId = context.telegramMeta.messageId;
+    const chatId = context.sourceMeta.chatId;
+    const messageId = context.sourceMeta.messageId;
 
     fs.mkdirSync(config.paths.outputDir, { recursive: true });
     const safeTitle = metadata.title
@@ -4412,7 +4361,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     let reviewMessageId = 0;
     if (chatId && chatId > 0) {
       try {
-        reviewMessageId = await this.telegram.sendVideoForReview(
+        reviewMessageId = await this.notify.sendVideoForReview(
           chatId,
           reviewVideoPath,
           caption,
@@ -4532,12 +4481,12 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     }
 
     // 2. Remove inline buttons from the old review message
-    await this.telegram
+    await this.notify
       .removeInlineButtons(chatId, pendingUpload.reviewMessageId)
       .catch(() => {});
 
     // 3. Notify user that we are re-processing
-    await this.telegram.sendMessage(
+    await this.notify.sendMessage(
       chatId,
       `🔄 *Instruction received:* \`"${promptText}"\`\n\nRe-processing and regenerating video based on your prompt…`,
       messageId,
@@ -4719,12 +4668,12 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     }
 
     // 3. Remove inline buttons from the old review message
-    await this.telegram
+    await this.notify
       .removeInlineButtons(chatId, pendingUpload.reviewMessageId)
       .catch(() => {});
 
     // 4. Notify user that we are downloading and applying the new music track
-    await this.telegram.sendMessage(
+    await this.notify.sendMessage(
       chatId,
       `🎵 *Custom audio track received:* \`"${fileName}"\`\n\nDownloading and mixing with your Short...`,
       messageId,
@@ -4736,7 +4685,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
 
     try {
       // 5. Download the file
-      await this.telegram.downloadFile(fileId, customMusicPath);
+      await this.notify.downloadFile(fileId, customMusicPath);
       context.selectedMusicTrack = customMusicPath;
 
       // 6. Regenerate the final video using the new custom music track!
@@ -4747,7 +4696,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       return true;
     } catch (err: any) {
       pipelineLogger.error(`Failed to handle user audio upload for ${pendingId}`, err, "DirectUploader");
-      await this.telegram.sendMessage(
+      await this.notify.sendMessage(
         chatId,
         `❌ *Failed to apply custom music:* ${err.message || err}`,
         messageId
@@ -4871,7 +4820,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       (pendingUpload.musicCaptionLine || "") +
       timerText;
 
-    const newMsgId = await this.telegram.editReviewVideo(
+    const newMsgId = await this.notify.editReviewVideo(
       chatId,
       pendingUpload.reviewMessageId,
       reviewVideoPath,

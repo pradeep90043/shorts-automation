@@ -35,7 +35,7 @@ export interface WatchConfig {
   dailyCount: number; // how many reels to pick per day, across all channels combined
   scheduleTime: string; // "HH:MM" 24h, local time — when the daily batch is selected
   gapHours: number; // spacing between each of the day's picks being published
-  adminChatId: number; // Telegram chat that receives the auto-published results; 0 = feature disabled
+  adminChatId: number; // 0 = headless: no review step, auto-publish
   // Niche + viral search (optional — defaults to 'hashtags' mode)
   searchMode: "channels" | "hashtags" | "both"; // default: 'hashtags'
   nicheHashtags?: string[]; // override auto-generated hashtags from niche/mood mapping
@@ -50,9 +50,9 @@ export interface FacebookConfig {
   accessToken: string;
 }
 
-// A full brand/channel profile: one Telegram bot + its own YouTube/Instagram credentials.
-// The primary profile comes from the classic env vars (TELEGRAM_BOT_TOKEN, YOUTUBE_*, INSTAGRAM_*).
-// Extra profiles are auto-detected from prefixed vars, e.g. STORIYUM_TELEGRAM_BOT_TOKEN_LOCAL,
+// A full brand/channel profile: its own YouTube/Instagram credentials.
+// The primary profile comes from the classic env vars (YOUTUBE_*, INSTAGRAM_*).
+// Extra profiles are auto-detected from prefixed vars, e.g. STORIYUM_YOUTUBE_REFRESH_TOKEN,
 // STORIYUM_YOUTUBE_REFRESH_TOKEN, STORIYUM_INSTAGRAM_ACCESS_TOKEN, ...
 export interface ChannelProfile {
   key: string; // short id, e.g. "codeorcap", "storiyum"
@@ -60,7 +60,6 @@ export interface ChannelProfile {
   handle: string; // social handle used on branding overlays, e.g. "@codeorcap"
   theme: ContentTheme; // niche-specific prompt fragments (NICHE / <PREFIX>_NICHE env)
   isDefault: boolean;
-  telegramToken: string;
   isWatchOnly?: boolean;
   igFollowers?: number;
   ytSubscribers?: number;
@@ -73,7 +72,6 @@ export interface ChannelProfile {
 }
 
 export interface AppConfig {
-  telegramToken: string;
   youtube: YoutubeConfig;
   instagram: {
     accounts: InstagramAccount[];
@@ -195,8 +193,6 @@ function loadInstagramAccounts(): InstagramAccount[] {
 }
 
 // ── Multi-channel profiles ────────────────────────────────────────────────────
-// BOT_ENV selects between <PREFIX>_TELEGRAM_BOT_TOKEN_LOCAL and _PROD (default: local)
-const BOT_ENV = (process.env.BOT_ENV || "local").toUpperCase();
 
 function titleCase(prefix: string): string {
   return prefix.charAt(0) + prefix.slice(1).toLowerCase();
@@ -334,30 +330,11 @@ function loadWatchConfig(prefix?: string): WatchConfig {
   };
 }
 
-function getMasterTelegramToken(): string {
-  if (BOT_ENV === "prod") {
-    return (
-      process.env.TELEGRAM_BOT_TOKEN_PROD ||
-      process.env.CODEORCAP_TELEGRAM_BOT_TOKEN_PROD ||
-      process.env.TELEGRAM_BOT_TOKEN ||
-      process.env.TELEGRAM_BOT_TOKEN_LOCAL ||
-      ""
-    ).trim();
-  }
-  return (
-    process.env.TELEGRAM_BOT_TOKEN_LOCAL ||
-    process.env.CODEORCAP_TELEGRAM_BOT_TOKEN_LOCAL ||
-    process.env.TELEGRAM_BOT_TOKEN ||
-    process.env.TELEGRAM_BOT_TOKEN_PROD ||
-    ""
-  ).trim();
-}
-
 // Detect extra channel prefixes from env vars like STORIYUM_INSTAGRAM_CHANNELS, etc.
 function loadExtraProfiles(): ChannelProfile[] {
   const prefixes = new Set<string>();
   for (const key of Object.keys(process.env)) {
-    const m = key.match(/^([A-Z0-9_]+)_(?:TELEGRAM_BOT_TOKEN|INSTAGRAM_CHANNELS|YOUTUBE_REFRESH_TOKEN|INSTAGRAM_ACCESS_TOKEN|INSTAGRAM_USER_ID)(?:_LOCAL|_PROD)?$/);
+    const m = key.match(/^([A-Z0-9_]+)_(?:INSTAGRAM_CHANNELS|YOUTUBE_REFRESH_TOKEN|INSTAGRAM_ACCESS_TOKEN|INSTAGRAM_USER_ID)(?:_LOCAL|_PROD)?$/);
     if (m) {
       prefixes.add(m[1].toUpperCase());
     }
@@ -370,15 +347,11 @@ function loadExtraProfiles(): ChannelProfile[] {
   // Primary profile is CodeOrCap — never generate a duplicate extra profile for it
   prefixes.delete("CODEORCAP");
 
-  const masterToken = getMasterTelegramToken();
   const profiles: ChannelProfile[] = [];
   for (const prefix of prefixes) {
     const env = (key: string) => process.env[`${prefix}_${key}`];
     
-    // Single shared Telegram bot token for all channels (CodeOrCap prod/local bot)
-    const telegramToken = masterToken;
     const isWatchOnly = true;
-    if (!telegramToken) continue;
 
     let brandName = env("BRAND_NAME");
     if (!brandName) {
@@ -401,7 +374,6 @@ function loadExtraProfiles(): ChannelProfile[] {
       handle: env("BRAND_HANDLE") || (prefix === "PROMPT_GAG" ? "@prompt_gag" : `@${prefix.toLowerCase()}`),
       theme: resolveTheme(nicheEnv, brandName),
       isDefault: false,
-      telegramToken,
       isWatchOnly,
       youtube: loadPrefixedYoutube(prefix, brandName),
       instagram: { accounts: loadPrefixedInstagram(prefix, brandName) },
@@ -435,7 +407,6 @@ function loadPrimaryProfile(): ChannelProfile {
     handle: process.env.BRAND_HANDLE || "@codeorcap",
     theme: resolveTheme(process.env.NICHE, "primary profile"),
     isDefault: true,
-    telegramToken: getMasterTelegramToken(),
     youtube: {
       clientId: process.env.YOUTUBE_CLIENT_ID || "",
       clientSecret: process.env.YOUTUBE_CLIENT_SECRET || "",
@@ -455,11 +426,10 @@ function loadPrimaryProfile(): ChannelProfile {
 const primaryProfile = loadPrimaryProfile();
 
 export const config: AppConfig = {
-  telegramToken: primaryProfile.telegramToken,
   youtube: primaryProfile.youtube,
   instagram: primaryProfile.instagram,
   profiles: deduplicateProfiles(
-    [primaryProfile, ...loadExtraProfiles()].filter((p) => p.telegramToken),
+    [primaryProfile, ...loadExtraProfiles()],
   ),
   ai: {
     provider: (process.env.AI_PROVIDER || "mock") as
@@ -580,7 +550,7 @@ export function validateConfig(): void {
 
   if (config.profiles.length === 0) {
     warnings.push(
-      "Warning: No Telegram bot tokens configured (TELEGRAM_BOT_TOKEN or <PREFIX>_TELEGRAM_BOT_TOKEN_*). Bot will fail to start.",
+      "Warning: No channel profiles configured. Bot will fail to start.",
     );
   }
 

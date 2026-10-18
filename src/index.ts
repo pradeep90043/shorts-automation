@@ -3,7 +3,7 @@ import sharp from "sharp";
 sharp.cache(false);
 
 import { config, validateConfig } from "./config";
-import { TelegramService } from "./telegram";
+import { NotifyService } from "./notify";
 import { DirectUploader } from "./direct-uploader";
 import { ChannelWatcher } from "./instagram/channelWatcher";
 import { ensureAssetsExist } from "./utils/assets";
@@ -127,36 +127,36 @@ async function bootstrap() {
 
   if (config.profiles.length === 0) {
     pipelineLogger.error(
-      "No channel profiles configured. Set TELEGRAM_BOT_TOKEN (or <PREFIX>_TELEGRAM_BOT_TOKEN_LOCAL/_PROD) in .env.",
+      "No channel profiles configured.",
       undefined,
       "Bootstrap",
     );
     process.exit(1);
   }
 
-  const activeServices: TelegramService[] = [];
+  const activeServices: NotifyService[] = [];
 
-  // 3. Initialize one Telegram bot + uploader pipeline per channel profile
+  // 3. Initialize one notifier + uploader pipeline per channel profile
   for (const profile of config.profiles) {
     pipelineLogger.info(
       `Initializing channel profile [${profile.brandName}] — ${profile.youtube.channels.length} YouTube channel(s), ${profile.instagram.accounts.length} Instagram account(s)`,
       "Bootstrap",
     );
 
-    let telegramService: TelegramService;
+    let notifyService: NotifyService;
     try {
-      telegramService = new TelegramService(profile);
-      activeServices.push(telegramService);
+      notifyService = new NotifyService(profile);
+      activeServices.push(notifyService);
     } catch (err) {
       pipelineLogger.error(
-        `[${profile.brandName}] Failed to start Telegram Bot service. Check its bot token in .env.`,
+        `[${profile.brandName}] Failed to start the channel service.`,
         err,
         "Bootstrap",
       );
       process.exit(1);
     }
 
-    const uploader = new DirectUploader(telegramService, profile);
+    const uploader = new DirectUploader(notifyService, profile);
 
     // Cancel any active pending jobs interrupted by a crash/restart
     uploader.cancelAllPendingJobs().catch((err) => {
@@ -168,36 +168,15 @@ async function bootstrap() {
     });
 
     // Register pipeline trigger — image in → music + upload out
-    telegramService.registerPipelineTrigger(async (context) => {
+    notifyService.registerPipelineTrigger(async (context) => {
       await uploader.run(context);
     });
 
-    // Start listening for incoming events
-    try {
-      if (!profile.isWatchOnly) {
-        await telegramService.start();
-      } else {
-        pipelineLogger.info(
-          `[${profile.brandName}] Bot is in WATCH-ONLY mode — skipping Telegram polling listener`,
-          "Bootstrap",
-        );
-      }
-    } catch (err) {
-      pipelineLogger.error(
-        `[${profile.brandName}] Failed to start Telegram polling listener`,
-        err,
-        "Bootstrap",
-      );
-      process.exit(1);
-    }
-
     // Recurring channel-watch automation (no-ops if <PREFIX>_WATCH_CHANNELS
-    // isn't configured for this profile). Force an immediate run any time
-    // via the /runwatchnow Telegram command instead of waiting for the
-    // scheduled time.
+    // isn't configured for this profile).
     try {
-      const watcher = new ChannelWatcher(profile, telegramService, config.profiles.indexOf(profile));
-      telegramService.registerWatcher(watcher);
+      const watcher = new ChannelWatcher(profile, notifyService, config.profiles.indexOf(profile));
+      notifyService.registerWatcher(watcher);
       await watcher.start();
     } catch (watcherErr) {
       pipelineLogger.error(
@@ -210,7 +189,7 @@ async function bootstrap() {
 
   // Daily 10-minute video per channel (src/longvideo-auto): ranks the day's published Shorts after midnight IST, then makes
   // one video at a time while no Short is being processed. ON by default (DAILY_LONG_VIDEO=off stops it). Notices and
-  // failures are shown on the dashboard's "Daily Video" tab and written to the log; nothing here uses Telegram.
+  // failures are shown on the dashboard's "Daily Video" tab and written to the log.
   try {
     startAutoLong({
       store: candidateStore(),
@@ -254,7 +233,7 @@ async function bootstrap() {
         await service.stop();
       } catch (err) {
         pipelineLogger.error(
-          `Failed to stop Telegram bot service gracefully`,
+          `Failed to stop the channel service gracefully`,
           err,
           "Bootstrap",
         );

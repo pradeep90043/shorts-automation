@@ -45,8 +45,8 @@ export class DmKnowledgeBase {
             ? meta.tags
             : (description.match(/#[a-zA-Z0-9_]+/g) || []).map((t: string) => t.replace("#", ""));
 
-          const sourceUrl = job.context?.telegramMeta?.fileId?.startsWith("http")
-            ? job.context.telegramMeta.fileId
+          const sourceUrl = job.context?.sourceMeta?.fileId?.startsWith("http")
+            ? job.context.sourceMeta.fileId
             : undefined;
 
           const topic: KnowledgeTopic = {

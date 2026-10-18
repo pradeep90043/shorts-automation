@@ -335,7 +335,7 @@ export class VideoRenderer implements IVideoRenderer {
     const isInfoOnSpot =
       this.brandName.toLowerCase() === "infoonspot" ||
       this.brandHandle.toLowerCase().includes("infoonspot") ||
-      (context.telegramMeta?.username && context.telegramMeta.username.toLowerCase().includes("infoonspot")) ||
+      (context.sourceMeta?.username && context.sourceMeta.username.toLowerCase().includes("infoonspot")) ||
       Boolean(context.metadata?.infoKeyPoint);
 
     if (isInfoOnSpot) {

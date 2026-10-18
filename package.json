@@ -18,7 +18,6 @@
     "test:safearea": "ts-node tests/safearea.test.ts",
     "test:render": "ts-node tests/render.test.ts",
     "test:ffmpeg": "ts-node tests/ffmpeg.test.ts",
-    "test:telegram": "ts-node tests/telegram.test.ts",
     "test:youtube": "ts-node tests/youtube.test.ts",
     "test:pipeline": "ts-node tests/pipeline.test.ts",
     "test:plan-import": "ts-node tests/plan-import.test.ts",
@@ -53,7 +52,6 @@
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
     "sharp": "^0.33.4",
-    "telegraf": "^4.16.3",
     "tesseract.js": "^5.1.0",
     "winston": "^3.13.0"
   },
