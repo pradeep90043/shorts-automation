@@ -18,6 +18,8 @@ import { howItWorksLines, renderHowItWorksClip } from "./my-video/howItWorksClip
 import { dropUnsupportedFigures, insightEnabledFor, insightIntro, insightLang, insightRuleFor, insightTitle, looksEnglish } from "./my-video/insightClip";
 import { makeAsk } from "./longvideo-auto/llm";
 import { splitForVoice, toDevanagari } from "./audio/clonedVoice";
+import { candidateStore } from "./longvideo-auto/config";
+import { istDateOf } from "./longvideo-auto/candidateStore";
 import { FreeLlmApiClient } from "./ai/freellmapi";
 import { GeminiClient } from "./ai/gemini";
 import { parseAiJson, extractJsonArrayField } from "./utils/json";
@@ -4469,6 +4471,8 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
           `[DirectUploader] Manual injected reel (${id}) — awaiting explicit user publish approval. Auto-publish timer DISABLED.`,
           "DirectUploader",
         );
+        // dev only: nothing is ever published there, so the reel that reached review is the channel's long-video candidate
+        if (process.env.BOT_ENV === "dev") this.recordDevLongCandidate(context);
       } else {
         const delayMs = chatId && chatId > 0 ? 60000 : 2000;
         pendingUpload.timer = setTimeout(() => {
@@ -5628,6 +5632,34 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       if (t) meta.diagramTitle = t[0].text;
     }
     meta.howItWorks = text; // "" -> deriveTranscriptionWorkflow uses the reel's transcript / caption
+  }
+
+  /** Dev only (BOT_ENV=dev): production records a candidate when a Short is published; dev never publishes, so review counts. */
+  private recordDevLongCandidate(context: PipelineContext): void {
+    try {
+      const md = context.metadata;
+      const text = [context.transcript?.text, context.captionMetadata?.description, md?.howItWorks, md?.voiceoverScript, md?.description]
+        .map((t) => (typeof t === "string" ? t.trim() : ""))
+        .filter(Boolean)
+        .join("\n")
+        .slice(0, 6000);
+      const now = Date.now();
+      const added = candidateStore().record({
+        channelKey: this.profile.key,
+        shortcode: context.shortcode || context.id,
+        istDate: istDateOf(now),
+        publishedAt: new Date(now).toISOString(),
+        title: md?.title || "",
+        text,
+        playCount: 0,
+        likeCount: 0,
+        commentCount: 0,
+        viralScore: 0,
+      });
+      pipelineLogger.info(`[DirectUploader] Dev: ${context.shortcode || context.id} ${added ? "recorded" : "was already"} a long-video candidate for ${this.profile.key}`, "DirectUploader");
+    } catch (err) {
+      pipelineLogger.warn(`[DirectUploader] Dev: could not record a long-video candidate: ${err instanceof Error ? err.message : err}`, "DirectUploader");
+    }
   }
 
   private deriveTranscriptionWorkflow(context: PipelineContext): {
