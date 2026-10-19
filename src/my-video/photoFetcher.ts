@@ -7,6 +7,9 @@ import { pipelineLogger } from "../utils/logger";
  */
 export interface LicensedPhoto { url: string; credit: string; license: string; pageUrl: string; source: "wikimedia" | "pexels" }
 
+/** The app already has a Pexels key (video/pexelsService.ts): same variable names, same fallback. */
+const pexelsKey = (): string => (process.env.PEXELS_API_KEY || process.env.PIXELS_API_KEY || process.env.PEXEL_API_KEY || "").trim();
+
 const UA = "CodeOrCapBot/1.0 (https://codeorcap.example; pradeep90043@gmail.com)";
 const ALLOWED = /^(public domain|pd\b|cc0|cc[- ]by(?:[- ]sa)?\b|cc[- ]by[- ]\d)/i;
 const strip = (html: string): string => html.replace(/<[^>]*>/g, "").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/\s+/g, " ").trim();
@@ -44,7 +47,7 @@ export async function searchWikimedia(query: string): Promise<LicensedPhoto | nu
 }
 
 export async function searchPexels(query: string): Promise<LicensedPhoto | null> {
-  const key = process.env.PEXELS_API_KEY;
+  const key = pexelsKey();
   if (!key) return null;
   const data = await getJson(`https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&per_page=5&orientation=landscape`, { Authorization: key });
   const p = data?.photos?.[0];
@@ -123,7 +126,7 @@ export async function searchArchiveClip(query: string): Promise<LicensedClip | n
 }
 
 export async function searchPexelsClip(query: string): Promise<LicensedClip | null> {
-  const key = process.env.PEXELS_API_KEY;
+  const key = pexelsKey();
   if (!key) return null;
   const data = await getJson(`https://api.pexels.com/videos/search?query=${encodeURIComponent(query)}&per_page=4&orientation=landscape&size=medium`, { Authorization: key });
   for (const v of data?.videos ?? []) {
