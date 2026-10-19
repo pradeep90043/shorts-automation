@@ -1,4 +1,5 @@
 // tests/stickman.test.ts - pure logic of the my-video long video planner/estimator
+import { buildDirectorPrompt } from "../src/my-video/stickmanPlanner";
 import assert from "assert";
 import { cleanScript, countWords, diversifyVisuals, dropInventedNumbers, scriptNumbers, sanitizeVisual, splitScriptIntoBeats } from "../src/my-video/stickmanPlanner";
 import { estimateStickman } from "../src/my-video/stickmanEstimate";
@@ -195,6 +196,14 @@ const jobWithDoneStage: StickmanJob = {
 const snapDone = snapshot(jobWithDoneStage);
 assert.strictEqual(snapDone.canContinue, true, "canContinue must be true when a stage is done or plan is cached");
 
+
+// Hindi narration tells the director to write the screen text in Hindi; English narration is left alone
+{
+  const hi = buildDirectorPrompt(["आरबीआई ने ब्याज दर बढ़ाई।", "इसका असर ईएमआई पर पड़ेगा।"], [0, 1], 2, null);
+  assert.ok(hi.includes("LANGUAGE: the narration is Hindi"));
+  const en = buildDirectorPrompt(["The RBI raised the rate.", "It hits your EMI."], [0, 1], 2, null);
+  assert.ok(!en.includes("LANGUAGE: the narration is Hindi"));
+}
 console.log("✓ stickman planner/estimator & continue logic");
 
 // an example that continues over several beats keeps its panel on screen

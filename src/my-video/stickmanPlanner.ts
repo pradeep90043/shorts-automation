@@ -794,7 +794,12 @@ export function buildDirectorPrompt(
   const notesBlock = sections.length
     ? `\nAUTHOR'S VISUAL DIRECTIONS (NOT narration - never put these sentences on screen verbatim; use them to choose the setting, props, panels, pose and mood. Code blocks inside them ARE real code: show that exact code in a "code" panel, split over several beats if it is long):\n${sections.map((k) => `- ${notes!.notes[k]}`).join("\n")}\n`
     : "";
-  return `${DIRECTOR_RULES}
+  // Hindi narration: the screen speaks Hindi too (titles, labels, tags and panel text came out in English next to a Devanagari voice)
+  const hindi = beats.length > 0 && beats.filter((b) => /[\u0900-\u097F]/.test(b)).length / beats.length > 0.3;
+  const languageRule = hindi
+    ? "\nLANGUAGE: the narration is Hindi. Write every on-screen title, label, tag, callout and panel text in Hindi (Devanagari script), short. Code, file names and well-known acronyms (RBI, EMI, CPU) stay as they are. Never invent a number, rate or name that the narration does not say.\n"
+    : "";
+  return `${DIRECTOR_RULES}${languageRule}
 ${notesBlock}
 The narration is already split into numbered beats - do NOT change the words. This is part of a ${total}-beat video; you are directing the ${idxs.length} beats below.
 

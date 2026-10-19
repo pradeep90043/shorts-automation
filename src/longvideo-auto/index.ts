@@ -119,21 +119,32 @@ export async function produceLongVideo(
       await sleep(deps.pollMs ?? 20_000);
     }
     if (v.status !== "done") throw new Error(`video job ${v.status}: ${v.error ?? "no detail"}`);
+    // Dev has no YouTube login: the runner cannot upload and nothing is ever scheduled. The rendered video is the result, and
+    // re-rendering it (35 min) because the upload "failed" would only repeat the same thing.
+    if (!v.remote?.videoId && process.env.BOT_ENV === "dev") return v as JobView;
     if (!v.remote?.videoId) throw new Error("the video was not uploaded by the runner, so it cannot be scheduled");
     return v as JobView & { remote: NonNullable<JobView["remote"]> };
   });
+
+  if (!view.remote?.videoId) {
+    note(`DEV: the video is rendered (job ${job.id}); not uploaded or scheduled in dev`);
+    deps.store.markUsed(req.channelKey, seed.shortcode);
+    return { videoUrl: `dev:rendered:${job.id}`, jobId: job.id, releaseAt: new Date(deps.now()).toISOString() };
+  }
+
+  const remote = view.remote as NonNullable<typeof view.remote>;
 
   const releaseAt = await runStage(req.id, "release", async () => {
     const yt = await deps.youtubeFor(req.channelKey);
     if (!yt) throw new Error(`no YouTube channel connected for ${req.channelKey}`);
     // the title/description fix is cosmetic: if it fails the video is still released
-    await yt.updateSnippet(view.remote.videoId, { title: pkg.title, description: pkg.description, tags: pkg.tags }).catch((e: unknown) => {
+    await yt.updateSnippet(remote.videoId, { title: pkg.title, description: pkg.description, tags: pkg.tags }).catch((e: unknown) => {
       autoLongStatus.log("warn", "release", `could not update title/description: ${e instanceof Error ? e.message : e}`, req.id);
     });
     if (req.publishNow) {
-      await yt.setPrivacy(view.remote.videoId, "public");
+      await yt.setPrivacy(remote.videoId, "public");
       deps.store.markUsed(req.channelKey, seed.shortcode);
-      note(`PUBLIC NOW ${view.remote.url} (made on demand)`);
+      note(`PUBLIC NOW ${remote.url} (made on demand)`);
       return new Date(deps.now()).toISOString();
     }
     const taken = new Set<string>();
@@ -143,16 +154,16 @@ export async function produceLongVideo(
     }
     const rel = assignRelease(req.channelKey, deps.now(), istDateOf(deps.now()), taken);
     const at = new Date(rel.atMs).toISOString();
-    await yt.schedulePublish(view.remote.videoId, at);
+    await yt.schedulePublish(remote.videoId, at);
     deps.store.markUsed(req.channelKey, seed.shortcode);
-    note(`scheduled ${view.remote.url} for ${at} (${hhmm(rel.minute)} IST)`);
+    note(`scheduled ${remote.url} for ${at} (${hhmm(rel.minute)} IST)`);
     return at;
   });
 
   await deps.notify(
-    `🎬 ${brand}: 10-min video ready\n${pkg.title}\nGoes public ${new Date(Date.parse(releaseAt) + 5.5 * 3600e3).toISOString().replace("T", " ").slice(0, 16)} IST\n${view.remote.url}`,
+    `🎬 ${brand}: 10-min video ready\n${pkg.title}\nGoes public ${new Date(Date.parse(releaseAt) + 5.5 * 3600e3).toISOString().replace("T", " ").slice(0, 16)} IST\n${remote.url}`,
   ).catch((e: unknown) => autoLongStatus.log("warn", "alert", `notice failed: ${e instanceof Error ? e.message : e}`, req.id));
-  return { videoUrl: view.remote.url, jobId: job.id, releaseAt };
+  return { videoUrl: remote.url, jobId: job.id, releaseAt };
 }
 
 /** What is switched on and when things happen: logged at startup and returned by the status endpoint. */
