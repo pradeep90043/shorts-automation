@@ -3769,6 +3769,12 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         voiceoverPath &&
         fs.existsSync(voiceoverPath)
       );
+      // A Short that should have a voiceover but has none (the cloned voice and every fallback failed) is never published: it would go
+      // out silent, as a Prompt Gag Short did on 2026-10-19. Failing the job lets the queue retry it. A dashboard inject is exempt: a
+      // person reviews it before anything is published.
+      if (context.useVoiceover && context.isVideo && !useVoice && !isManualInjectContext(context)) {
+        throw new Error("The voiceover could not be made (cloned voice and fallback voices failed): not publishing a silent Short");
+      }
       const musicTrack =
         context.selectedMusicTrack && fs.existsSync(context.selectedMusicTrack)
           ? context.selectedMusicTrack

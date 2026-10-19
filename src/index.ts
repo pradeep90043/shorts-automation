@@ -135,6 +135,20 @@ async function bootstrap() {
     process.exit(1);
   }
 
+  // Daily recycle: swap on the 951 MB VM grows through the day (374 -> 958 MB seen). At 04:30 IST, when nothing is processing,
+  // exit so docker's restart policy brings a fresh process. DAILY_RECYCLE=off disables it (dev sessions have no restart policy).
+  if (process.env.DAILY_RECYCLE !== "off" && process.env.BOT_ENV !== "dev") {
+    let recycledOn = "";
+    setInterval(() => {
+      const ist = new Date(Date.now() + 5.5 * 3600_000).toISOString();
+      if (ist.slice(11, 16) < "04:30" || ist.slice(11, 16) > "05:30" || recycledOn === ist.slice(0, 10)) return;
+      if (!JobQueue.isIdle() || isStickmanBusy()) return;
+      recycledOn = ist.slice(0, 10);
+      pipelineLogger.info("[Recycle] idle at 04:30 IST: restarting the process to release memory", "Bootstrap");
+      setTimeout(() => process.exit(0), 2000);
+    }, 60_000);
+  }
+
   startHostMonitor(); // log CPU throttling / memory / pressure every few minutes: the answer to "why is it slow"
 
   const activeServices: NotifyService[] = [];

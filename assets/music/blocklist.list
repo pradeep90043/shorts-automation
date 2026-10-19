@@ -3,3 +3,42 @@
 # grand_project: "Joyful Snowman" got a global Content ID block (2026-10-09) — Pixabay "free" tracks can still be registered.
 grand_project
 joyful-snowman
+
+# --- audit 2026-10-19 (scripts/audit_music_library.py): Shazam recognises these as released recordings. AudioClearance then mutes or strips
+# our own Shorts that carry them (a Prompt Gag Short went out silent), and a registered track can bring a Content ID claim.
+# Crazy Summer - Tura
+mixkit-emotional-1081
+# Piano Reflections - Adraliaris
+mixkit-emotional-22
+# Splashing Around - Some Baby Music
+the_green_orbs_splashing_around
+# Feestvoorspel Psalm 150 vers 1 (Instrumental) - John Propitius
+mixkit-motivational-1000
+# Gorilla - OnePlan
+alex_makemusic-gorila-315977
+# Four Shots - AlexGrohl
+alexgrohl-motivation-epic-rock-111444
+# Shit generic rock - Lidia Malinoski
+alexgrohl-motivation-sport-rock-trailer-478796
+# Funk beat - Billy shib
+alexguz-funk-amp-breakbeat-541097
+# Rainmaker (Extended Club Mix) - George Ellinas
+fassounds-escape-your-love-upbeat-fashion-pop-dance-412230
+# Flow - Diamond_Tunes & Loksii
+loksii-no-copyright-music-211881
+# Rendezvous - SigmaMusicArt
+sigmamusicart-no-copyright-music-537751
+# Beyond the Storm - The_Mountain
+the_mountain-motivation-487018
+# Crazy Summer - Tura
+mixkit-romantic-1081
+# Adonai - Jacob Agendia
+mickeyscat-moment-of-peace-mickeyscat-554494
+# 432 Aura Cleanse - Love Live Heal
+mixkit-calm-127
+# Opal Tortoise - Caspar Alpsten
+mixkit-calm-135
+# The Journey - Maui Music
+mixkit-calm-138
+# Musica para sanar tu interior - Relajacion Ambiental
+mixkit-calm-139

@@ -1,5 +1,7 @@
+import os from 'os';
+import path from 'path';
 import { EdgeTTS } from 'node-edge-tts';
-import { exec } from 'child_process';
+import { exec, execFile } from 'child_process';
 import { pipelineLogger } from '../utils/logger';
 import fs from 'fs';
 import { rateToTempo, retimeAudio } from './retime';
@@ -15,6 +17,21 @@ export class TTSService {
    */
   private cloned = new Map<string, Promise<string | null>>();
   private clonedKey = (channelKey: string | undefined, script: string): string => `${(channelKey ?? '').toLowerCase()}|${script.trim()}`;
+
+  /** Speaks `script` with `python3 -m edge_tts` (text via a temp file: no shell quoting). Rejects on a non-zero exit or an empty file. */
+  private generatePythonEdge(script: string, voice: string, rate: string | undefined, outputPath: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const tmp = path.join(os.tmpdir(), `edge-${Date.now()}-${Math.floor(Math.random() * 1e6)}.txt`);
+      fs.writeFileSync(tmp, script, 'utf8');
+      const args = ['-m', 'edge_tts', '--voice', voice, '--file', tmp, '--write-media', outputPath, ...(rate ? [`--rate=${rate}`] : [])];
+      execFile(process.env.PYTHON_BIN || 'python3', args, { timeout: 90_000 }, (err, _out, stderr) => {
+        try { fs.unlinkSync(tmp); } catch { /* temp file */ }
+        if (err) return reject(new Error(`${err.message.split('\n')[0]} ${String(stderr).slice(0, 200)}`.trim()));
+        if (!fs.existsSync(outputPath) || fs.statSync(outputPath).size < 1000) return reject(new Error('edge-tts wrote no audio'));
+        resolve();
+      });
+    });
+  }
 
   public registerCloned(channelKey: string, script: string, clip: Promise<string | null>): void {
     this.cloned.set(this.clonedKey(channelKey, script), clip);
@@ -115,6 +132,20 @@ export class TTSService {
             'TTSService'
           );
           if (attempt < 2) await new Promise(r => setTimeout(r, 3000));
+        }
+      }
+
+      // Fallback 0: the Python edge-tts package, which the image installs at build time (latest release). Microsoft's service now
+      // demands a signed token (Sec-MS-GEC) that node-edge-tts 1.2.x does not send: it answers HTTP 403, as it did for every
+      // Short on 2026-10-19. The Python package sends it.
+      if (!generated) {
+        try {
+          pipelineLogger.info(`Trying the Python edge-tts package (voice: ${edgeVoice})...`, 'TTSService');
+          await this.generatePythonEdge(script, edgeVoice, rate, outputPath);
+          generated = true;
+          pipelineLogger.info(`✓ Python edge-tts generation successful. Output: ${outputPath}`, 'TTSService');
+        } catch (pyErr) {
+          pipelineLogger.warn(`Python edge-tts failed: ${pyErr instanceof Error ? pyErr.message : pyErr}`, 'TTSService');
         }
       }
 

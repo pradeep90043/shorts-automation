@@ -128,14 +128,25 @@ export function startClonedLines(slug: string, lines: VoiceboxLine[], profileKey
     const spoken = english ? lines : await toDevanagari(lines);
     if (!spoken) throw new Error("the Hindi text could not be prepared");
     spokenLines = spoken;
-    return generateVoiceboxNarration({
-      slug,
-      lines: spoken,
-      language: english ? "en" : "hi",
-      speed: "1.0",
-      inputs: { ...voiceInputsFor(profileKey), shard_chars: process.env.VOICE_SHARD_CHARS || "150", ...(english ? { denoise: "false" } : {}) },
-      giveUpMs: timeoutMin * 60_000,
-    });
+    const attemptOnce = (budgetMs: number, suffix: string) =>
+      generateVoiceboxNarration({
+        slug: slug + suffix,
+        lines: spoken,
+        language: english ? "en" : "hi",
+        speed: "1.0",
+        inputs: { ...voiceInputsFor(profileKey), shard_chars: process.env.VOICE_SHARD_CHARS || "150", ...(english ? { denoise: "false" } : {}) },
+        giveUpMs: budgetMs,
+      });
+    try {
+      return await attemptOnce(timeoutMin * 60_000, "");
+    } catch (err) {
+      // a run that FAILED (a runner error) is tried once more while there is time; one that timed out is not (it would take as long again)
+      const left = timeoutMin * 60_000 - (Date.now() - started);
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/took longer than/i.test(msg) || left < 8 * 60_000) throw err;
+      pipelineLogger.warn(`Cloned voice run failed (${msg.slice(0, 160)}): trying once more (${Math.round(left / 60000)} min left)`, "ClonedVoice");
+      return attemptOnce(left, "-r2");
+    }
   };
   return run()
     .then((r) => {

@@ -20,6 +20,8 @@ import sys
 import os
 import json
 import asyncio
+import subprocess
+import tempfile
 
 async def identify(file_path: str):
     if not os.path.exists(file_path):
@@ -37,7 +39,21 @@ async def identify(file_path: str):
 
     try:
         shazam = Shazam()
-        out = await shazam.recognize(file_path)
+        # Decode to a mono 16 kHz wav first: shazamio's own decoder fails on some mp4/aac inputs and then reports "no match".
+        wav = os.path.join(tempfile.gettempdir(), f"shazam-{os.getpid()}.wav")
+        src = file_path
+        try:
+            subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", file_path, "-vn", "-ac", "1", "-ar", "16000", "-t", "60", wav],
+                           check=True, timeout=60)
+            if os.path.getsize(wav) > 1000:
+                src = wav
+        except Exception:
+            pass
+        try:
+            out = await shazam.recognize(src)
+        finally:
+            if src == wav and os.path.exists(wav):
+                os.remove(wav)
         track = out.get("track")
         if not track:
             print(json.dumps({"matched": False, "message": "No match found on Shazam"}))

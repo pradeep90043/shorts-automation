@@ -55,7 +55,7 @@ def ensure_model(base, engine, wait_seconds):
 
 def transcribe(base, path, language, model, wait_seconds):
     """Voicebox's own speech recognition (Whisper): what is said in the voice sample. The first call downloads the model."""
-    end = time.time() + wait_seconds
+    end = time.time() + min(wait_seconds, 240)  # a transcription that is not ready in 4 minutes is not coming: fail the shard fast
     while True:
         with open(path, "rb") as f:
             r = requests.post(
@@ -131,7 +131,7 @@ def main():
             r = requests.post(
                 f"{a.base}/v1/audio/speech",
                 json={"model": a.engine, "voice": a.voice, "input": line["text"], "response_format": "wav", **({"speed": a.speed} if a.speed != 1.0 else {})},
-                timeout=900,
+                timeout=max(240, min(900, 90 + 3 * len(line["text"]))),  # ~3 s per character: a stuck line is detected in minutes, not 15
             )
             if r.ok:
                 break
