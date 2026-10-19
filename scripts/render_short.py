@@ -240,11 +240,14 @@ def build_and_run_ffmpeg(work_dir: str, repo_root: str, out_path: str):
 
     # 4. Reaction sticker overlay (bottom left)
     if sticker_idx != -1:
+        # the cover card owns the first 3 s (its headline sits where the sticker does): the sticker's own timeline starts after it
+        shift = "+3/TB" if cov_idx != -1 else ""
         if sticker_tail_idx != -1:
-            v_filters.append(f"[{sticker_idx}:v]setpts=PTS-STARTPTS[stk_full];[{sticker_tail_idx}:v]setpts=PTS-STARTPTS[stk_tail];[stk_full][stk_tail]concat=n=2:v=1:a=0[stickerloop]")
-            v_filters.append(f"{current_v}[stickerloop]overlay=40:H-h-40:shortest=1[stk]")
+            v_filters.append(f"[{sticker_idx}:v]setpts=PTS-STARTPTS[stk_full];[{sticker_tail_idx}:v]setpts=PTS-STARTPTS[stk_tail];[stk_full][stk_tail]concat=n=2:v=1:a=0,setpts=PTS-STARTPTS{shift}[stickerloop]")
+            v_filters.append(f"{current_v}[stickerloop]overlay=40:H-h-40:shortest=1:eof_action=pass[stk]")
         else:
-            v_filters.append(f"{current_v}[{sticker_idx}:v]overlay=40:H-h-40:shortest=1[stk]")
+            v_filters.append(f"[{sticker_idx}:v]setpts=PTS-STARTPTS{shift}[stkone]")
+            v_filters.append(f"{current_v}[stkone]overlay=40:H-h-40:shortest=1:eof_action=pass[stk]")
         current_v = "[stk]"
 
     # 5. Burn animated subtitles (ASS)

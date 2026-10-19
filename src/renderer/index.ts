@@ -174,6 +174,19 @@ export class VideoRenderer implements IVideoRenderer {
     const W = 1080, H = 1920;
     const cat = (m?.coverCategory || "UPDATE").toUpperCase().replace(/[^A-Z]/g, "").slice(0, 16) || "UPDATE";
     
+    // A long line is wrapped at word boundaries (at the smallest font ~16 letters fit the 940 px card; the server's fallback font is
+    // wider than the one the sizing was made for, and "RBI RATE HIKE & EMI IMPACT" ran off the frame).
+    const WRAP = 16;
+    const wrapped: string[] = [];
+    for (const line of lines) {
+      let cur = "";
+      for (const w of line.split(" ")) {
+        if (cur && (cur + " " + w).length > WRAP) { wrapped.push(cur); cur = w; } else cur = cur ? cur + " " + w : w;
+      }
+      if (cur) wrapped.push(cur);
+    }
+    lines.splice(0, lines.length, ...wrapped.slice(0, 4));
+
     // Headline sizing: fit the widest line into ~940px.
     const maxChars = Math.max(...lines.map((l) => l.length), 1);
     const fontSize = Math.max(70, Math.min(150, Math.round(940 / (maxChars * 0.8))));
