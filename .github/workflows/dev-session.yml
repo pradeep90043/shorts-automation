@@ -113,7 +113,11 @@ jobs:
           PW=$(printf '%s' "${DASHBOARD_PASSWORD:-codeorcap@2026}-freellm" | sha256sum | cut -c1-24)
           EMAIL="dev@session.dev"
           tok() { python3 -c "import sys,json;print(json.load(sys.stdin).get('token',''))"; }
-          call() { curl -s -w '\n%{http_code}' -X POST "localhost:3001/api/auth/$1" -H 'Content-Type: application/json' -d "{\"email\":\"$EMAIL\",\"password\":\"$PW\"}"; }
+          # FreeLLMAPI only lets the first account be made from the machine itself; through Docker the request comes from the bridge,
+          # so it asks for the one-time setup code it prints at boot (without it: HTTP 403 and the keys were never added)
+          SETUP_CODE=$(docker logs freellmapi-dev 2>&1 | grep -oE 'First-run setup code: [A-Za-z0-9_-]+' | tail -1 | awk '{print $NF}' || true)
+          echo "setup code found: $([ -n "$SETUP_CODE" ] && echo yes || echo no)"
+          call() { curl -s -w '\n%{http_code}' -X POST "localhost:3001/api/auth/$1" -H 'Content-Type: application/json' -d "{\"email\":\"$EMAIL\",\"password\":\"$PW\",\"setupCode\":\"$SETUP_CODE\"}"; }
           R=$(call setup); echo "FreeLLMAPI setup: HTTP $(echo "$R" | tail -1)"; TOKEN=$(echo "$R" | head -n -1 | tok)
           if [ -z "$TOKEN" ]; then R=$(call login); echo "FreeLLMAPI login: HTTP $(echo "$R" | tail -1)"; TOKEN=$(echo "$R" | head -n -1 | tok); [ -n "$TOKEN" ] || echo "  answer: $(echo "$R" | head -n -1 | head -c 160)"; fi
           echo "::add-mask::$PW"
@@ -220,12 +224,12 @@ jobs:
       - name: Mark the stable link as "no session"
         if: always()
         run: |
-          rm -rf /tmp/pages && mkdir /tmp/pages && cd /tmp/pages && git init -q -b gh-pages
+          rm -rf /tmp/pages
+          git clone -q --depth 1 -b gh-pages "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" /tmp/pages || exit 0
+          cd /tmp/pages
           printf '{"url":"","started":"%s","commit":"%s"}\n' "$(date -u +%FT%TZ)" "${GITHUB_SHA}" > current.json
-          cp "$GITHUB_WORKSPACE/.github/dev-link/index.html" index.html
-          touch .nojekyll
-          git add -A && git -c user.name="dev-session" -c user.email="dev-session@users.noreply.github.com" commit -q -m "dev session ended"
-          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" gh-pages || true
+          git add -A && git -c user.name="dev-session" -c user.email="dev-session@users.noreply.github.com" commit -q -m "dev session ended" || exit 0
+          git push -q "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" gh-pages || true
 
       - name: Collect logs
         if: always()
