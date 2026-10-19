@@ -753,7 +753,12 @@ CODING TUTORIALS (when the narration teaches programming): the viewer must SEE t
 - After the code is explained, run it: a "terminal" beat with the command ("$ mvn spring-boot:run") and the output lines. Only show output the narration or the script states; never invent results.
 - Teach one idea at a time: problem -> intuition -> visual model -> code -> run -> why it happened -> a prediction ("quiz") or a small task. Revisit an earlier idea near the end and finish with one practical task.
 
-VISUAL PACING: change something every 20-40 seconds of narration (new panel type, camera move, a reaction beat). Camera ("push" to emphasise, "pull" to reveal, pans to follow flows) only when it helps, otherwise "none". Do not bounce or overdo effects.
+VISUAL PACING AND RELEVANCE (the most common failure is a voice talking over a picture that has nothing to do with it):
+- Every beat is about 4-6 seconds and its picture MUST change from the previous beat: a different panel, a different "scene" composition, a different pose or camera. Two neighbouring beats may share a panel only while one example is being walked through (then move the highlight / "current" / revealed lines).
+- Before directing a beat, find its main concrete thing or action (the noun or verb a viewer would point at: a bank, a rupee, a phone scam, a rising bill, a locked door). The visual MUST show exactly that. Prefer a "scene" panel that draws those things (with arrows for cause -> effect) over a stickman that just talks. Use real numbers and names from the beat in counters, charts and labels.
+- At most one beat in four may be the bare stickman with callouts. Never use a generic prop or panel just to fill the slot; if the beat is an opinion or a reaction, let the stickman act it out (pose + mood + a prop that fits the words).
+- Callouts restate the beat's key claim in 3-8 words; they never decorate. The title names the topic, not the section number.
+- Use the camera: "push" on the key claim of a section, "pull" to reveal a diagram, at least every third or fourth beat; otherwise "none". Do not bounce or overdo effects.
 
 ACCURACY: never sacrifice technical accuracy; estimates stay estimates; no absolute claims such as "Java is always faster".`;
 

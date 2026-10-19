@@ -19,10 +19,51 @@ const PERSON = (a: SceneAsset): boolean => a === "person" || a === "person-worri
 
 const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 /** whole-word (plural allowed) matcher for a keyword or phrase */
-const wordRe = (kw: string): RegExp => new RegExp(`\\b${escape(kw).replace(/\s+/g, "\\s+")}(?:s|es)?\\b`, "i");
+// \b only knows ASCII letters, so Hindi (Devanagari) words never matched: use Unicode letter/mark boundaries instead.
+// Hindi inflections (पैसा/पैसे, बैंक/बैंकों) are covered by letting a keyword be followed by a few more marks/letters.
+const wordRe = (kw: string): RegExp => {
+  const hindi = /[\u0900-\u097F]/.test(kw);
+  return new RegExp(`(?<![\\p{L}\\p{M}\\p{N}])${escape(kw).replace(/\s+/g, "\\s+")}${hindi ? "[\\p{M}\\p{L}]{0,3}" : "(?:s|es)?"}(?![\\p{L}\\p{M}\\p{N}])`, "iu");
+};
+
+/** Hindi / Hinglish words that call for an asset (the English list above only fires on English narration). */
+const HINDI_KEYWORDS: Partial<Record<SceneAsset, string[]>> = {
+  money: ["पैसा", "पैसे", "रुपया", "रुपये", "रुपए", "कमाई", "सैलरी", "वेतन", "कीमत", "खर्च", "बचत", "निवेश", "कर्ज", "लोन", "ईएमआई", "ब्याज", "महंगा", "सस्ता", "बजट", "मुनाफा", "नुकसान", "paisa", "paise", "rupee", "rupaye"],
+  chart: ["बढ़त", "बढ़ता", "बढ़ती", "बढ़ोतरी", "ग्रोथ", "प्रतिशत", "फीसदी", "रिटर्न", "मार्केट", "शेयर", "निफ्टी", "सेंसेक्स", "मांग", "दर", "आंकड़े"],
+  city: ["बैंक", "कंपनी", "शहर", "दफ्तर", "ऑफिस", "इमारत", "बाजार", "कारोबार", "दुकान"],
+  house: ["घर", "मकान", "परिवार", "फ्लैट", "किराया"],
+  clock: ["समय", "घंटा", "घंटे", "मिनट", "सेकंड", "रोज", "महीना", "महीने", "साल", "तारीख", "देर", "जल्दी", "इंतजार"],
+  person: ["लोग", "इंसान", "आदमी", "ग्राहक", "आप", "तुम", "कोई", "सब", "दोस्त", "टीम"],
+  "person-worried": ["चिंता", "डर", "परेशान", "टेंशन", "तनाव", "मुश्किल", "दिक्कत", "समस्या", "खतरा", "घबराहट"],
+  "person-happy": ["खुश", "खुशी", "फायदा", "सफल", "सफलता", "जीत", "बेहतर", "आराम", "राहत"],
+  warning: ["धोखा", "फ्रॉड", "स्कैम", "ठगी", "खतरनाक", "सावधान", "गलती", "एरर", "हैक", "चोरी", "जुर्माना"],
+  lock: ["ताला", "सुरक्षित", "पासवर्ड", "प्राइवेसी", "गोपनीय", "बंद"],
+  shield: ["सुरक्षा", "बचाव", "भरोसा", "बीमा", "इंश्योरेंस", "गारंटी"],
+  document: ["दस्तावेज", "फॉर्म", "कागज", "रिपोर्ट", "फाइल", "नियम", "कानून", "रसीद", "बिल", "खाता", "आधार", "पैन"],
+  phone: ["फोन", "मोबाइल", "स्मार्टफोन", "ऐप", "यूपीआई", "upi"],
+  laptop: ["कंप्यूटर", "लैपटॉप", "वेबसाइट", "कोड", "सॉफ्टवेयर"],
+  brain: ["दिमाग", "सोच", "सोचना", "समझ", "सीखना", "याद", "मन"],
+  bulb: ["आइडिया", "तरीका", "वजह", "कारण", "समाधान", "ट्रिक", "राज", "सच"],
+  magnifier: ["जांच", "देखिए", "ढूंढ", "खोज", "पता", "चेक"],
+  check: ["सही", "सच", "पक्का", "मंजूर", "पास", "पूरा", "हो गया"],
+  cross: ["गलत", "झूठ", "मिथक", "नहीं", "मना", "रोक", "रद्द", "फेल"],
+  rocket: ["शुरू", "लॉन्च", "तेज", "स्टार्टअप", "उड़ान"],
+  flag: ["लक्ष्य", "मंजिल", "टारगेट", "नतीजा", "पहला"],
+  globe: ["दुनिया", "देश", "भारत", "विदेश", "वैश्विक"],
+  car: ["गाड़ी", "कार", "बाइक", "सड़क", "ट्रैफिक"],
+  fire: ["आग", "गर्मी", "गरम", "जलना"],
+  drop: ["पानी", "बारिश", "तरल"],
+  tree: ["पेड़", "जंगल", "प्रकृति", "हरा"],
+  bolt: ["बिजली", "ऊर्जा", "पावर"],
+  factory: ["फैक्ट्री", "उद्योग", "कारखाना", "उत्पादन", "प्रदूषण"],
+  database: ["डेटा", "रिकॉर्ड", "डेटाबेस"],
+  cloud: ["क्लाउड", "इंटरनेट", "ऑनलाइन"],
+  wifi: ["नेटवर्क", "सिग्नल", "वाईफाई"],
+  robot: ["एआई", "रोबोट", "चैटजीपीटी"],
+};
 
 const MATCHERS: { asset: SceneAsset; kw: string; re: RegExp }[] = (Object.entries(ASSET_KEYWORDS) as [SceneAsset, readonly string[]][])
-  .flatMap(([asset, kws]) => kws.map((kw) => ({ asset, kw, re: wordRe(kw) })));
+  .flatMap(([asset, kws]) => [...kws, ...(HINDI_KEYWORDS[asset] ?? [])].map((kw) => ({ asset, kw, re: wordRe(kw) })));
 
 const titleCase = (s: string): string => s.replace(/\s+/g, " ").trim().split(" ").map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w)).join(" ");
 
