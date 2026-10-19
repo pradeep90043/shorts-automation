@@ -15,6 +15,21 @@ const UA = "CodeOrCapBot/1.0 (https://codeorcap.example; pradeep90043@gmail.com)
 const ALLOWED = /^(public domain|pd\b|cc0|cc[- ]by(?:[- ]sa)?\b|cc[- ]by[- ]\d)/i;
 const strip = (html: string): string => html.replace(/<[^>]*>/g, "").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/\s+/g, " ").trim();
 
+const STOP = new Set(["the", "and", "for", "with", "from"]);
+/** words that describe the kind of picture, not the subject: a hit need not repeat them */
+const GENERIC = new Set(["building", "buildings", "headquarters", "photo", "photograph", "view", "exterior", "image", "picture", "footage", "video", "clip"]);
+const words = (t: string): string[] => (t.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []).filter((w) => !STOP.has(w));
+/**
+ * Stock/commons search always returns *something*, and "Reserve Bank of India" finds "Federal Reserve Bank of Atlanta".
+ * A hit is accepted only if its own text contains EVERY distinctive word of the query (prefixes allowed: indian ~ india).
+ */
+export function relevantTo(query: string, hitText: string): boolean {
+  const need = words(query).filter((w) => !GENERIC.has(w));
+  if (!need.length) return false;
+  const have = words(hitText);
+  return need.every((w) => have.some((x) => x === w || x.startsWith(w) || w.startsWith(x)));
+}
+
 async function getJson(url: string, headers: Record<string, string> = {}): Promise<any> {
   const res = await fetch(url, { headers: { "User-Agent": UA, ...headers }, signal: AbortSignal.timeout(15000) });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -30,6 +45,7 @@ export async function searchWikimedia(query: string): Promise<LicensedPhoto | nu
   const pages: any[] = Object.values(data?.query?.pages ?? {}).sort((a: any, b: any) => (a.index ?? 0) - (b.index ?? 0));
   for (const pg of pages) {
     const ii = pg.imageinfo?.[0];
+    if (!relevantTo(query, String(pg.title ?? "").replace(/^File:|\.\w+$/g, "").replace(/[_-]/g, " "))) continue;
     if (!ii || !/^image\/(jpeg|png|webp)$/.test(ii.mime) || (ii.width ?? 0) < 1000 || (ii.height ?? 0) < 600) continue;
     const meta = ii.extmetadata ?? {};
     const license = strip(String(meta.LicenseShortName?.value ?? ""));
@@ -51,7 +67,7 @@ export async function searchPexels(query: string): Promise<LicensedPhoto | null>
   const key = pexelsKey();
   if (!key) return null;
   const data = await getJson(`https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&per_page=5&orientation=landscape`, { Authorization: key });
-  const p = data?.photos?.[0];
+  const p = (data?.photos ?? []).find((x: any) => relevantTo(query, `${x.alt ?? ""} ${String(x.url ?? "").split("/photo/")[1] ?? ""}`.replace(/-/g, " ")));
   if (!p?.src?.large2x) return null;
   return { url: p.src.large2x, credit: `Photo: ${String(p.photographer ?? "Pexels").slice(0, 50)} / Pexels`, license: "Pexels License", pageUrl: p.url, source: "pexels" };
 }
@@ -62,7 +78,9 @@ export async function findLicensedPhoto(query: string): Promise<LicensedPhoto | 
   if (!q) return null;
   for (const [name, fn] of [["Wikimedia", searchWikimedia], ["Pexels", searchPexels]] as const) {
     try {
-      const hit = await fn(q);
+      let hit = await fn(q);
+      const short = words(q).filter((w) => !GENERIC.has(w)).slice(0, 3).join(" ");
+      if (!hit && short && short !== q.toLowerCase()) hit = await fn(short); // "Reserve Bank India headquarters Mumbai" -> "reserve bank mumbai"
       if (hit) { pipelineLogger.info(`[Photo] "${q}" -> ${name}: ${hit.credit} (${hit.license})`, "PhotoFetcher"); return hit; }
     } catch (err: any) {
       pipelineLogger.warn(`[Photo] ${name} search for "${q}" failed: ${err?.message ?? err}`, "PhotoFetcher");
@@ -85,6 +103,7 @@ export async function searchWikimediaClip(query: string): Promise<LicensedClip |
   const pages: any[] = Object.values(data?.query?.pages ?? {}).sort((a: any, b: any) => (a.index ?? 0) - (b.index ?? 0));
   for (const pg of pages) {
     const ii = pg.imageinfo?.[0];
+    if (!relevantTo(query, String(pg.title ?? "").replace(/^File:|\.\w+$/g, "").replace(/[_-]/g, " "))) continue;
     if (!ii || !/^video\/(webm|mp4|ogg)/.test(ii.mime) || !ii.size || ii.size > MAX_CLIP_BYTES) continue;
     const meta = ii.extmetadata ?? {};
     const license = strip(String(meta.LicenseShortName?.value ?? ""));
@@ -131,6 +150,7 @@ export async function searchPexelsClip(query: string): Promise<LicensedClip | nu
   if (!key) return null;
   const data = await getJson(`https://api.pexels.com/videos/search?query=${encodeURIComponent(query)}&per_page=4&orientation=landscape&size=medium`, { Authorization: key });
   for (const v of data?.videos ?? []) {
+    if (!relevantTo(query, String(v.url ?? "").split("/video/")[1]?.replace(/-/g, " ") ?? "")) continue;
     const file = (v.video_files ?? []).filter((f: any) => f.file_type === "video/mp4" && f.width >= 1280 && f.width <= 1920).sort((a: any, b: any) => a.width - b.width)[0];
     if (file) return { url: file.link, credit: `Footage: ${String(v.user?.name ?? "Pexels").slice(0, 50)} / Pexels`, license: "Pexels License", pageUrl: v.url, source: "pexels" };
   }
