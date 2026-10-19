@@ -33,6 +33,16 @@ export function assignRelease(
   cfg: GridConfig = DEFAULT_GRID,
   minLeadMin = 10,
 ): ReleaseAssignment {
+  // LONG_RELEASE_IST="20:00": every long video goes public at that time (private until then), on its own channel.
+  const fixed = /^(\d{1,2}):(\d{2})$/.exec(process.env.LONG_RELEASE_IST || "");
+  if (fixed) {
+    const minute = Number(fixed[1]) * 60 + Number(fixed[2]);
+    for (let dayOffset = 0; dayOffset < 3; dayOffset++) {
+      const date = addDays(istDateToday, dayOffset);
+      const atMs = istMinuteToUtcMs(date, minute);
+      if (atMs >= nowMs + minLeadMin * 60 * 1000) return { istDate: date, minute, atMs };
+    }
+  }
   const slots = longReleaseSlots(channelCount, channelCount, 18 * 60, 21 * 60 + 30, cfg);
   if (!slots.length) throw new Error("No long-video release slots fit between the Shorts");
   const own = (CHANNEL_ORDER as readonly string[]).indexOf(channelKey.toLowerCase());

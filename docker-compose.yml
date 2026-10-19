@@ -14,6 +14,7 @@ services:
       - GROQ_API_KEY=${GROQ_API_KEY:-}
       # The VM is always prod
       - BOT_ENV=prod
+      - LONG_RELEASE_IST=20:00   # long videos stay private and go public at 8 pm IST
       - TZ=Asia/Kolkata
     depends_on:
       - freellmapi
