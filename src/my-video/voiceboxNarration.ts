@@ -133,7 +133,7 @@ export async function generateVoiceboxNarration(opts: VoiceboxOptions): Promise<
         ref: process.env.VOICEBOX_GITHUB_REF || "main",
         // English is spoken at natural speed with no denoise: the user compared 4 variants against their own voice, and the time-stretched
         // (0.92x) and denoised ones changed its pitch; turbo at 1.0x without denoise sounded closest
-        inputs: { tag: opts.slug, lines: linesJson, language: opts.language, engine: english ? "chatterbox_turbo" : "chatterbox", speed: opts.speed ?? "1.0", ...(english ? { denoise: "false" } : {}), ...(opts.inputs ?? {}) },
+        inputs: { tag: opts.slug, lines: linesJson, language: opts.language, engine: english ? "chatterbox_turbo" : "chatterbox", speed: opts.speed ?? "1.0", shard_chars: process.env.VOICE_SHARD_CHARS_LONG || "400", ...(english ? { denoise: "false" } : {}), ...(opts.inputs ?? {}) },
       }),
     });
     if (!res.ok) {

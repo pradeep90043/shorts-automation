@@ -24,10 +24,11 @@ const off = (v: string | undefined): boolean => /^(off|false|0|no)$/i.test((v ??
 
 /**
  * A long line is spoken in pieces: one runner speaking ~1,000 characters takes ~14 minutes on a CPU runner, right at the 15-minute
- * limit of a single speak call (it failed by a hair on a slower runner). Whole sentences, packed up to `max` characters; a
+ * limit of a single speak call (it failed by a hair on a slower runner). The speaking is the slow part (400-960 s per 250-char piece
+ * measured against ~130-240 s of fixed set-up), so pieces are ~150 characters: more runners, each much shorter. Whole sentences, packed up to `max` characters; a
  * sentence longer than that is cut at a comma, then a space. The pieces run on separate runners and are joined again.
  */
-export function splitForVoice(text: string, max = 250): string[] {
+export function splitForVoice(text: string, max = Number(process.env.VOICE_PIECE_CHARS) || 150): string[] {
   const sentences = text.split(/(?<=[.!?।॥])\s+/).map((x) => x.trim()).filter(Boolean);
   const pieces: string[] = [];
   for (const sentence of sentences) {
@@ -132,7 +133,7 @@ export function startClonedLines(slug: string, lines: VoiceboxLine[], profileKey
       lines: spoken,
       language: english ? "en" : "hi",
       speed: "1.0",
-      inputs: { ...voiceInputsFor(profileKey), shard_chars: process.env.VOICE_SHARD_CHARS || "250", ...(english ? { denoise: "false" } : {}) },
+      inputs: { ...voiceInputsFor(profileKey), shard_chars: process.env.VOICE_SHARD_CHARS || "150", ...(english ? { denoise: "false" } : {}) },
       giveUpMs: timeoutMin * 60_000,
     });
   };
