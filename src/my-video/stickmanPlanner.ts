@@ -942,7 +942,7 @@ export async function attachPhotos(plan: StickmanPlan, max = Number(process.env.
     const hit = clip ?? (await findLicensedPhoto(q.query));
     if (!hit) continue;
     used++;
-    (sc.visual as any).photo = { url: hit.url, credit: hit.credit, license: hit.license, caption: q.caption, ...(clip ? { video: true } : {}) };
+    (sc.visual as any).photo = { url: hit.url, credit: hit.credit, license: hit.license, caption: q.caption, ...(clip ? { video: true, startFrom: clip.startFrom ?? 0 } : {}) };
     delete (sc.visual as any).scene; // the real photo replaces the fallback drawing
     credits.set(hit.pageUrl, `${hit.credit} (${hit.license}) ${hit.pageUrl}`);
   }

@@ -1,3 +1,4 @@
+import { execFile } from "child_process";
 import { pipelineLogger } from "../utils/logger";
 
 /**
@@ -72,7 +73,7 @@ export async function findLicensedPhoto(query: string): Promise<LicensedPhoto | 
 }
 
 // ── short licensed video clips ─────────────────────────────────────────────────────────────────────────────────
-export interface LicensedClip extends Omit<LicensedPhoto, "source"> { source: "wikimedia" | "archive" | "nasa" | "pexels"; bytes?: number }
+export interface LicensedClip extends Omit<LicensedPhoto, "source"> { source: "wikimedia" | "archive" | "nasa" | "pexels"; bytes?: number; startFrom?: number }
 const MAX_CLIP_BYTES = 60 * 1024 * 1024;
 
 export async function searchWikimediaClip(query: string): Promise<LicensedClip | null> {
@@ -136,6 +137,20 @@ export async function searchPexelsClip(query: string): Promise<LicensedClip | nu
   return null;
 }
 
+/**
+ * Agency and archive clips usually open on a title slate (NASA: ~10 s of text). Streams the first 40 s through ffmpeg and
+ * returns the time of the first hard cut after 1.5 s (where the real footage starts); 0 when there is none or ffmpeg fails.
+ */
+export function detectFootageStart(url: string): Promise<number> {
+  return new Promise((resolve) => {
+    execFile("ffmpeg", ["-hide_banner", "-nostats", "-t", "40", "-i", url, "-an", "-vf", "select='gt(scene,0.3)',showinfo", "-f", "null", "-"],
+      { timeout: 90_000, maxBuffer: 8 * 1024 * 1024 }, (_err, _out, stderr) => {
+        const times = [...String(stderr).matchAll(/pts_time:([\d.]+)/g)].map((m) => Number(m[1])).filter((t) => t >= 1.5 && t <= 30);
+        resolve(times.length ? Math.round(times[0] * 10) / 10 : 0);
+      });
+  });
+}
+
 /** Best licensed short clip for `query`, or null. Open archives first, then Pexels (key needed). Never throws. */
 export async function findLicensedClip(query: string): Promise<LicensedClip | null> {
   const q = query.replace(/\s+/g, " ").trim().slice(0, 120);
@@ -143,6 +158,7 @@ export async function findLicensedClip(query: string): Promise<LicensedClip | nu
   for (const [name, fn] of [["NASA", searchNasaClip], ["Wikimedia", searchWikimediaClip], ["Pexels", searchPexelsClip], ["Archive.org", searchArchiveClip]] as const) {
     try {
       const hit = await fn(q);
+      if (hit && (hit.source === "nasa" || hit.source === "archive")) hit.startFrom = await detectFootageStart(hit.url);
       if (hit) { pipelineLogger.info(`[Clip] "${q}" -> ${name}: ${hit.credit} (${hit.license})`, "PhotoFetcher"); return hit; }
     } catch (err: any) {
       pipelineLogger.warn(`[Clip] ${name} search for "${q}" failed: ${err?.message ?? err}`, "PhotoFetcher");
