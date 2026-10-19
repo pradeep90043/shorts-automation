@@ -3,7 +3,7 @@ import { GeminiClient } from "../ai/gemini";
 import { config } from "../config";
 import { parseAiJson } from "../utils/json";
 import { sceneForSentence } from "./sceneComposer";
-import { findLicensedPhoto } from "./photoFetcher";
+import { findLicensedClip, findLicensedPhoto } from "./photoFetcher";
 import { pipelineLogger } from "../utils/logger";
 import type { StickmanScene } from "./myVideoService";
 import { SCENE_ASSETS, SCENE_BACKGROUNDS, SCENE_TINTS } from "./sceneCatalog";
@@ -435,7 +435,7 @@ function sanitizePanel(v: any): Record<string, unknown> {
     if (fallback) return fallback;
   }
   const ph = v?.photo;
-  if (str(ph?.query, 120)) return { photo: { query: str(ph.query, 120), caption: str(ph.caption, 70) || undefined } };
+  if (str(ph?.query, 120)) return { photo: { query: str(ph.query, 120), caption: str(ph.caption, 70) || undefined, clip: ph.clip === true || undefined } };
   const nw = v?.news;
   if (str(nw?.outlet, 28) && str(nw?.headline, 110)) {
     return {
@@ -735,7 +735,7 @@ PANELS (right side of the frame, at most ONE per beat, vary the panel type betwe
 - "table": database rows / query results: {"name":"users","columns":["id","name","role"],"rows":[["1","Asha","admin"]],"highlightRow":0} (2-5 columns, 1-5 rows, every row has one cell per column, cells max 18 chars).
 - "alert": an error, success or warning state: {"kind":"error","title":"NullPointerException","detail":"user is null"}.
 - "news": a NEWSPAPER CLIPPING that shows the source on screen: {"outlet":"Reuters","date":"Oct 8, 2026","headline":"US halts green card applications for eight big employers","mark":"halts","deck":"Labor Department cites fraud probe","stamp":"Reported"}. Use it when the narration quotes or cites a report: the headline must be the outlet's real headline (or a close paraphrase, never invented), the outlet and date must be real and match the narration. "mark" = 1-3 headline words to highlight in red; "stamp" (max 16 chars) = REPORTED / ALLEGED / UNCONFIRMED / CONFIRMED, pick the honest label. Headline max 110 chars, deck max 140.
-- "photo": a REAL PHOTOGRAPH of a real, named place, building, landmark, institution, object or public event the beat is about (e.g. Supreme Court of India, Reserve Bank of India Mumbai, Wankhede Stadium, ISRO launch pad, Mumbai local train). {"query":"Reserve Bank of India headquarters Mumbai","caption":"RBI, Mumbai"}. "query" = the plain English search words for that exact subject (max 8 words, no adjectives like "beautiful"); "caption" max 5 words in the narration's language. Use it for at most 1 beat in 4, only for subjects that exist as photographable things (never abstract ideas, feelings, numbers, private individuals, or events that cannot be photographed); a licensed photo is fetched automatically and credited on screen, and if none is found the beat falls back to a drawing.
+- "photo": a REAL PHOTOGRAPH of a real, named place, building, landmark, institution, object or public event the beat is about (e.g. Supreme Court of India, Reserve Bank of India Mumbai, Wankhede Stadium, ISRO launch pad, Mumbai local train). {"query":"Reserve Bank of India headquarters Mumbai","caption":"RBI, Mumbai"}. Add "clip":true when the beat is about something that MOVES or happens (a rocket launch, a flood, traffic, a factory line, a crowd, a train) so a short licensed video clip plays instead of a still; the query then names that action ("rocket launch"). "query" = the plain English search words for that exact subject (max 8 words, no adjectives like "beautiful"); "caption" max 5 words in the narration's language. Use it for at most 1 beat in 4, only for subjects that exist as photographable things (never abstract ideas, feelings, numbers, private individuals, or events that cannot be photographed); a licensed photo is fetched automatically and credited on screen, and if none is found the beat falls back to a drawing.
 - "scene": an ILLUSTRATION composed from a library of ready-made hand-drawn assets. PREFER IT whenever the beat talks about concrete things (devices, data centers, water, power, factories, cities, people, money, time): it makes the visual literally show what is said. {"background":"lab","items":[{"asset":"server","x":24,"y":46,"size":46,"label":"Data center"},{"asset":"drop","x":76,"y":46,"size":46,"label":"Water"}],"arrows":[{"from":[38,46],"to":[62,46]}]}. 1-5 items; x and y are percentages of the card (0-100, left to right / top to bottom), size = asset height in percent (25-55), label max 22 chars (the word the narration uses), arrows are [x,y] points between items showing cause -> effect. Space items so they do not overlap (with 3 items use x 17/50/83). Backgrounds: paper, sky (outdoors, world, nature), night, room (home, office), lab (tech, science). Assets: server, laptop, phone, cloud, database, chip, robot, wifi, plug, bolt, battery, lock, shield, chart, document, magnifier, clock, money, brain, bulb, drop, fire, thermometer, fan, factory, tower, city, globe, tree, sun, house, car, solar, turbine, person, person-worried, person-happy, warning, check, cross, rocket, flag, gear, rupee, bank, piggy, wallet, card, gold-bar, stock-up, stock-down, calculator, receipt, contract, heart, broken-heart, key, door, book, crown, moon, star, ghost, castle, newspaper, microphone, camera, tv, megaphone, gavel, ballot, siren, hospital, school, airplane, train, cart, trophy, cricket, bell, calendar, id-card, scales. Never invent an asset name.
 - "svg": LAST RESORT. A custom diagram YOU draw, only for things the panels above cannot show: a tree (inheritance, hierarchy), a 2x2 matrix, a layered stack, a cycle. A simple chain or request path is a "flow" or "steps", NOT an svg. Never use svg on two beats in a row. Canvas is 1300 wide x 700 tall. Shapes: rect{x,y,w,h,rx}, circle{cx,cy,r}, line{x1,y1,x2,y2,arrow,dash}, path{d}, text{x,y,text,size,anchor}. Colours: ink, accent, red, green, blue, gold, faint, bg, white or #rrggbb ("white" text on accent/green/blue/red boxes, "ink" text on gold/faint boxes). Shapes appear in the order given (same "step" = together): build the diagram in the order it is explained.
   LAYOUT RULES (drawings that break them are discarded): put boxes on a grid, boxes 300x100, rows at y=60 / 250 / 440 (a 4th row at 600 only for a short chain), column centres x=250 / 650 / 1050 (so a box at centre c has x=c-150); text centred in its box with x=centre and y=box y+66 for size 44; arrows run only through the GAP between boxes (from the bottom edge of one box to the top edge of the next, e.g. y1=160 to y2=250), never through a box or a label; text size 32-48, at most 24 characters; 4-14 shapes; never overlap boxes; no title (the scene headline names it).
@@ -938,10 +938,11 @@ export async function attachPhotos(plan: StickmanPlan, max = Number(process.env.
   for (const sc of plan.scenes) {
     const q = (sc.visual as any).photoQuery;
     if (!q || used >= max) continue;
-    const hit = await findLicensedPhoto(q.query);
+    const clip = q.clip ? await findLicensedClip(q.query) : null;
+    const hit = clip ?? (await findLicensedPhoto(q.query));
     if (!hit) continue;
     used++;
-    (sc.visual as any).photo = { url: hit.url, credit: hit.credit, license: hit.license, caption: q.caption };
+    (sc.visual as any).photo = { url: hit.url, credit: hit.credit, license: hit.license, caption: q.caption, ...(clip ? { video: true } : {}) };
     delete (sc.visual as any).scene; // the real photo replaces the fallback drawing
     credits.set(hit.pageUrl, `${hit.credit} (${hit.license}) ${hit.pageUrl}`);
   }
