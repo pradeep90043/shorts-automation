@@ -86,6 +86,7 @@ jobs:
           if [ -n "${RENDER_GITHUB_TOKEN}" ]; then printf 'GITHUB_TOKEN=%s\n' "${RENDER_GITHUB_TOKEN}" >> .env.dev; fi
           printf 'DASHBOARD_PASSWORD=%s\n' "${DASHBOARD_PASSWORD:-codeorcap@2026}" >> .env.dev
           if [ -n "${GROQ_API_KEY}" ]; then printf 'GROQ_API_KEY=%s\n' "${GROQ_API_KEY}" >> .env.dev; fi
+          if [ -n "${PEXELS_API_KEY}" ]; then printf 'PEXELS_API_KEY=%s\n' "${PEXELS_API_KEY}" >> .env.dev; fi
           if [ -n "${COVER_IMAGE_API_KEY}" ]; then printf 'COVER_IMAGE_API_KEY=%s\n' "${COVER_IMAGE_API_KEY}" >> .env.dev; fi
           if [ -n "${COVER_IMAGE_API_URL}" ]; then printf 'COVER_IMAGE_API_URL=%s\n' "${COVER_IMAGE_API_URL}" >> .env.dev; fi
           printf 'VOICEBOX_GITHUB_REPO=pradeep90043/shorts-automation-test\n' >> .env.dev
@@ -97,6 +98,7 @@ jobs:
           RENDER_GITHUB_TOKEN: ${{ secrets.RENDER_GITHUB_TOKEN }}
           DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           COVER_IMAGE_API_KEY: ${{ secrets.COVER_IMAGE_API_KEY }}
           COVER_IMAGE_API_URL: ${{ secrets.COVER_IMAGE_API_URL }}
           FREELLM_ENC: ${{ secrets.DEV_FREELLM_ENCRYPTION_KEY }}
@@ -175,6 +177,7 @@ jobs:
         env:
           DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           DEV_FREELLM_KEYS: ${{ secrets.DEV_FREELLM_KEYS }}
 
       - name: Start the dev app
