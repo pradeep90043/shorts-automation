@@ -1,0 +1,256 @@
+name: Dev session (GitHub-hosted dev server)
+
+# Builds the app from the `dev` branch, starts the dev stack on a GitHub runner (4 CPUs, 16 GB, free for a public repo) and opens it
+# to the internet with Cloudflare quick tunnels. A session is started ON PURPOSE (push to the `dev-session` branch, or run this
+# workflow by hand): a push to `dev`, by anyone or any tool, does NOT restart it, so a running test is never killed and the link
+# does not change underneath you. The tunnel address changes per session, so the session also publishes it to a STABLE page,
+# https://<owner>.github.io/<repo>/ , which always forwards to the current one. Build, deploy and publish behave exactly as in
+# production; only the host differs. It has its own concurrency group, so it never blocks or delays a production deploy.
+
+on:
+  push:
+    branches:
+      - dev-session
+  workflow_dispatch:
+    inputs:
+      hours:
+        description: "How long the session stays up (max 5.5)"
+        default: "5"
+
+concurrency:
+  group: dev-session
+  cancel-in-progress: true
+
+permissions:
+  contents: write   # publishes the stable link page (gh-pages)
+  statuses: write
+
+jobs:
+  session:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    env:
+      HOURS: ${{ inputs.hours || '5' }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout (with my-video submodule)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && 'dev' || github.sha }}
+          submodules: ${{ secrets.MY_VIDEO_TOKEN != '' }}
+          token: ${{ secrets.MY_VIDEO_TOKEN || github.token }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build the app image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          push: false
+          tags: shorts-dev:session
+          cache-from: type=gha,scope=dev-session
+          cache-to: type=gha,scope=dev-session,mode=max
+          provenance: false
+          sbom: false
+
+      - name: Restore FreeLLMAPI keys from the last session
+        uses: actions/cache/restore@v4
+        with:
+          path: session/freellm-data
+          key: freellm-dev-${{ github.run_id }}
+          restore-keys: freellm-dev-
+
+      - name: Open the tunnels
+        run: |
+          mkdir -p session/freellm-data session/output session/logs session/data
+          curl -fsSL -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x cloudflared
+          nohup ./cloudflared tunnel --no-autoupdate --url http://localhost:3002 > tunnel-app.log 2>&1 &
+          nohup ./cloudflared tunnel --no-autoupdate --url http://localhost:3001 > tunnel-llm.log 2>&1 &
+          for i in $(seq 1 60); do
+            APP_URL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' tunnel-app.log | head -1 || true)
+            LLM_URL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' tunnel-llm.log | head -1 || true)
+            [ -n "$APP_URL" ] && [ -n "$LLM_URL" ] && break
+            sleep 2
+          done
+          [ -n "$APP_URL" ] || { echo "no tunnel URL for the app"; cat tunnel-app.log; exit 1; }
+          echo "APP_URL=$APP_URL" >> "$GITHUB_ENV"
+          echo "LLM_URL=$LLM_URL" >> "$GITHUB_ENV"
+          echo "app tunnel: $APP_URL"
+
+      - name: Materialise the dev settings
+        run: |
+          printf '%s\n' "${DEV_ENV}" > .env.dev
+          if [ -n "${RENDER_GITHUB_TOKEN}" ]; then printf 'GITHUB_TOKEN=%s\n' "${RENDER_GITHUB_TOKEN}" >> .env.dev; fi
+          printf 'DASHBOARD_PASSWORD=%s\n' "${DASHBOARD_PASSWORD:-codeorcap@2026}" >> .env.dev
+          if [ -n "${GROQ_API_KEY}" ]; then printf 'GROQ_API_KEY=%s\n' "${GROQ_API_KEY}" >> .env.dev; fi
+          if [ -n "${COVER_IMAGE_API_KEY}" ]; then printf 'COVER_IMAGE_API_KEY=%s\n' "${COVER_IMAGE_API_KEY}" >> .env.dev; fi
+          if [ -n "${COVER_IMAGE_API_URL}" ]; then printf 'COVER_IMAGE_API_URL=%s\n' "${COVER_IMAGE_API_URL}" >> .env.dev; fi
+          printf 'VOICEBOX_GITHUB_REPO=pradeep90043/shorts-automation-test\n' >> .env.dev
+          printf 'MY_VIDEO_GITHUB_REPO=pradeep90043/my-video-test\n' >> .env.dev
+          printf 'RENDER_GITHUB_REPO=pradeep90043/my-video-test\n' >> .env.dev
+          echo "FREELLM_ENC=${FREELLM_ENC:-026653c9d168432691e1fbc8f9e16982d9296991044bae9e7c4c7b21ba52a593}" >> "$GITHUB_ENV"
+        env:
+          DEV_ENV: ${{ secrets.DEV_ENV }}
+          RENDER_GITHUB_TOKEN: ${{ secrets.RENDER_GITHUB_TOKEN }}
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          COVER_IMAGE_API_KEY: ${{ secrets.COVER_IMAGE_API_KEY }}
+          COVER_IMAGE_API_URL: ${{ secrets.COVER_IMAGE_API_URL }}
+          FREELLM_ENC: ${{ secrets.DEV_FREELLM_ENCRYPTION_KEY }}
+
+      - name: Start Postgres and FreeLLMAPI, add the provider keys
+        run: |
+          sudo chown -R "$USER" session/freellm-data 2>/dev/null || true
+          export PUBLIC_URL="$APP_URL" FREELLMAPI_KEY=pending
+          docker compose -f docker-compose.session.yml up -d postgres freellmapi-dev
+          for i in $(seq 1 60); do c=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3001/ || true); [ "$c" != "000" ] && [ -n "$c" ] && break; sleep 2; done
+          echo "FreeLLMAPI answered: $c"
+
+          # admin account for the FreeLLMAPI dashboard: the password derives from the dashboard password, so it is the same every session
+          PW=$(printf '%s' "${DASHBOARD_PASSWORD:-codeorcap@2026}-freellm" | sha256sum | cut -c1-24)
+          EMAIL="dev@session.dev"
+          tok() { python3 -c "import sys,json;print(json.load(sys.stdin).get('token',''))"; }
+          # FreeLLMAPI only lets the first account be made from the machine itself; through Docker the request comes from the bridge,
+          # so it asks for the one-time setup code it prints at boot (without it: HTTP 403 and the keys were never added)
+          SETUP_CODE=$(docker logs freellmapi-dev 2>&1 | grep -oE 'First-run setup code: [A-Za-z0-9_-]+' | tail -1 | awk '{print $NF}' || true)
+          echo "setup code found: $([ -n "$SETUP_CODE" ] && echo yes || echo no)"
+          call() { curl -s -w '\n%{http_code}' -X POST "localhost:3001/api/auth/$1" -H 'Content-Type: application/json' -d "{\"email\":\"$EMAIL\",\"password\":\"$PW\",\"setupCode\":\"$SETUP_CODE\"}"; }
+          R=$(call setup); echo "FreeLLMAPI setup: HTTP $(echo "$R" | tail -1)"; TOKEN=$(echo "$R" | head -n -1 | tok)
+          if [ -z "$TOKEN" ]; then R=$(call login); echo "FreeLLMAPI login: HTTP $(echo "$R" | tail -1)"; TOKEN=$(echo "$R" | head -n -1 | tok); [ -n "$TOKEN" ] || echo "  answer: $(echo "$R" | head -n -1 | head -c 160)"; fi
+          echo "::add-mask::$PW"
+          if [ -n "$TOKEN" ]; then
+            add() { curl -s -o /dev/null -w "  $1 key: %{http_code}\n" -X POST localhost:3001/api/keys -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+                      -d "$(python3 -c "import json,sys;print(json.dumps({'platform':sys.argv[1],'key':sys.argv[2],'label':'dev-session'}))" "$1" "$2")"; }
+            # the Groq key is the one in the dev settings (DEV_ENV), or a GROQ_API_KEY secret when there is one
+            GROQ=$(grep -E '^GROQ_API_KEY=' .env.dev | tail -1 | cut -d= -f2- | tr -d '"' || true)
+            [ -n "$GROQ" ] && echo "::add-mask::$GROQ"
+            if [ -n "$GROQ" ]; then add groq "$GROQ"; else echo "::warning::no Groq key in the dev settings: FreeLLMAPI starts with no provider"; fi
+            # optional: more providers, one "platform=key" per line in the DEV_FREELLM_KEYS secret
+            printf '%s\n' "${DEV_FREELLM_KEYS}" | while IFS='=' read -r p k; do if [ -n "$p" ] && [ -n "$k" ]; then add "$p" "$k"; fi; done
+          else
+            echo "::warning::could not sign in to FreeLLMAPI: provider keys were not added"
+          fi
+
+          # the unified key the bot calls FreeLLMAPI with (a fresh database makes a new one)
+          KEY=$(sudo sqlite3 session/freellm-data/freeapi.db "select value from settings where key='unified_api_key';" 2>/dev/null || true)
+          # The session's own FreeLLMAPI is the primary (fast, on this runner). It gets its provider keys from the DEV_FREELLM_KEYS secret
+          # (see export-freellm-keys-to-github.sh). While that secret is missing, the shared dev pool on the Oracle VM (it holds the keys)
+          # is the fallback, so the AI never fails with "no usable provider key".
+          REMOTE_KEY=$(grep -E '^FREELLMAPI_KEY=' .env.dev | tail -1 | cut -d= -f2- | tr -d '"' || true)
+          FALLBACK_URL=""
+          if [ -n "$REMOTE_KEY" ]; then
+            echo "::add-mask::$REMOTE_KEY"
+            FALLBACK_URL=https://shorts-dev.duckdns.org
+          fi
+          if [ -z "${DEV_FREELLM_KEYS}" ]; then echo "::warning::DEV_FREELLM_KEYS is not set: only the Groq key is local; the shared pool is the fallback"; fi
+          echo "LLM_FALLBACK_URL=$FALLBACK_URL" >> "$GITHUB_ENV"
+          echo "LLM_FALLBACK_KEY=$REMOTE_KEY" >> "$GITHUB_ENV"
+          [ -n "$KEY" ] && echo "::add-mask::$KEY"
+          echo "FREELLMAPI_KEY=$KEY" >> "$GITHUB_ENV"
+
+          # Self-test from THIS runner (free providers may throttle GitHub's shared addresses): a text and a vision request, and every
+          # key's status. Published next to the stable link as llm-status.json (no keys in it).
+          sleep 5
+          PNG='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEklEQVR4nGP8z8DwnwEJMGIXAAA8vgIAwHfBiwAAAABJRU5ErkJggg=='
+          ask() { curl -s -m 90 -w '\n%{http_code}' -X POST localhost:3001/v1/chat/completions -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' -d "$1"; }
+          T=$(ask '{"model":"auto","messages":[{"role":"user","content":"Reply with the single word: ok"}],"max_tokens":8}')
+          V=$(ask "{\"model\":\"auto\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"What colour is this image? One word.\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"$PNG\"}}]}],\"max_tokens\":8}")
+          KEYS=$(curl -s -m 20 -H "Authorization: Bearer $TOKEN" localhost:3001/api/keys || true)
+          T_CODE=$(echo "$T" | tail -n1) T_BODY=$(echo "$T" | sed '$d' | head -c 400) V_CODE=$(echo "$V" | tail -n1) V_BODY=$(echo "$V" | sed '$d' | head -c 400) KEYS_JSON="$KEYS" \
+          python3 - <<'PY'
+          import json, os
+          try:
+              d = json.loads(os.environ.get("KEYS_JSON") or "[]")
+              ks = d if isinstance(d, list) else d.get("keys", [])
+              keys = [{"platform": k.get("platform"), "status": k.get("status"), "enabled": k.get("enabled"), "label": k.get("label")} for k in ks]
+          except Exception as e:
+              keys = [{"error": str(e)[:100]}]
+          json.dump({"text": {"http": os.environ.get("T_CODE"), "body": os.environ.get("T_BODY")}, "vision": {"http": os.environ.get("V_CODE"), "body": os.environ.get("V_BODY")}, "keys": keys}, open("/tmp/llm-status.json", "w"))
+          PY
+          echo "LLM self-test: text HTTP $T_CODE, vision HTTP $V_CODE"
+          echo "PUBLIC_URL=$APP_URL" >> "$GITHUB_ENV"
+        env:
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          DEV_FREELLM_KEYS: ${{ secrets.DEV_FREELLM_KEYS }}
+
+      - name: Start the dev app
+        run: |
+          docker compose -f docker-compose.session.yml up -d bot-dev
+          for i in $(seq 1 90); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3002/ || true)
+            [ "$code" = "401" ] || [ "$code" = "200" ] && break
+            sleep 3
+          done
+          echo "local app answered: $code"
+          [ "$code" = "401" ] || [ "$code" = "200" ] || { docker compose -f docker-compose.session.yml logs --tail 80 bot-dev; exit 1; }
+
+      - name: Announce the dev URL
+        run: |
+          {
+            echo "## Dev server is up"
+            echo ""
+            echo "- **Dashboard:** $APP_URL"
+            echo "- **FreeLLMAPI admin:** $LLM_URL"
+            echo "- Lasts about ${HOURS} h from now; a new push to \`dev\` replaces it."
+          } >> "$GITHUB_STEP_SUMMARY"
+          gh api -X POST "repos/${{ github.repository }}/statuses/${{ github.sha }}" \
+            -f state=success -f context="dev-session" -f description="Dev server is up" -f target_url="$APP_URL" > /dev/null
+          echo "DEV URL: $APP_URL"
+
+      - name: Publish the stable link
+        run: |
+          rm -rf /tmp/pages && mkdir /tmp/pages && cd /tmp/pages && git init -q -b gh-pages
+          printf '{"url":"%s","llm":"%s","started":"%s","commit":"%s","hours":%s}\n' "$APP_URL" "$LLM_URL" "$(date -u +%FT%TZ)" "${GITHUB_SHA}" "$HOURS" > current.json
+          cp "$GITHUB_WORKSPACE/.github/dev-link/index.html" index.html
+          [ -f /tmp/llm-status.json ] && cp /tmp/llm-status.json llm-status.json
+          touch .nojekyll
+          git add -A && git -c user.name="dev-session" -c user.email="dev-session@users.noreply.github.com" commit -q -m "dev session ${GITHUB_SHA:0:7}"
+          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" gh-pages
+          echo "stable link: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the session up
+        run: |
+          END=$(( $(date +%s) + $(python3 -c "import os;print(int(float(os.environ['HOURS'])*3600))") ))
+          while [ "$(date +%s)" -lt "$END" ]; do
+            if ! docker ps --format '{{.Names}}' | grep -q '^codeorcap-bot-dev$'; then echo "the app container stopped"; exit 1; fi
+            sleep 60
+          done
+          echo "session time is up"
+
+      - name: Mark the stable link as "no session"
+        if: always()
+        run: |
+          rm -rf /tmp/pages
+          git clone -q --depth 1 -b gh-pages "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" /tmp/pages || exit 0
+          cd /tmp/pages
+          printf '{"url":"","started":"%s","commit":"%s"}\n' "$(date -u +%FT%TZ)" "${GITHUB_SHA}" > current.json
+          git add -A && git -c user.name="dev-session" -c user.email="dev-session@users.noreply.github.com" commit -q -m "dev session ended" || exit 0
+          git push -q "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" gh-pages || true
+
+      - name: Collect logs
+        if: always()
+        run: |
+          docker compose -f docker-compose.session.yml logs --no-color > session/compose.log 2>&1 || true
+          sudo chown -R "$USER" session 2>/dev/null || true
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev-session-logs
+          path: |
+            session/compose.log
+            session/logs
+          retention-days: 3
+          if-no-files-found: ignore
+
+      - name: Save FreeLLMAPI keys for the next session
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: session/freellm-data
+          key: freellm-dev-${{ github.run_id }}

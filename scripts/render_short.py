@@ -24,6 +24,24 @@ import tempfile
 import glob
 
 
+def ensure_devanagari_font():
+    """Hindi captions need a Devanagari font; the GitHub runner image has none, so libass would draw empty boxes.
+    Installs Noto (time-limited, never fatal: without it the render still finishes, only the Hindi glyphs are missing)."""
+    try:
+        have = subprocess.run(["fc-list", ":lang=hi"], capture_output=True, text=True, timeout=30).stdout.strip()
+        if have:
+            return
+        print("🔤 Installing a Devanagari font for Hindi captions...")
+        for cmd in (["sudo", "apt-get", "-o", "Acquire::Retries=2", "-o", "Acquire::http::Timeout=20", "update", "-qq"],
+                    ["sudo", "apt-get", "-o", "Acquire::Retries=2", "install", "-y", "-qq", "fonts-noto-core"],
+                    ["sudo", "fc-cache", "-f"]):
+            subprocess.run(cmd, timeout=150, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        ok = subprocess.run(["fc-list", ":lang=hi"], capture_output=True, text=True, timeout=30).stdout.strip()
+        print("✓ Devanagari font ready" if ok else "⚠ Devanagari font not available: Hindi captions may show empty boxes")
+    except Exception as exc:  # noqa: BLE001
+        print(f"⚠ font setup skipped: {exc}")
+
+
 def download_and_extract_bundle(bundle_url: str, dest_dir: str):
     print(f"📥 Downloading bundle from: {bundle_url}")
     tar_path = os.path.join(dest_dir, "bundle.tar.gz")
@@ -120,12 +138,25 @@ def build_and_run_ffmpeg(work_dir: str, repo_root: str, out_path: str):
     # Build FFmpeg command inputs
     inputs = ["-i", raw_video]
     next_input_idx = 1
+
+    # InfoOnSpot broadcast template: the video sits in a 1140 px window and the branded frame (made by the app, in the bundle) goes over it
+    info_idx = -1
+    info_overlay = spec.get("infoOverlay")
+    if info_overlay and os.path.exists(os.path.join(work_dir, info_overlay)):
+        inputs.extend(["-i", os.path.join(work_dir, info_overlay)])
+        info_idx = next_input_idx
+        next_input_idx += 1
+        use_watermark = False  # the template carries the brand
+        use_cover = False
     
     # Watermark
     wm_idx = -1
     if use_watermark:
-        wm_file = os.path.join(repo_root, "assets", f"watermark_{profile}.png")
+        # the channel's own watermark comes in the bundle; else its committed asset; CodeOrCap's generic one only for CodeOrCap
+        wm_file = os.path.join(work_dir, "brand_watermark.png")
         if not os.path.exists(wm_file):
+            wm_file = os.path.join(repo_root, "assets", f"watermark_{profile}.png")
+        if not os.path.exists(wm_file) and profile == "codeorcap":
             wm_file = os.path.join(repo_root, "assets", "watermark.png")
         if os.path.exists(wm_file):
             inputs.extend(["-i", wm_file])
@@ -190,7 +221,11 @@ def build_and_run_ffmpeg(work_dir: str, repo_root: str, out_path: str):
     # Crop calculation: remove crop_top and crop_bottom percent
     crop_h = f"ih*(1-{crop_top:.3f}-{crop_bottom:.3f})"
     crop_y = f"ih*{crop_top:.3f}"
-    v_filters.append(f"[0:v]crop=iw:{crop_h}:0:{crop_y},scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black[base]")
+    if info_idx != -1:
+        v_filters.append("[0:v]scale=1080:1140:force_original_aspect_ratio=increase,crop=1080:1140,pad=1080:1920:0:446:black[tbg]")
+        v_filters.append(f"[tbg][{info_idx}:v]overlay=0:0[base]")
+    else:
+        v_filters.append(f"[0:v]crop=iw:{crop_h}:0:{crop_y},scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black[base]")
     current_v = "[base]"
 
     # 2. Watermark overlay (bottom right)
@@ -205,11 +240,14 @@ def build_and_run_ffmpeg(work_dir: str, repo_root: str, out_path: str):
 
     # 4. Reaction sticker overlay (bottom left)
     if sticker_idx != -1:
+        # the cover card owns the first 3 s (its headline sits where the sticker does): the sticker's own timeline starts after it
+        shift = "+3/TB" if cov_idx != -1 else ""
         if sticker_tail_idx != -1:
-            v_filters.append(f"[{sticker_idx}:v]setpts=PTS-STARTPTS[stk_full];[{sticker_tail_idx}:v]setpts=PTS-STARTPTS[stk_tail];[stk_full][stk_tail]concat=n=2:v=1:a=0[stickerloop]")
-            v_filters.append(f"{current_v}[stickerloop]overlay=40:H-h-40:shortest=1[stk]")
+            v_filters.append(f"[{sticker_idx}:v]setpts=PTS-STARTPTS[stk_full];[{sticker_tail_idx}:v]setpts=PTS-STARTPTS[stk_tail];[stk_full][stk_tail]concat=n=2:v=1:a=0,setpts=PTS-STARTPTS{shift}[stickerloop]")
+            v_filters.append(f"{current_v}[stickerloop]overlay=40:H-h-40:shortest=1:eof_action=pass[stk]")
         else:
-            v_filters.append(f"{current_v}[{sticker_idx}:v]overlay=40:H-h-40:shortest=1[stk]")
+            v_filters.append(f"[{sticker_idx}:v]setpts=PTS-STARTPTS{shift}[stkone]")
+            v_filters.append(f"{current_v}[stkone]overlay=40:H-h-40:shortest=1:eof_action=pass[stk]")
         current_v = "[stk]"
 
     # 5. Burn animated subtitles (ASS)
@@ -300,6 +338,7 @@ def main():
     temp_dir = tempfile.mkdtemp(prefix="short_cloud_")
     try:
         download_and_extract_bundle(args.bundle, temp_dir)
+        ensure_devanagari_font()
         build_and_run_ffmpeg(temp_dir, repo_root, args.out)
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)

@@ -2,7 +2,8 @@ import fs from "fs";
 import { applyCreditLine, normalizeCreatorHandle } from "./utils/creatorCredit";
 import path from "path";
 import sharp from "sharp";
-import { exec, execSync } from "child_process";
+import { execSync } from "child_process";
+import { exec } from "./utils/timedExec";
 import { config, ChannelProfile } from "./config";
 import { VideoRenderer, calculateVideoCrop } from "./renderer";
 import { OcrService } from "./ocr";
@@ -10,11 +11,13 @@ import { MusicService, normalizeMood, ambientBedPath } from "./music";
 import { YouTubeService, UploadResult } from "./youtube";
 import { InstagramPublisher, InstagramUploadResult } from "./instagram/publisher";
 import { FacebookPublisher, FacebookUploadResult } from "./facebook/publisher";
-import { TelegramService, escapeMarkdown } from "./telegram";
+import { NotifyService, escapeMarkdown } from "./notify";
 import { PipelineContext, VideoMetadata } from "./types";
 import { pipelineLogger } from "./utils/logger";
 import { howItWorksLines, renderHowItWorksClip } from "./my-video/howItWorksClip";
-import { insightEnabledFor, insightFor, insightIntro } from "./my-video/insightClip";
+import { dropUnsupportedFigures, insightEnabledFor, insightIntro, insightLang, insightRuleFor, insightTitle, looksEnglish } from "./my-video/insightClip";
+import { makeAsk } from "./longvideo-auto/llm";
+import { splitForVoice, toDevanagari } from "./audio/clonedVoice";
 import { FreeLlmApiClient } from "./ai/freellmapi";
 import { GeminiClient } from "./ai/gemini";
 import { parseAiJson, extractJsonArrayField } from "./utils/json";
@@ -35,8 +38,7 @@ import { prepareScoreAudio } from "./audio/verdictNumber";
 import { clonedVoiceEnabled, spokenText, startClonedLines } from "./audio/clonedVoice";
 import { buildClonedCtaAudio, buildClonedVerdictAudio, STORIYUM_CTA_PARTS } from "./audio/clonedVerdict";
 import { concatAudio } from "./audio/retime";
-import { estimateWordTimings, groupWordsIntoLines, generateASSFile } from "./audio/subtitles";
-import { buildGridPreview } from "./utils/gridPreview";
+import { alignScriptToSpan, estimateWordTimings, groupWordsIntoLines, generateASSFile } from "./audio/subtitles";
 import { TranscriptionService } from "./audio/transcription";
 import { PexelsService } from "./video/pexelsService";
 import { MultiSceneGenerator } from "./video/multiSceneGenerator";
@@ -145,7 +147,7 @@ export class DirectUploader {
   private youtube: YouTubeService;
   private instagram: InstagramPublisher;
   private facebook: FacebookPublisher;
-  private telegram: TelegramService;
+  private notify: NotifyService;
   private db: JobDatabase;
   public profile: ChannelProfile;
   private tts: TTSService;
@@ -174,10 +176,14 @@ export class DirectUploader {
     // CodeOrCap: the English voice reads ~2.4 words/s (measured), and the narration must run through the WHOLE video. The
     // old 1.7 words/s "safe" rate with an "or fewer" cap made the script read ~70% of the video, then silence. The voiceover is
     // also fitted to the exact video length after synthesis (see generateFittedVoiceover), so this only has to be close.
-    const fillWholeVideo = this.profile.key.toLowerCase() === "codeorcap";
-    // The cloned English voice (src/audio/clonedVoice.ts) reads ~3.2 words/s at natural speed (measured), the Edge voice ~2.4.
-    const cloned = fillWholeVideo && clonedVoiceEnabled(this.profile.key);
-    const wordsPerSecond = fillWholeVideo ? (cloned ? 3.0 : 2.3) : 1.7; // other channels keep the cautious rate
+    const english = this.profile.key.toLowerCase() === "codeorcap";
+    // Any channel with the cloned voice also fills the whole video (its audio is time-fitted afterwards, see generateFittedVoiceover):
+    // with the cautious rate below, Prompt Gag's 54 s reel got 30 s of narration and then silence.
+    const cloned = clonedVoiceEnabled(this.profile.key);
+    const fillWholeVideo = english || cloned;
+    // The cloned English voice (src/audio/clonedVoice.ts) reads ~3.2 words/s at natural speed (measured), the Edge voice ~2.4;
+    // the cloned Hinglish/Hindi voice ~2.7 words/s (311 characters in 20.1 s, measured on Prompt Gag).
+    const wordsPerSecond = cloned ? (english ? 3.0 : 2.6) : english ? 2.3 : 1.7; // other Edge channels keep the cautious rate
     const targetWords = Math.max(10, Math.min(fillWholeVideo ? (cloned ? 300 : 220) : 150, Math.round((duration - (fillWholeVideo ? 0.6 : 1.5)) * wordsPerSecond)));
     const lengthRule = fillWholeVideo
       ? `Write a highly engaging, natural-sounding script of about ${targetWords} words (never fewer than ${Math.round(targetWords * 0.9)}). ` +
@@ -214,8 +220,8 @@ export class DirectUploader {
   >();
   private jobResolvers = new Map<string, () => void>();
 
-  constructor(telegram: TelegramService, profile?: ChannelProfile) {
-    this.profile = profile || telegram.profile;
+  constructor(notify: NotifyService, profile?: ChannelProfile) {
+    this.profile = profile || notify.profile;
     if (config.ai.provider === "freellmapi") {
       this.freellmapi = new FreeLlmApiClient();
     }
@@ -234,12 +240,12 @@ export class DirectUploader {
     this.db = new JobDatabase(
       this.profile.isDefault ? undefined : this.profile.key,
     );
-    this.telegram = telegram;
+    this.notify = notify;
     this.tts = new TTSService();
     DirectUploader.instances.push(this);
 
-    // Wire up inline-button callbacks from Telegram
-    telegram.registerReviewCallback((action, id) => {
+    // Review callbacks (kept for the notifier interface; the dashboard drives review)
+    notify.registerReviewCallback((action, id) => {
       if (action === "publish") this.onPublish(id);
       else if (action === "cancel") this.onCancel(id);
       else if (action === "regenerate") this.onRegenerate(id, false);
@@ -248,7 +254,7 @@ export class DirectUploader {
       else if (action === "replace_music") {
         const pending = this.pending.get(id);
         if (pending) {
-          this.telegram.sendMessage(
+          this.notify.sendMessage(
             pending.chatId,
             `🎵 *Please upload or send an audio file* (MP3, WAV, M4A, AAC, OGG) or record a voice note now to replace the background music for this Short.`,
             pending.reviewMessageId
@@ -257,19 +263,19 @@ export class DirectUploader {
       }
     });
 
-    telegram.registerRevokeCallback(async (id) => {
+    notify.registerRevokeCallback(async (id) => {
       await this.onRevoke(id);
     });
 
-    telegram.registerAudioUploadCallback(async (chatId, fileId, fileName, messageId) => {
+    notify.registerAudioUploadCallback(async (chatId, fileId, fileName, messageId) => {
       return this.handleUserAudioUpload(chatId, fileId, fileName, messageId);
     });
 
-    telegram.registerSettingsReviewCallback((code, id) => {
+    notify.registerSettingsReviewCallback((code, id) => {
       this.onSettingsAction(code, id);
     });
 
-    telegram.registerTextPromptCallback(async (chatId, text, messageId) => {
+    notify.registerTextPromptCallback(async (chatId, text, messageId) => {
       return this.handleUserTextPrompt(chatId, text, messageId);
     });
 
@@ -371,7 +377,7 @@ KEYWORDS: ${this.theme.keywordsRule}
 THUMBNAIL: Max 5 words, highly clickable, curiosity driven.
 FILENAME: SEO-friendly filename (e.g., short-video-2026.mp4).
 VOICEOVER: ${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} that describes the content. It should sound very natural, hook the viewer immediately, and explain what is happening or read the meme text in an entertaining way.
-HOW_IT_WORKS: A detailed, clear, and educational explanation (approx 2-3 sentences, 30-50 words) explaining how the code snippet, concept, or trick works step-by-step to add original educational value. NEVER return hashtags or generic labels.
+HOW_IT_WORKS: ${this.profile.key.toLowerCase() === "codeorcap" ? "A detailed, clear, and educational explanation (approx 2-3 sentences, 30-50 words) explaining how the code snippet, concept, or trick works step-by-step to add original educational value." : insightRuleFor(this.profile.key)} NEVER return hashtags or generic labels.
 ${this.theme.niche === "infoonspot" || this.profile.key.toLowerCase() === "infoonspot" ? `
 INFOONSPOT BROADCAST TEMPLATE FIELDS:
 - coverHeadline: A punchy 1-2 line UPPERCASE hook headline (max 6-8 words total, e.g. "NEW AI CREATES FULL 3D WORLDS IN SECONDS") to fill the top [BREAKING] headline banner.
@@ -797,10 +803,10 @@ Use this to write a voiceover script that matches the content arc of the video. 
             data.qualityScore.readability < 50 ||
             data.qualityScore.watermarkRisk > 70
           ) {
-            const chatId = context.telegramMeta?.chatId;
-            const messageId = context.telegramMeta?.messageId;
+            const chatId = context.sourceMeta?.chatId;
+            const messageId = context.sourceMeta?.messageId;
             if (chatId) {
-              this.telegram
+              this.notify
                 .sendMessage(
                   chatId,
                   `⚠️ *AI Quality Check Warning:*\n` +
@@ -853,11 +859,11 @@ Use this to write a voiceover script that matches the content arc of the video. 
       const msg = err instanceof Error ? err.message : String(err);
       pipelineLogger.error("Unified AI vision failed", err, "DirectUploader");
 
-      const chatId = context.telegramMeta?.chatId;
-      const messageId = context.telegramMeta?.messageId;
+      const chatId = context.sourceMeta?.chatId;
+      const messageId = context.sourceMeta?.messageId;
       if (chatId) {
         if (/quota|limit|429|resource_exhausted/i.test(msg)) {
-          this.telegram
+          this.notify
             .sendMessage(
               chatId,
               `⚠️ *AI Vision Quota Error:* Your FreeLLMAPI key has exceeded its quota.\n\n` +
@@ -867,7 +873,7 @@ Use this to write a voiceover script that matches the content arc of the video. 
             )
             .catch(() => {});
         } else {
-          this.telegram
+          this.notify
             .sendMessage(
               chatId,
               `⚠️ *AI Vision Error:* Failed to analyze frame: \`${msg.slice(0, 150)}\`\n\n` +
@@ -1136,15 +1142,15 @@ Description: ${description}\n`;
       // Surface the failure in Telegram — otherwise the video silently goes to
       // review with a generic template title
       if (context) context.metadataIsFallback = true;
-      const chatId = context?.telegramMeta?.chatId;
+      const chatId = context?.sourceMeta?.chatId;
       if (chatId) {
-        this.telegram
+        this.notify
           .sendMessage(
             chatId,
             `❌ *AI metadata generation failed* (FreeLLMAPI, model: auto)\n` +
               `\`${msg.replace(/`/g, "'").slice(0, 200)}\`\n\n` +
               `_Using a generic template title/description instead. Tap 🔄 Regenerate on the review message to retry AI generation._`,
-            context?.telegramMeta?.messageId,
+            context?.sourceMeta?.messageId,
           )
           .catch(() => {});
       }
@@ -1194,7 +1200,7 @@ Rules:
 - tags: 10-12 specific tags covering the topic, theme, and audience (no spaces in tags).
 - mood: Determine the emotional tone or theme of the content. Choose exactly one of: "funny", "sad", or "other" (for general, educational, or motivational content).
 - voiceoverScript: ${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} that describes the content. It should sound very natural, hook the viewer immediately, and explain what is happening or read the meme text in an entertaining way.
-- howItWorks: ${insightFor(this.profile.key).promptRule}
+- howItWorks: ${insightRuleFor(this.profile.key)}
 - diagramTitle: A brief 2-4 word title for the diagram (e.g. "Execution Flow", "State Lifecycle", "Timeline", "Fact Check", "How it works").
 - diagramWorkflow: A valid, simple Mermaid.js flowchart (graph TD or graph LR) explaining the logic, execution, process, timeline, or steps of the topic (3-5 nodes max). Use double quotes around node labels (e.g. A[\"Start\"] --> B[\"Check condition\"]). Node IDs must be simple alphanumeric characters. Keep it clean and valid.
 - ${this.theme.analysisRules}`;
@@ -1322,7 +1328,7 @@ KEYWORDS: ${this.theme.keywordsRule}
 THUMBNAIL: Max 5 words, highly clickable, curiosity driven.
 FILENAME: SEO-friendly filename (e.g., viral-short-video-2026.mp4).
 - MOOD: Determine emotional tone: "funny", "serious", "emotional", "motivational", "technical", "horror", "romantic", "sad", or "other".
-- howItWorks: ${insightFor(this.profile.key).promptRule}
+- howItWorks: ${insightRuleFor(this.profile.key)}
 - diagramTitle: A brief 2-4 word title for the diagram (e.g. "Execution Flow", "State Lifecycle", "Timeline", "Fact Check", "How it works").
 - diagramWorkflow: A valid, simple Mermaid.js flowchart (graph TD or graph LR) explaining the logic, execution, process, timeline, or steps of the topic (3-5 nodes max). Use double quotes around node labels (e.g. A[\"Start\"] --> B[\"Check condition\"]). Node IDs must be simple alphanumeric characters. Keep it clean and valid.
 ${this.theme.analysisRules}`;
@@ -1524,7 +1530,7 @@ ${this.theme.analysisRules}`;
     }
 
     // Remove the inline buttons from the review message
-    await this.telegram.removeInlineButtons(chatId, reviewMessageId);
+    await this.notify.removeInlineButtons(chatId, reviewMessageId);
 
     // Refresh credentials dynamically from DB in case new channels/accounts were added on dashboard
     try {
@@ -1554,7 +1560,7 @@ ${this.theme.analysisRules}`;
       pipelineLogger.warn(`[onPublish] Could not refresh channel configs from DB: ${e.message}`, "DirectUploader");
     }
 
-    await this.telegram.sendMessage(
+    await this.notify.sendMessage(
       chatId,
       `🚀 *Uploading to ${this.profile.youtube.channels.length} YouTube channel(s), ${this.profile.instagram.accounts.length} Instagram account(s), and Facebook Page…*`,
       messageId,
@@ -1633,7 +1639,7 @@ ${this.theme.analysisRules}`;
         (sourceLine ? `\n${sourceLine}\n` : "") +
         `\n*ID:* ${escapeMarkdown(id)}`;
 
-      const successMessageId = await this.telegram.sendSuccessMessageWithRevoke(
+      const successMessageId = await this.notify.sendSuccessMessageWithRevoke(
         chatId,
         successText,
         id,
@@ -1684,7 +1690,7 @@ ${this.theme.analysisRules}`;
         const compressedVideoPath = path.join(path.dirname(finalVideoPath), "video_compressed.mp4");
         const videoToSend = fs.existsSync(compressedVideoPath) ? compressedVideoPath : finalVideoPath;
 
-        const messageId = await this.telegram.sendRawVideo(
+        const messageId = await this.notify.sendRawVideo(
           chatId,
           videoToSend,
           `*Title:* ${escapeMarkdown(metadata.title)}`,
@@ -1702,7 +1708,7 @@ ${this.theme.analysisRules}`;
           fullDescription = fullDescription.substring(0, 4000) + '...';
         }
         
-        await this.telegram.sendMessage(
+        await this.notify.sendMessage(
           chatId,
           fullDescription,
           messageId
@@ -1720,7 +1726,7 @@ ${this.theme.analysisRules}`;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       pipelineLogger.error(`Upload failed for ${id}`, err, "DirectUploader");
-      await this.telegram.sendMessage(
+      await this.notify.sendMessage(
         chatId,
         `❌ *Upload failed*\n\`${msg.slice(0, 300)}\``,
         messageId,
@@ -1810,7 +1816,7 @@ ${this.theme.analysisRules}`;
         );
 
         if (chatId) {
-          await this.telegram.sendMessage(
+          await this.notify.sendMessage(
             chatId,
             `🎬 *Companion 5-Minute Long Video Published on YouTube!*\n\n*Topic:* ${escapeMarkdown(metadata.title)}\n*Watch Full Video:* ${escapeMarkdown(firstUrl)}`,
           );
@@ -1840,8 +1846,8 @@ ${this.theme.analysisRules}`;
     if (!pending) return;
     if (pending.timer) clearTimeout(pending.timer);
     this.pending.delete(id);
-    this.telegram.removeInlineButtons(pending.chatId, pending.reviewMessageId);
-    this.telegram.sendMessage(
+    this.notify.removeInlineButtons(pending.chatId, pending.reviewMessageId);
+    this.notify.sendMessage(
       pending.chatId,
       `❌ *Cancelled.* Video files have been cleaned up.`,
       pending.messageId,
@@ -1891,7 +1897,7 @@ ${this.theme.analysisRules}`;
     if (!fs.existsSync(finalNoVoicePath) && !fs.existsSync(finalVoicePath)) {
       const pendingEntry = this.pending.get(id);
       if (pendingEntry) {
-        await this.telegram
+        await this.notify
           .sendMessage(
             pendingEntry.chatId,
             `🔇 *Voiceover toggle unavailable for this job* — send a text prompt to regenerate with different settings instead.`,
@@ -1960,7 +1966,7 @@ ${this.theme.analysisRules}`;
       statusText + `\n\n` +
       timerText;
 
-    if (job.context.telegramMeta.messageId) {
+    if (job.context.sourceMeta.messageId) {
       // Compress if needed for Telegram
       let reviewVideoPath = finalVideoPath;
       const stats = fs.statSync(finalVideoPath);
@@ -1980,9 +1986,9 @@ ${this.theme.analysisRules}`;
         });
       }
 
-      await this.telegram.editReviewVideo(
-        job.context.telegramMeta.chatId,
-        job.context.telegramMeta.messageId,
+      await this.notify.editReviewVideo(
+        job.context.sourceMeta.chatId,
+        job.context.sourceMeta.messageId,
         reviewVideoPath,
         caption,
         id
@@ -2031,9 +2037,6 @@ ${this.theme.analysisRules}`;
     // Re-entry from the failure-path manual review: settings were already chosen.
     if (context.settingsReviewDone) return "proceed";
 
-    const id = context.id;
-    const { chatId, messageId } = context.telegramMeta;
-
     if (!context.reviewSettings) {
       context.reviewSettings = {
         voiceover: true,
@@ -2046,55 +2049,8 @@ ${this.theme.analysisRules}`;
       };
     }
 
-    // First-frame preview with the crop grid so the user can judge the crop
-    // buttons against the actual content (labels sit on the grid lines).
-    const previewSource = context.isVideo
-      ? path.join(context.tempDir, "frame_0.jpg")
-      : context.originalImagePath;
-    const previewImagePath = await buildGridPreview(
-      previewSource,
-      path.join(context.tempDir, "settings_preview.png"),
-    );
-
-    const reviewMessageId = await this.telegram.sendSettingsReview(
-      chatId,
-      this.buildSettingsReviewText(context),
-      id,
-      context.reviewSettings,
-      normalizeMood(context.metadata?.mood),
-      messageId,
-      previewImagePath ?? undefined,
-    );
-    (context as any).settingsReviewMessageId = reviewMessageId;
-
-    this.db.updateJob(id, {
-      status: "settings_review",
-      currentStep: "Waiting for settings confirmation (60s)",
-      context,
-    });
-
-    pipelineLogger.info(
-      `Holding pipeline ${id} for 60s settings review...`,
-      "DirectUploader",
-    );
-
-    return new Promise((resolve) => {
-      this.pendingSettingsReviews.set(id, {
-        context,
-        resolve,
-        timer: setTimeout(() => {
-          pipelineLogger.info(
-            `Settings review timeout for ${id} — proceeding with current settings.`,
-            "DirectUploader",
-          );
-          this.onSettingsAction("go", id);
-        }, 60000),
-        reviewMessageId,
-        chatId,
-        messageId,
-        startTime: Date.now(),
-      });
-    });
+    // There is no chat to confirm settings in: continue straight away with the channel and AI-recommended settings.
+    return "proceed";
   }
 
   /** Handles st_* button taps (and the 60s timeout, which fires "go"). */
@@ -2106,10 +2062,10 @@ ${this.theme.analysisRules}`;
     if (code === "go") {
       clearTimeout(entry.timer);
       this.pendingSettingsReviews.delete(id);
-      this.telegram
+      this.notify
         .removeInlineButtons(entry.chatId, entry.reviewMessageId)
         .catch(() => {});
-      this.telegram
+      this.notify
         .sendMessage(
           entry.chatId,
           `▶️ *Processing with selected settings…*`,
@@ -2123,10 +2079,10 @@ ${this.theme.analysisRules}`;
     if (code === "can") {
       clearTimeout(entry.timer);
       this.pendingSettingsReviews.delete(id);
-      this.telegram
+      this.notify
         .removeInlineButtons(entry.chatId, entry.reviewMessageId)
         .catch(() => {});
-      this.telegram
+      this.notify
         .sendMessage(
           entry.chatId,
           `❌ *Generation cancelled by user.*`,
@@ -2149,10 +2105,10 @@ ${this.theme.analysisRules}`;
 
       clearTimeout(entry.timer);
       this.pendingSettingsReviews.delete(id);
-      this.telegram
+      this.notify
         .removeInlineButtons(entry.chatId, entry.reviewMessageId)
         .catch(() => {});
-      this.telegram
+      this.notify
         .sendMessage(
           entry.chatId,
           `🔄 *Changing mood to ${requestedMood}…*\n\nRewriting the title, description, and voiceover script to match — this can take up to a minute.`,
@@ -2214,7 +2170,7 @@ ${this.theme.analysisRules}`;
       this.onSettingsAction("go", id);
     }, 60000);
 
-    this.telegram
+    this.notify
       .updateSettingsReview(
         entry.chatId,
         entry.reviewMessageId,
@@ -2271,7 +2227,7 @@ ${this.theme.analysisRules}`;
           (pending.musicCaptionLine || "") +
           timerText;
 
-        await this.telegram.updateReviewCaption(
+        await this.notify.updateReviewCaption(
           pending.chatId,
           pending.reviewMessageId,
           caption,
@@ -2281,7 +2237,7 @@ ${this.theme.analysisRules}`;
       .catch(async (err) => {
         const msg = err instanceof Error ? err.message : String(err);
         pipelineLogger.error(`Regenerate failed for ${id}`, err, "DirectUploader");
-        await this.telegram.sendMessage(
+        await this.notify.sendMessage(
           pending.chatId,
           `❌ *Metadata regeneration failed* (FreeLLMAPI, model: auto)\n` +
             `\`${msg.replace(/`/g, "'").slice(0, 200)}\`\n\n` +
@@ -2317,10 +2273,10 @@ ${this.theme.analysisRules}`;
     const { channelResults, chatId, successMessageId } = uploadedData;
 
     // Remove the revoke inline button immediately to prevent double-clicks
-    await this.telegram.removeInlineButtons(chatId, successMessageId);
+    await this.notify.removeInlineButtons(chatId, successMessageId);
 
     // Notify user we are starting revocation
-    await this.telegram.sendMessage(
+    await this.notify.sendMessage(
       chatId,
       `⏳ *Revoking upload from all channels…*`,
       successMessageId,
@@ -2340,7 +2296,7 @@ ${this.theme.analysisRules}`;
 
     if (successDeletions.length === deletionResults.length) {
       // All deleted successfully
-      await this.telegram.sendMessage(
+      await this.notify.sendMessage(
         chatId,
         `🗑️ *Revoked successfully!*\n\n` +
           `Deleted video from all ${successDeletions.length} channel(s) on YouTube.`,
@@ -2362,7 +2318,7 @@ ${this.theme.analysisRules}`;
       if (successLines) errorText += `${successLines}\n`;
       if (failedLines) errorText += `${failedLines}\n`;
 
-      await this.telegram.sendMessage(chatId, errorText, successMessageId);
+      await this.notify.sendMessage(chatId, errorText, successMessageId);
     }
 
     // Clean up from map
@@ -2378,8 +2334,8 @@ ${this.theme.analysisRules}`;
   }
 
   private async executePipeline(context: PipelineContext): Promise<void> {
-    const { id, tempDir, originalImagePath, telegramMeta } = context;
-    const { chatId, messageId } = telegramMeta;
+    const { id, tempDir, originalImagePath, sourceMeta } = context;
+    const { chatId, messageId } = sourceMeta;
     const isVideo = Boolean(
       context.isVideo === true &&
       context.originalVideoPath &&
@@ -2451,7 +2407,7 @@ ${this.theme.analysisRules}`;
             `[DirectUploader] Shortcode "${context.shortcode}" has already been published in the past — blocking duplicate re-upload!`,
             "DirectUploader"
           );
-          await this.telegram.sendMessage(
+          await this.notify.sendMessage(
             chatId,
             `⚠️ *Duplicate Content Detected!*\n\nReel \`#${context.shortcode}\` has already been published. Skipping to avoid duplicate content on social channels.`,
             messageId,
@@ -2475,7 +2431,7 @@ ${this.theme.analysisRules}`;
         context,
       });
 
-      await this.telegram.sendMessage(
+      await this.notify.sendMessage(
         chatId,
         `⚙️ *Processing your ${mediaLabel}…*\n\`ID: ${id}\`\n\nGenerating metadata, editing video, adding music…`,
         messageId,
@@ -2776,9 +2732,9 @@ ${this.theme.analysisRules}`;
             );
 
           const adminChatId =
-            context.telegramMeta?.chatId || this.profile.watch.adminChatId || 0;
+            context.sourceMeta?.chatId || this.profile.watch.adminChatId || 0;
           if (adminChatId) {
-            await this.telegram
+            await this.notify
               .sendMessage(
                 adminChatId,
                 `🎯 *Auto-Recognized Channel:* *${targetUploader.profile.brandName}*\n` +
@@ -2949,6 +2905,8 @@ ${this.theme.analysisRules}`;
 
       // Kick off TTS in parallel with the video render (the image branch
       // generates it synchronously because it needs the duration up front).
+      await this.refineInsight(context);
+
       let ttsPromise: Promise<number> | undefined;
       if (context.useVoiceover && isVideo) {
         pipelineLogger.info(
@@ -2961,17 +2919,27 @@ ${this.theme.analysisRules}`;
         // run that starts now, while the reel is rendered. If it fails or is late, the Edge voice is used as before.
         if (clonedVoiceEnabled(this.profile.key) && context.metadata?.voiceoverScript) {
           const claim = context.metadata.voiceoverScript;
-          const hiw = this.profile.key.toLowerCase() === "codeorcap" && (this.profile.watch?.outroVersion || "v2") === "v2" ? howItWorksLines(this.deriveTranscriptionWorkflow(context).explanation, insightIntro(this.profile.key)) : [];
+          const hiw = insightEnabledFor(this.profile.key, this.profile.watch?.outroVersion) ? howItWorksLines(this.deriveTranscriptionWorkflow(context).explanation, insightIntro(this.profile.key)) : [];
           context.clonedHowItWorksLines = hiw;
+          // the claim is spoken in sentence-sized pieces on separate runners (one long line is the slowest, and the one that times out)
+          const claimParts = splitForVoice(spokenText(claim));
           context.clonedVoice = startClonedLines(`short-${context.id.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 16) || Date.now()}`, [
-            { name: "claim", text: spokenText(claim) },
+            ...claimParts.map((text, i) => ({ name: `claim_${i}`, text })),
             ...hiw.map((text, i) => ({ name: `hiw_${i}`, text: spokenText(text) })),
           ], this.profile.key);
-          this.tts.registerCloned(this.profile.key, claim, context.clonedVoice.then((set) => set?.file("claim") ?? null));
+          this.tts.registerCloned(this.profile.key, claim, context.clonedVoice.then(async (set) => {
+            if (!set) return null;
+            const files = claimParts.map((_, i) => set.file(`claim_${i}`));
+            if (files.some((f) => !f)) return null;
+            if (files.length === 1) return files[0] as string;
+            const joined = path.join(set.dir, "claim.mp3");
+            await concatAudio(files as string[], joined, 0.12); // a short natural pause between sentences
+            return joined;
+          }));
         }
         // CodeOrCap: fit the voice to the reel so the narration runs to the end instead of stopping early.
         ttsPromise =
-          this.profile.key.toLowerCase() === "codeorcap" && reelSeconds && reelSeconds > 0
+          (this.profile.key.toLowerCase() === "codeorcap" || clonedVoiceEnabled(this.profile.key)) && reelSeconds && reelSeconds > 0
             ? this.tts.generateFittedVoiceover(context.metadata!.voiceoverScript!, voiceoverFile, reelSeconds - 0.3, this.profile.key)
             : this.tts.generateVoiceover(context.metadata!.voiceoverScript!, voiceoverFile, this.profile.key);
       }
@@ -3742,7 +3710,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         err,
         "DirectUploader",
       );
-      await this.telegram.sendMessage(
+      await this.notify.sendMessage(
         chatId,
         `❌ *Processing failed*\n\`${context.error?.slice(0, 300)}\``,
         messageId,
@@ -3772,8 +3740,8 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     const tempDir = context.tempDir;
     const metadata = context.metadata!;
     const rawVideoPath = path.join(tempDir, "video_raw.mp4");
-    const chatId = context.telegramMeta.chatId;
-    const messageId = context.telegramMeta.messageId;
+    const chatId = context.sourceMeta.chatId;
+    const messageId = context.sourceMeta.messageId;
     const settings = context.reviewSettings!;
 
     try {
@@ -3810,6 +3778,18 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       let cloudDone = false;
       if (process.env.CLOUD_RENDER_SHORTS !== "false") {
         try {
+          // the channel's own watermark travels in the bundle: the runner only has the committed assets, and used CodeOrCap's for any other channel
+          try {
+            const wm = await this.getRenderer(context).ensureBrandWatermark();
+            if (wm && fs.existsSync(wm)) fs.copyFileSync(wm, path.join(tempDir, "brand_watermark.png"));
+          } catch (wmErr) {
+            pipelineLogger.warn(`Brand watermark for the cloud render: ${wmErr instanceof Error ? wmErr.message : wmErr}`, "DirectUploader");
+          }
+          // the runner burns captions only when captions.ass is in the bundle
+          if (settings.captions) {
+            const captionsPath = await this.writeCaptionsAss(context, context.originalVideoPath || path.join(tempDir, "video_raw.mp4"), useVoice);
+            if (captionsPath) pipelineLogger.info("Captions prepared for the cloud render", "DirectUploader");
+          }
           const cloudOut = await renderShortCloud(context, (detail) => {
             this.db.updateJob(id, { currentStep: detail });
           });
@@ -3988,7 +3968,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         }
       }
 
-      await this.telegram.sendMessage(
+      await this.notify.sendMessage(
         chatId,
         `❌ *Video compilation failed:* \`${msg.slice(0, 300)}\``,
         messageId,
@@ -4147,9 +4127,11 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         "DirectUploader",
       );
       try {
+        // Hindi voice (every channel but CodeOrCap): tell Whisper, so the captions come back in Devanagari, not Roman Hinglish
         const ttsTranscript = await TranscriptionService.transcribeFile(
           voiceoverPath,
           context.tempDir,
+          this.profile.key.toLowerCase() === "codeorcap" ? undefined : { language: "hi" },
         );
         if (ttsTranscript && ttsTranscript.words && ttsTranscript.words.length > 0) {
           (context as any).ttsTranscript = ttsTranscript;
@@ -4166,12 +4148,11 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
   }
 
   /**
-   * Burn timed subtitles onto the video in a standalone pass. Caption text comes
-   * from the voiceover script (estimated timings) when a voiceover is in use,
-   * otherwise from the Whisper transcript (real word timings). Returns the
-   * captioned file path, or null when no caption source is available.
+   * The caption file (captions.ass) for a Short: text from the generated voiceover (word timings from Whisper, told the voice is Hindi
+   * so the words come back in Devanagari) or, without a voiceover, from the reel's own transcript. Used by the local burn below and
+   * by the cloud render, which only burns captions when this file is in its bundle. Returns null when there is nothing to caption.
    */
-  private async burnCaptions(
+  private async writeCaptionsAss(
     context: PipelineContext,
     inputPath: string,
     useVoice: boolean,
@@ -4183,6 +4164,17 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         const ttsTimings = await this.getVoiceoverTranscript(context);
         if (ttsTimings) {
           wordTimings = ttsTimings;
+          // Hindi channels: caption the script that was actually spoken (Devanagari), timed by where the voice was heard
+          try {
+            const set = context.clonedVoice ? await context.clonedVoice : null;
+            const spoken = set?.spokenText("claim");
+            if (spoken && /[\u0900-\u097F]/.test(spoken) && ttsTimings.length) {
+              const aligned = alignScriptToSpan(spoken, ttsTimings[0].start, ttsTimings[ttsTimings.length - 1].end);
+              if (aligned.length) wordTimings = aligned;
+            }
+          } catch {
+            /* keep Whisper's words */
+          }
         } else {
           wordTimings = estimateWordTimings(
             context.metadata.voiceoverScript,
@@ -4215,15 +4207,37 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
 
       const assPath = path.join(tempDir, "captions.ass");
       generateASSFile(groupWordsIntoLines(wordTimings), assPath);
+      return assPath;
+    } catch (err) {
+      pipelineLogger.warn(`Caption file could not be made: ${err instanceof Error ? err.message : err}`, "DirectUploader");
+      return null;
+    }
+  }
+
+  /**
+   * Burn timed subtitles onto the video in a standalone pass. Caption text comes
+   * from the voiceover script (estimated timings) when a voiceover is in use,
+   * otherwise from the Whisper transcript (real word timings). Returns the
+   * captioned file path, or null when no caption source is available.
+   */
+  private async burnCaptions(
+    context: PipelineContext,
+    inputPath: string,
+    useVoice: boolean,
+  ): Promise<string | null> {
+    const tempDir = context.tempDir;
+    try {
+      const assPath = await this.writeCaptionsAss(context, inputPath, useVoice);
+      if (!assPath) return null;
 
       const escapedAssPath = assPath
         .replace(/\\/g, "/")
         .replace(/:/g, "\\:")
         .replace(/'/g, "'\\\\''");
       const outPath = path.join(tempDir, "video_raw_captioned.mp4");
-      const cmd = `${config.binaries.ffmpeg} -y -i "${inputPath}" -vf "subtitles='${escapedAssPath}'" -c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p -c:a copy "${outPath}"`;
+      const cmd = `${config.binaries.ffmpeg} -nostdin -hide_banner -loglevel error -y -i "${inputPath}" -vf "subtitles='${escapedAssPath}'" -c:v libx264 -preset superfast -crf 23 -pix_fmt yuv420p -c:a copy -movflags +faststart "${outPath}"`;
       await new Promise<void>((resolve, reject) => {
-        exec(cmd, (error) => (error ? reject(error) : resolve()));
+        exec(cmd, { maxBuffer: 64 * 1024 * 1024 }, (error) => (error ? reject(error) : resolve()));
       });
       pipelineLogger.info("Burned timed captions onto video.", "DirectUploader");
       return outPath;
@@ -4358,8 +4372,8 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     const id = context.id;
     const tempDir = context.tempDir;
     const metadata = context.metadata!;
-    const chatId = context.telegramMeta.chatId;
-    const messageId = context.telegramMeta.messageId;
+    const chatId = context.sourceMeta.chatId;
+    const messageId = context.sourceMeta.messageId;
 
     fs.mkdirSync(config.paths.outputDir, { recursive: true });
     const safeTitle = metadata.title
@@ -4412,7 +4426,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     let reviewMessageId = 0;
     if (chatId && chatId > 0) {
       try {
-        reviewMessageId = await this.telegram.sendVideoForReview(
+        reviewMessageId = await this.notify.sendVideoForReview(
           chatId,
           reviewVideoPath,
           caption,
@@ -4532,12 +4546,12 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     }
 
     // 2. Remove inline buttons from the old review message
-    await this.telegram
+    await this.notify
       .removeInlineButtons(chatId, pendingUpload.reviewMessageId)
       .catch(() => {});
 
     // 3. Notify user that we are re-processing
-    await this.telegram.sendMessage(
+    await this.notify.sendMessage(
       chatId,
       `🔄 *Instruction received:* \`"${promptText}"\`\n\nRe-processing and regenerating video based on your prompt…`,
       messageId,
@@ -4719,12 +4733,12 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     }
 
     // 3. Remove inline buttons from the old review message
-    await this.telegram
+    await this.notify
       .removeInlineButtons(chatId, pendingUpload.reviewMessageId)
       .catch(() => {});
 
     // 4. Notify user that we are downloading and applying the new music track
-    await this.telegram.sendMessage(
+    await this.notify.sendMessage(
       chatId,
       `🎵 *Custom audio track received:* \`"${fileName}"\`\n\nDownloading and mixing with your Short...`,
       messageId,
@@ -4736,7 +4750,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
 
     try {
       // 5. Download the file
-      await this.telegram.downloadFile(fileId, customMusicPath);
+      await this.notify.downloadFile(fileId, customMusicPath);
       context.selectedMusicTrack = customMusicPath;
 
       // 6. Regenerate the final video using the new custom music track!
@@ -4747,7 +4761,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       return true;
     } catch (err: any) {
       pipelineLogger.error(`Failed to handle user audio upload for ${pendingId}`, err, "DirectUploader");
-      await this.telegram.sendMessage(
+      await this.notify.sendMessage(
         chatId,
         `❌ *Failed to apply custom music:* ${err.message || err}`,
         messageId
@@ -4871,7 +4885,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       (pendingUpload.musicCaptionLine || "") +
       timerText;
 
-    const newMsgId = await this.telegram.editReviewVideo(
+    const newMsgId = await this.notify.editReviewVideo(
       chatId,
       pendingUpload.reviewMessageId,
       reviewVideoPath,
@@ -5268,7 +5282,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
           const myVideoClip = path.join(tempDir, "hiw_myvideo.mp4");
           const rendered = await renderHowItWorksClip(
             // the short's own diagram (not the generic placeholder deriveTranscriptionWorkflow invents when it is missing)
-            { explanation: rawExplanation, intro: insightIntro(profileKey), title2: insightFor(profileKey).title, title: context.metadata?.title, mermaid: context.metadata?.diagramWorkflow, diagramTitle: workflowData.diagramTitle, narrationFiles: clonedHiwFiles },
+            { explanation: rawExplanation, intro: insightIntro(profileKey), title2: insightTitle(profileKey), language: insightLang(process.env, profileKey), title: context.metadata?.title, mermaid: context.metadata?.diagramWorkflow, diagramTitle: workflowData.diagramTitle, narrationFiles: clonedHiwFiles },
             myVideoClip,
           );
           if (rendered) {
@@ -5300,7 +5314,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
             : await this.tts.generateVoiceover(
                 speechScript,
                 transitionTtsPath,
-                "codeorcap",
+                profileKey,
               );
         } catch (err) {
           pipelineLogger.warn(
@@ -5557,6 +5571,65 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
    * Derives a structured explanation and a clean Mermaid flowchart from
    * reel transcription, caption, and AI metadata to power the V2 transition clip.
    */
+  /**
+   * Makes the V2 middle clip's text safe before anything is voiced or drawn: (1) a figure the reel does not contain is never
+   * stated (the sentence is dropped), (2) on a Hindi channel English text is rewritten in Hinglish; when that fails or nothing
+   * is left, the clip falls back to the reel's own words (deriveTranscriptionWorkflow). Runs once, before the voice and the clip.
+   */
+  private async refineInsight(context: PipelineContext): Promise<void> {
+    const key = this.profile.key.toLowerCase();
+    const meta = context.metadata;
+    if (key === "codeorcap" || !meta?.howItWorks?.trim()) return;
+    if (!insightEnabledFor(key, this.profile.watch?.outroVersion)) return;
+
+    const source = [context.transcript?.text, context.captionMetadata?.description, context.ocr?.text, meta.title, meta.description]
+      .filter(Boolean)
+      .join("\n");
+    const before = meta.howItWorks.trim();
+    const figures = dropUnsupportedFigures(before, source);
+    let text = figures.text;
+    if (figures.dropped) {
+      pipelineLogger.warn(`V2 clip: ${figures.dropped} sentence(s) with figures that are not in the reel were dropped`, "DirectUploader");
+    }
+
+    if (text && insightLang(process.env, key) === "hi" && looksEnglish(text)) {
+      let rewritten = "";
+      try {
+        rewritten = await makeAsk({ timeoutMs: 60_000, hedgeMs: 15_000 })(
+          `Rewrite this text in Hinglish (Hindi written in the English alphabet), the way an Indian creator speaks, in the same number of sentences. ` +
+            `Keep the meaning. Do not add any fact, name, number or percentage that is not in the text. Return ONLY the rewritten text.\n\n${text}`,
+        );
+      } catch {
+        /* fall back below */
+      }
+      rewritten = rewritten.replace(/^["'\s]+|["'\s]+$/g, "");
+      if (rewritten && !looksEnglish(rewritten) && !dropUnsupportedFigures(rewritten, source).dropped) {
+        pipelineLogger.info("V2 clip text was English: rewritten in Hinglish", "DirectUploader");
+        text = rewritten;
+      } else {
+        pipelineLogger.warn("V2 clip text was English and could not be rewritten: the reel's own words are used", "DirectUploader");
+        text = "";
+      }
+    }
+    // Hindi channel: the clip's captions are the lines it narrates, so they are written in Devanagari (the voice reads Devanagari too)
+    if (text && insightLang(process.env, key) === "hi" && !/[\u0900-\u097F]/.test(text)) {
+      const sentences = text.split(/(?<=[.!?।])\s+/).filter(Boolean);
+      const converted = await toDevanagari(sentences.map((t, i) => ({ name: `s${i}`, text: t })));
+      if (converted) {
+        text = converted.map((l) => l.text).join(" ");
+        pipelineLogger.info("V2 clip text written in Devanagari", "DirectUploader");
+      } else {
+        pipelineLogger.warn("V2 clip text could not be converted to Devanagari: it stays in Hinglish", "DirectUploader");
+      }
+    }
+    // the diagram title is shown on screen: Hindi too
+    if (insightLang(process.env, key) === "hi" && meta.diagramTitle && !/[\u0900-\u097F]/.test(meta.diagramTitle)) {
+      const t = await toDevanagari([{ name: "title", text: meta.diagramTitle }]);
+      if (t) meta.diagramTitle = t[0].text;
+    }
+    meta.howItWorks = text; // "" -> deriveTranscriptionWorkflow uses the reel's transcript / caption
+  }
+
   private deriveTranscriptionWorkflow(context: PipelineContext): {
     explanation: string;
     diagramTitle: string;

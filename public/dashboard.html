@@ -270,6 +270,23 @@
           <input class="input-field" style="font-family:var(--font-mono);" id="inject-url-input" placeholder="https://www.instagram.com/reel/XXXXXXXX/" onkeydown="if(event.key==='Enter')triggerInjectLink()">
           <button class="btn-primary" style="white-space:nowrap;" onclick="triggerInjectLink()">⚡ Ingest & Process</button>
         </div>
+        <!-- LIVE JOB: exact stage, elapsed + estimated time (polls /api/pipeline/live; needs no log stream) -->
+        <div id="live-job-card" style="display:none;background:var(--bg);border:1px solid var(--card-border);border-radius:8px;padding:14px;margin-bottom:14px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+            <span style="font-weight:700;font-size:12px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;">⏱ Live job <span id="lj-id" style="font-family:var(--font-mono);color:var(--text-muted);text-transform:none;letter-spacing:0;"></span></span>
+            <span id="lj-state" class="status-badge status-published">—</span>
+          </div>
+          <div style="display:flex;gap:22px;flex-wrap:wrap;margin-bottom:10px;">
+            <div><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;font-weight:700;">Elapsed</div><div id="lj-elapsed" style="font-size:22px;font-weight:800;font-family:var(--font-mono);color:#fff;">—</div></div>
+            <div><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;font-weight:700;">Remaining (est.)</div><div id="lj-remaining" style="font-size:22px;font-weight:800;font-family:var(--font-mono);color:var(--primary);">—</div></div>
+            <div><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;font-weight:700;">Total (est.)</div><div id="lj-total" style="font-size:22px;font-weight:800;font-family:var(--font-mono);color:var(--text-dim);">—</div></div>
+          </div>
+          <div style="height:8px;background:var(--card);border-radius:4px;overflow:hidden;margin-bottom:12px;"><div id="lj-bar" style="height:100%;width:0%;background:var(--primary);transition:width .6s;"></div></div>
+          <div id="lj-now" style="font-size:13px;color:#fff;margin-bottom:4px;"></div>
+          <div id="lj-detail" style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);word-break:break-word;margin-bottom:12px;"></div>
+          <div id="lj-stages" style="display:grid;gap:5px;"></div>
+          <div id="lj-error" style="display:none;margin-top:10px;font-size:11px;color:var(--danger,#f85149);font-family:var(--font-mono);word-break:break-word;"></div>
+        </div>
         <!-- 6-STEP PIPELINE STEPPER -->
         <div id="live-workflow-stepper" style="background:var(--bg);border:1px solid var(--card-border);border-radius:8px;padding:14px;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
@@ -3501,7 +3518,7 @@
       startKw: ['running unified ai vision', 'generating metadata via ai vision', 'attempting text-only ai metadata', 'including original reel caption as prompt context'],
       doneKw:  ['unified ai vision completed', 'ai recommended settings', 'metadata generated', 'viral metadata generated', 'using hardcoded template metadata'],
       failKw:  [],
-      stuckMs: 10 * 60 * 1000,
+      stuckMs: 15 * 60 * 1000,
     },
     {
       n: 3, label: 'Captions',
@@ -3517,7 +3534,7 @@
       startKw: ['mixing background music', 'mixing background music + voiceover', 'mixing audio'],
       doneKw:  ['compilation complete', 'sending for manual review', 'manual review sent'],
       failKw:  ['audio mix failed'],
-      stuckMs: 5 * 60 * 1000,
+      stuckMs: 30 * 60 * 1000,
     },
     {
       n: 5, label: 'Render',
@@ -3525,7 +3542,7 @@
       startKw: ['sending for manual review', 'manual review sent', 'review timeout', 'compilation complete'],
       doneKw:  ['review timeout', 'auto-publishing', 'upload %', 'starting youtube', 'starting instagram', 'starting facebook', 'starting reel upload', 'uploading video binary'],
       failKw:  ['upload cancelled by user'],
-      stuckMs: 20 * 60 * 1000,
+      stuckMs: 45 * 60 * 1000,
     },
     {
       n: 6, label: 'Publish',
@@ -3692,8 +3709,24 @@
     if (!out || !vid) return;
     const url = videoUrl || (BASE_URL + '/api/video-preview?t=' + Date.now());
     if (vid.src !== url) {
+      vid.dataset.retries = '0';
       vid.src = url;
       vid.load();
+    }
+    // The file can still be finishing (425/404) or the first request can fail: retry a few times instead of staying broken.
+    if (!vid.dataset.retryWired) {
+      vid.dataset.retryWired = '1';
+      vid.addEventListener('error', () => {
+        const n = parseInt(vid.dataset.retries || '0', 10);
+        if (n >= 10) return;
+        vid.dataset.retries = String(n + 1);
+        setTimeout(() => {
+          const base = vid.src.split('&t=')[0].split('?t=')[0];
+          const sep = base.includes('?') ? '&' : '?';
+          vid.src = base + sep + 't=' + Date.now();
+          vid.load();
+        }, 2000);
+      });
     }
     out.style.display = '';
     const badge = document.getElementById('stepper-status-badge');
@@ -3927,9 +3960,101 @@
     }, 5000);
   }
 
+
+  // ── Live job card: stage-by-stage progress with elapsed / estimated time, from /api/pipeline/live ─────────────
+  const ljFmt = (sec) => {
+    sec = Math.max(0, Math.round(sec));
+    const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+    return h ? h + 'h ' + String(m).padStart(2, '0') + 'm' : m ? m + 'm ' + String(s).padStart(2, '0') + 's' : s + 's';
+  };
+  let ljData = null, ljFetchedAt = 0;
+  function ljRender() {
+    const card = document.getElementById('live-job-card');
+    if (!card) return;
+    if (!ljData || !ljData.jobs || !ljData.jobs.length) { card.style.display = 'none'; return; }
+    const job = ljData.jobs.find((j) => j.state === 'running') || ljData.jobs[0];
+    card.style.display = '';
+    const tick = job.state === 'running' ? (Date.now() - ljFetchedAt) / 1000 : 0;
+    const elapsed = job.elapsedSec + tick;
+    const remaining = job.etaRemainingSec === null ? null : Math.max(0, job.etaRemainingSec - tick);
+    document.getElementById('lj-id').textContent = (job.channel ? job.channel + ' · ' : '') + job.id;
+    const badge = document.getElementById('lj-state');
+    const states = { running: ['▶ Running', 'status-published'], review: ['✓ Ready for your review', 'status-published'], done: ['✓ Done', 'status-published'], failed: ['✗ Failed', 'status-failed'] };
+    const st = states[job.state] || states.running;
+    badge.className = 'status-badge ' + st[1]; badge.textContent = st[0];
+    document.getElementById('lj-elapsed').textContent = ljFmt(elapsed);
+    document.getElementById('lj-remaining').textContent = job.state === 'running' ? (remaining === null ? '—' : '~' + ljFmt(remaining)) : (job.state === 'review' ? 'your turn' : '—');
+    document.getElementById('lj-total').textContent = job.state === 'running' && remaining !== null ? '~' + ljFmt(elapsed + remaining) : ljFmt(job.elapsedSec);
+    const pct = job.state === 'running' && remaining !== null ? Math.min(98, Math.round(100 * elapsed / Math.max(1, elapsed + remaining))) : (job.state === 'failed' ? 100 : 100);
+    const bar = document.getElementById('lj-bar');
+    bar.style.width = pct + '%'; bar.style.background = job.state === 'failed' ? 'var(--danger,#f85149)' : (job.state === 'running' ? 'var(--primary)' : 'var(--success)');
+    const now = document.getElementById('lj-now'), detail = document.getElementById('lj-detail');
+    if (job.state === 'running' && job.current) {
+      const c = job.current, since = c.sinceSec + tick;
+      now.innerHTML = '▶ <b>' + c.label + '</b> — ' + ljFmt(since) + ' so far (usually ' + ljFmt(c.typicalSec) + ')' +
+        (since > c.typicalSec ? ' <span style="color:#d29922;">· taking ' + ljFmt(since - c.typicalSec) + ' longer than usual</span>' : '') +
+        '<br><span style="color:var(--text-muted);font-size:12px;">' + c.what + '</span>';
+      detail.textContent = c.detail || '';
+    } else if (job.state === 'review') { now.textContent = 'The video is ready. Publish or discard it below.'; detail.textContent = ''; }
+    else if (job.state === 'failed') { now.textContent = '✗ ' + (job.note || 'Failed'); detail.textContent = ''; }
+    else { now.textContent = ''; detail.textContent = ''; }
+    const rows = job.stages.map((s) => {
+      const icon = { done: '<span style="color:var(--success);">✓</span>', running: '<span style="color:var(--primary);">▶</span>', pending: '<span style="color:var(--text-muted);">○</span>', skipped: '<span style="color:var(--text-muted);">–</span>', failed: '<span style="color:var(--danger,#f85149);">✗</span>' }[s.state] || '○';
+      let right = '';
+      if (s.state === 'done') right = ljFmt(s.durSec || 0);
+      else if (s.state === 'running' && s.startedAt) right = ljFmt((job.current ? job.current.sinceSec + tick : 0)) + ' / ~' + ljFmt(s.typicalSec);
+      else if (s.state === 'pending' && s.typicalSec) right = '~' + ljFmt(s.typicalSec);
+      else if (s.state === 'skipped') right = 'not needed';
+      const dim = s.state === 'pending' || s.state === 'skipped' ? 'color:var(--text-muted);' : 'color:#fff;';
+      return '<div style="display:flex;justify-content:space-between;gap:10px;font-size:12px;' + dim + '"><span>' + icon + ' ' + s.label + '</span><span style="font-family:var(--font-mono);">' + right + '</span></div>';
+    });
+    document.getElementById('lj-stages').innerHTML = rows.join('');
+    const err = document.getElementById('lj-error');
+    if (job.lastError && job.state !== 'review') { err.style.display = ''; err.textContent = 'last error: ' + job.lastError; } else err.style.display = 'none';
+  }
+  async function ljPoll() {
+    try {
+      const res = await fetch(BASE_URL + '/api/pipeline/live', { cache: 'no-store' });
+      if (res.ok) { ljData = await res.json(); ljFetchedAt = Date.now(); }
+    } catch (e) { /* keep the last data */ }
+    ljRender();
+  }
+  setInterval(ljPoll, 2500);
+  setInterval(ljRender, 1000); // smooth timers between polls
+  ljPoll();
+
+  // The log stream (SSE) does not get through every proxy (Cloudflare tunnels hold it back): when it stays silent, read the log by polling.
+  let sseGotData = false, logPollStarted = false;
+  function startLogPolling() {
+    if (logPollStarted) return;
+    logPollStarted = true;
+    const seen = new Set();
+    let first = true;
+    const pull = async () => {
+      try {
+        const res = await fetch(BASE_URL + '/logs?tail=200', { cache: 'no-store' });
+        if (!res.ok) return;
+        const lines = (await res.text()).split('\n');
+        for (const line of lines) {
+          if (!line || seen.has(line)) continue;
+          seen.add(line);
+          appendLogLine(line);
+          if (first) continue; // the first batch is history: show it, do not replay it through the step detector
+          try { const o = JSON.parse(line); parseLogForStepUpdate(o.message || '', o.label || '', o.level || 'info'); } catch (e) {}
+        }
+        first = false;
+        if (seen.size > 3000) { const keep = Array.from(seen).slice(-1500); seen.clear(); keep.forEach((k) => seen.add(k)); }
+      } catch (e) { /* try again next time */ }
+    };
+    pull();
+    setInterval(pull, 3000);
+  }
+  setTimeout(() => { if (!sseGotData) startLogPolling(); }, 10000);
+
   function connectSSE() {
     const es = new EventSource(BASE_URL + '/logs?stream=true');
     es.onmessage = (e) => {
+      sseGotData = true;
       appendLogLine(e.data);
       try {
         const o = JSON.parse(e.data);

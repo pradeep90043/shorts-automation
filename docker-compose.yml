@@ -12,7 +12,7 @@ services:
       - FREELLMAPI_URL=http://freellmapi:3001
       - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-codeorcap@2026}
       - GROQ_API_KEY=${GROQ_API_KEY:-}
-      # The VM is always prod: forces *_TELEGRAM_BOT_TOKEN_PROD variants regardless of .env
+      # The VM is always prod
       - BOT_ENV=prod
       - TZ=Asia/Kolkata
     depends_on:

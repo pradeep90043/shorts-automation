@@ -32,6 +32,8 @@ export interface HowItWorksInput {
   intro?: string;
   /** on-screen title of the first scene (defaults to "HOW IT WORKS") */
   title2?: string;
+  /** "hi" = Hindi channel: the director writes every title / label / callout in Hindi (Devanagari) */
+  language?: string;
 }
 
 const INTRO = "Let us check how is it working.";
@@ -79,7 +81,7 @@ const STOP = new Set(("the a an and or but of to in on for with from by at as is
 
 /** A 1-3 word topic label for a sentence ("Water absorbs thermal energy from the chips" -> "Water Absorbs Thermal"). */
 export function keyPhrase(sentence: string): string {
-  const words = sentence.replace(/[^\p{L}\p{N}\s'-]/gu, " ").split(/\s+/).filter(Boolean);
+  const words = sentence.replace(/[^\p{L}\p{M}\p{N}\s'-]/gu, " ").split(/\s+/).filter(Boolean); // \p{M} keeps Devanagari vowel signs (combining marks)
   const content = words.filter((w) => !STOP.has(w.toLowerCase()));
   const picked = (content.length ? content : words).slice(0, 3);
   const title = (ws: string[]) => ws.map((w) => w[0].toUpperCase() + w.slice(1)).join(" ");
@@ -144,7 +146,9 @@ function visualFromSentence(text: string, k: number, count: number, nodes: strin
  * derived from the sentence itself.
  */
 export function buildHowItWorksSpec(input: HowItWorksInput, slug: string, directed?: Map<number, any>): StickmanVideoSpec {
-  const heading = (input.diagramTitle || "How it works").trim().slice(0, 40);
+  // a model sometimes answers with its own reasoning ("The user wants a rewrite of the Hinglish ..."): never show that as a title
+  const titleOk = (t: string | undefined): t is string => !!t && t.trim().split(/\s+/).length <= 6 && t.length <= 60 && !/\b(the user|rewrite|as an ai|here is|here's|sure,)\b/i.test(t);
+  const heading = (titleOk(input.diagramTitle) ? input.diagramTitle : input.title2 || "How it works").trim().slice(0, 40);
   const beats = explanationBeats(input.explanation);
   let nodes = mermaidNodes(input.mermaid);
   if (nodes.length < 2 && beats.length >= 2) {
@@ -177,8 +181,8 @@ export function buildHowItWorksSpec(input: HowItWorksInput, slug: string, direct
     orientation: "vertical",
     resolution: 1080,
     theme: "dark",
-    voice: "en-IN-PrabhatNeural",
-    language: "en",
+    voice: input.language === "hi" ? "hi-IN-MadhurNeural" : "en-IN-PrabhatNeural",
+    language: input.language === "hi" ? "hi" : "en",
     rate: "+0%",
     noBranding: true, // the short already carries CodeOrCap's own branding; my-video's logo would sit mid-video
   };
@@ -198,7 +202,9 @@ export async function directHowItWorks(input: HowItWorksInput): Promise<Map<numb
   const hint =
     `This is a ~20 second vertical "how it works" explainer clip inside a short${input.title ? ` titled "${input.title}"` : ""}. ` +
     `Make each beat's visual show what THAT sentence says (a panel that matches it - flow, steps, compare, counter, chart, table, code, terminal, alert - or a fitting prop and setting), ` +
-    `never the same generic boxes for every beat.${diagram.length >= 2 ? ` The author's diagram idea: ${diagram.join(" -> ")}.` : ""}`;
+    `never the same generic boxes for every beat.${diagram.length >= 2 ? ` The author's diagram idea: ${diagram.join(" -> ")}.` : ""} ` +
+    `Never invent a number, percentage, rate or name: a chart, counter or card may only show figures that appear in the beats above.` +
+    (input.language === "hi" ? ` Write every on-screen title, label, tag and callout in Hindi (Devanagari script), short, never in English.` : "");
   const capMs = (Number(process.env.HOWITWORKS_LLM_TIMEOUT_SEC) || 60) * 1000;
   let timer: NodeJS.Timeout | undefined;
   try {

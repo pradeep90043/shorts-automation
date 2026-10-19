@@ -1,5 +1,6 @@
+import { dropUnsupportedFigures, insightTitle, looksEnglish } from "../src/my-video/insightClip";
 import assert from "assert";
-import { insightChannels, insightEnabledFor, insightFor, insightIntro, insightLang } from "../src/my-video/insightClip";
+import { insightChannels, insightEnabledFor, insightFor, insightIntro, insightLang, insightRuleFor } from "../src/my-video/insightClip";
 import { howItWorksLines } from "../src/my-video/howItWorksClip";
 
 // CodeOrCap must not change: same intro line, same metadata instruction as before this module existed
@@ -29,11 +30,19 @@ assert.strictEqual(insightEnabledFor("codeorcap", undefined, {} as any), true, "
 
 // language of the intro
 assert.strictEqual(insightLang({ INSIGHT_CLIP_LANG: "hi" } as any), "hi");
+// default: every channel with a Hindi voice speaks Hindi in the clip, CodeOrCap stays English; INSIGHT_CLIP_LANG overrides
+assert.strictEqual(insightLang({} as any, "codeorcap"), "en");
+for (const k of ["storiyum", "prompt_gag", "infoonspot"]) assert.strictEqual(insightLang({} as any, k), "hi", k);
+assert.strictEqual(insightLang({ INSIGHT_CLIP_LANG: "en" } as any, "prompt_gag"), "en");
+assert.strictEqual(insightIntro("codeorcap", {} as any), "Let us check how is it working.");
+assert.strictEqual(insightIntro("prompt_gag", {} as any), "अभी मार्केट में क्या चल रहा है।");
+assert.ok(insightRuleFor("prompt_gag", {} as any).includes("Hinglish"));
+assert.ok(!insightRuleFor("codeorcap", {} as any).includes("Hinglish"));
 assert.strictEqual(insightIntro("prompt_gag", { INSIGHT_CLIP_LANG: "hi" } as any), "अभी मार्केट में क्या चल रहा है।");
 assert.ok(insightFor("prompt_gag").promptRule.includes("no buy/sell advice"));
 
 // the lines the clip speaks carry the channel's intro, and the body beats are untouched
-const lines = howItWorksLines("The market fell sharply today. Here is why it matters.", insightIntro("prompt_gag", {} as any));
+const lines = howItWorksLines("The market fell sharply today. Here is why it matters.", insightIntro("prompt_gag", { INSIGHT_CLIP_LANG: "en" } as any));
 assert.strictEqual(lines[0], "Here is what is happening in the market.");
 assert.strictEqual(lines.length, 3);
 
@@ -42,4 +51,16 @@ const hi = howItWorksLines("बाज़ार आज तेज़ी से ग
 assert.strictEqual(hi.length, 3);
 assert.strictEqual(hi[1], "बाज़ार आज तेज़ी से गिरा।");
 
+// figures must come from the reel; English is detected
+const src = "RBI to raise interest rates to 5.50% in October as inflation broadens. India inflation rises to 4.82% in August.";
+const kept = dropUnsupportedFigures("RBI may raise the rate to 5.50% soon. The rate could go from 6.5% to 7.0% next year. Inflation is 4.82% now.", src);
+assert.strictEqual(kept.dropped, 1);
+assert.ok(kept.text.includes("5.50%") && kept.text.includes("4.82%") && !kept.text.includes("7.0"));
+assert.strictEqual(dropUnsupportedFigures("ब्याज दर 5.50% तक जा सकती है।", src).dropped, 0);
+assert.strictEqual(dropUnsupportedFigures("Rates may rise 7.25% soon.", "no numbers here").text, "");
+assert.strictEqual(looksEnglish("The RBI is expected to raise the interest rate and this will affect home loans in the country"), true);
+assert.strictEqual(looksEnglish("RBI ka rate badh sakta hai aur isse aapki EMI bhi badh jayegi, ye hai sabse badi baat"), false);
+assert.strictEqual(looksEnglish("आरबीआई ब्याज दर बढ़ा सकता है और ईएमआई बढ़ेगी"), false);
+assert.strictEqual(insightTitle("prompt_gag", {} as any), "मार्केट व्यू");
+assert.strictEqual(insightTitle("codeorcap", {} as any), "HOW IT WORKS");
 console.log("✓ insight clip");

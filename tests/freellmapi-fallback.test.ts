@@ -1,29 +1,42 @@
-import { FreeLlmApiClient } from '../src/ai/freellmapi';
-import { config } from '../src/config';
+import http from "http";
+import assert from "assert";
+import { FreeLlmApiClient } from "../src/ai/freellmapi";
+import { config } from "../src/config";
 
+// Fail-over without any network or real key: the primary is a dead port, the fallback is a local fake OpenAI-style server.
 async function testFallback() {
-  console.log("Testing FreeLLMAPI fallback mechanism...");
+  const seen: Array<{ auth?: string; model?: string }> = [];
+  const server = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      const j = body ? JSON.parse(body) : {};
+      seen.push({ auth: req.headers.authorization, model: j.model });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ choices: [{ message: { content: "FALLBACK_SUCCESS" } }] }));
+    });
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as any).port;
 
-  // Intentionally set an unreachable primary URL to simulate prod failure
-  config.ai.freellmapiUrl = "http://127.0.0.1:59999"; // dead port
-  config.ai.freellmapiKey = "invalid-primary-key";
-
-  // Configure dev instance as fallback
-  config.ai.freellmapiFallbackUrl = "http://92.4.82.192:20128";
-  config.ai.freellmapiFallbackKey = "freellmapi-98c9da4ce2b9a5149e83d5345b05bacabc2a4aab75a569bc";
+  config.ai.freellmapiUrl = "http://127.0.0.1:59999"; // dead port: the primary is down
+  config.ai.freellmapiKey = "primary-key";
+  config.ai.freellmapiFallbackUrl = `http://127.0.0.1:${port}`;
+  config.ai.freellmapiFallbackKey = "fallback-key";
   config.ai.freellmapiFallbackModel = "auto";
 
-  const client = new FreeLlmApiClient();
-  const prompt = "Reply with exactly: FALLBACK_SUCCESS";
+  const reply = await new FreeLlmApiClient().generateText("Reply with exactly: FALLBACK_SUCCESS");
+  assert.strictEqual(reply, "FALLBACK_SUCCESS");
+  assert.strictEqual(seen.length, 1, "the fallback was asked once");
+  assert.strictEqual(seen[0].auth, "Bearer fallback-key", "with the fallback's own key");
 
-  const reply = await client.generateText(prompt);
-  console.log("Response received:", reply);
+  // with no fallback configured the primary's error is what the caller sees
+  config.ai.freellmapiFallbackUrl = "";
+  await assert.rejects(new FreeLlmApiClient().generateText("x"), /fetch failed|ECONNREFUSED/);
 
-  if (reply && reply.length > 0) {
-    console.log("✅ Fallback successfully activated and returned response!");
-  } else {
-    throw new Error("❌ Response was empty");
-  }
+  server.close();
+  console.log("✅ Fallback successfully activated and returned response!");
+  process.exit(0);
 }
 
 testFallback().catch((err) => {

@@ -1,10 +1,13 @@
 import { pipelineLogger } from "./logger";
+import { jobContext } from "./jobContext";
 
 export interface QueueJob {
   id: string;
   workerFn: () => Promise<void>;
   retries: number;
   maxRetries: number;
+  /** arrival number across ALL channel queues: with one Short at a time, the oldest waiting job starts first */
+  order?: number;
 }
 
 export class JobQueue {
@@ -13,10 +16,12 @@ export class JobQueue {
   private maxConcurrency: number;
 
   // All channel queues share the same small VM: cap total simultaneous pipelines
-  // (Whisper + OCR + ffmpeg each) so they stop starving the API and long renders.
+  // (Whisper + OCR + ffmpeg each) so they stop starving the API and long renders. ONE at a time by default (MAX_PARALLEL_PIPELINES
+  // raises it): the channels share the same free AI keys, and parallel Shorts rate-limit them.
   private static all = new Set<JobQueue>();
   private static globalActive = 0;
-  private static readonly GLOBAL_LIMIT = Math.max(1, Number(process.env.MAX_PARALLEL_PIPELINES) || 2);
+  private static arrivals = 0;
+  private static readonly GLOBAL_LIMIT = Math.max(1, Number(process.env.MAX_PARALLEL_PIPELINES) || 1);
 
   constructor(maxConcurrency = 1) {
     this.maxConcurrency = maxConcurrency;
@@ -31,7 +36,9 @@ export class JobQueue {
   }
 
   private static wakeAll(): void {
-    for (const q of JobQueue.all) q.processNext();
+    // the queue whose oldest job arrived first gets the free slot first (first come, first served across channels)
+    const byAge = [...JobQueue.all].sort((a, b) => (a.queue[0]?.order ?? Infinity) - (b.queue[0]?.order ?? Infinity));
+    for (const q of byAge) q.processNext();
   }
 
   /**
@@ -47,6 +54,7 @@ export class JobQueue {
       workerFn,
       retries: 0,
       maxRetries,
+      order: ++JobQueue.arrivals,
     };
 
     // Check if job is already queued to prevent duplicates
@@ -88,8 +96,8 @@ export class JobQueue {
       "JobQueue",
     );
 
-    job
-      .workerFn()
+    jobContext
+      .run({ jobId: job.id }, () => job.workerFn())
       .then(() => {
         this.activeCount--;
         JobQueue.globalActive--;

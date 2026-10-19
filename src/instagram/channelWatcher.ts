@@ -1,5 +1,6 @@
 import { ChannelProfile, config } from "../config";
-import { TelegramService } from "../telegram";
+import { isOffValue } from "../utils/switches";
+import { NotifyService } from "../notify";
 import { WatchStore, QueuedReel } from "../utils/watchStore";
 import { CHANNEL_ORDER, channelSlotIndex, gridFromEnv, hhmm, pickMinute, shortSlots, shortsGridActive } from "../schedule/shortsGrid";
 import { candidateStore } from "../longvideo-auto/config";
@@ -25,7 +26,7 @@ import { refreshSessionForProfile, patchChannelCredentials } from "../utils/cred
  * reels across all of profile.watch.channels, randomly samples
  * profile.watch.dailyCount of them, and publishes them one at a time,
  * profile.watch.gapHours apart, reusing the exact same preset-settings
- * skip-gate pipeline path validated by TelegramService.runPresetReel.
+ * skip-gate pipeline path validated by NotifyService.runPresetReel.
  */
 export const activeWatchers = new Map<string, ChannelWatcher>();
 
@@ -54,7 +55,7 @@ export class ChannelWatcher {
 
   constructor(
     private profile: ChannelProfile,
-    private telegram: TelegramService,
+    private notify: NotifyService,
     private profileIndex: number,
   ) {
     const dbKey = profile.isDefault ? undefined : profile.key;
@@ -187,7 +188,7 @@ export class ChannelWatcher {
     );
     const chatId = this.profile.watch.adminChatId;
     if (chatId) {
-      await this.telegram.sendMessage(
+      await this.notify.sendMessage(
         chatId,
         `⚠️ *${this.profile.brandName}* — Instagram session expired\n\n` +
           `Reel ingestion is paused. Open the dashboard → *Channel Credentials* → paste a fresh \`sessionid\` ` +
@@ -447,9 +448,13 @@ export class ChannelWatcher {
 
     // Run missed batch selection immediately on startup if we are past the scheduled time
     // and no batch has run today yet (helps recover from restarts, redeployments, or crashes)
-    this.checkAndRunMissedBatch();
-
-    this.scheduleDailyBatch();
+    // CHANNEL_WATCHER=off (dev sessions): the queue still runs what is injected, but no reels are picked on a schedule
+    if (isOffValue(process.env.CHANNEL_WATCHER)) {
+      pipelineLogger.info(`[${this.profile.brandName}] CHANNEL_WATCHER=off: no automatic reel picking (dashboard injects only)`, "ChannelWatcher");
+    } else {
+      this.checkAndRunMissedBatch();
+      this.scheduleDailyBatch();
+    }
     setInterval(() => {
       this.processQueue().catch((err) => {
         pipelineLogger.error(
@@ -868,14 +873,14 @@ export class ChannelWatcher {
       if (readyToFire.url) {
         const isManual = readyToFire.channel === "manual_inject";
         const jobId = isManual
-          ? this.telegram.runInteractiveReel(
+          ? this.notify.runInteractiveReel(
               readyToFire.url,
               this.profile.watch.adminChatId,
               0,
               undefined,
               readyToFire.channel,
             )
-          : this.telegram.runPresetReel(
+          : this.notify.runPresetReel(
               readyToFire.url,
               this.profile.watch.adminChatId,
               0,
@@ -1041,7 +1046,7 @@ export class ChannelWatcher {
    * Force-start the scheduler: clear any rate-limit cooldown, rebuild the
    * day's batch sequence (bypassing the once-per-day guard), and immediately
    * trigger the first processQueue tick rather than waiting up to 60 seconds.
-   * Used by the /runwatchnow Telegram command.
+   * Used by the dashboard "run now" action.
    */
   public async forceStart(): Promise<void> {
     this.rateLimitedUntil = null; // clear any 429 cooldown
@@ -1077,7 +1082,7 @@ export class ChannelWatcher {
       reelUrl.split("/p/")[1]?.split("/")[0] ||
       `injected_${Date.now()}`;
 
-    const jobId = this.telegram.runInteractiveReel(
+    const jobId = this.notify.runInteractiveReel(
       reelUrl,
       this.profile.watch.adminChatId || 0,
       0,

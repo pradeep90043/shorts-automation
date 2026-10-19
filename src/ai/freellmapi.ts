@@ -1,4 +1,8 @@
 import { config } from '../config';
+import { pipelineLogger } from '../utils/logger';
+import { RATE_LIMIT_BACKOFF_MS, isRateLimitError, setAiGateLogger, textGate, visionGate } from './aiGate';
+
+setAiGateLogger((m) => pipelineLogger.info(m, 'AI'));
 
 export class FreeLlmApiClient {
   private baseUrl: string;
@@ -78,7 +82,26 @@ export class FreeLlmApiClient {
     }
   }
 
+  /**
+   * Every request takes its turn at the process-wide gate (aiGate.ts): vision one at a time with a gap, text a few at a time, and a
+   * rate-limit answer pauses all of them for a while. The free keys are shared by all channels and a burst benches every one of them.
+   */
   public async generateChat(messages: any[], isVision = false, timeoutOverrideMs?: number): Promise<string> {
+    return (isVision ? visionGate : textGate).run(async () => {
+      try {
+        return await this.generateChatNow(messages, isVision, timeoutOverrideMs);
+      } catch (err: any) {
+        if (isRateLimitError(String(err?.message ?? err))) {
+          visionGate.backOff(RATE_LIMIT_BACKOFF_MS);
+          textGate.backOff(RATE_LIMIT_BACKOFF_MS);
+          pipelineLogger.warn(`AI provider said slow down: no new AI request starts for ${Math.round(RATE_LIMIT_BACKOFF_MS / 1000)}s`, 'AI');
+        }
+        throw err;
+      }
+    });
+  }
+
+  private async generateChatNow(messages: any[], isVision = false, timeoutOverrideMs?: number): Promise<string> {
     const timeoutMs = timeoutOverrideMs ?? (isVision ? 120000 : 60000);
     const primaryModel = isVision ? this.visionModel : this.model;
 

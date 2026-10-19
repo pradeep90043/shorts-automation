@@ -1,4 +1,5 @@
 import fs from "fs";
+import { publicBaseUrl } from "../utils/publicUrl";
 import path from "path";
 import { spawn } from "child_process";
 import { pipeline } from "stream/promises";
@@ -15,14 +16,56 @@ const authHeaders = (token: string) => ({
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** The newest infoonspot_overlay_*.png the app made for this job, if any. */
+function infoOverlayFile(dir: string): string | undefined {
+  try {
+    return fs.readdirSync(dir).filter((f) => /^infoonspot_overlay_.*\.png$/.test(f)).sort().pop();
+  } catch {
+    return undefined;
+  }
+}
+
 function unzip(zipFile: string, outDir: string): Promise<void> {
   const run = (cmd: string, args: string[]) =>
     new Promise<void>((resolve, reject) => {
-      const p = spawn("nice", ["-n", "15", cmd, ...args], { stdio: "ignore" });
-      p.on("error", reject);
-      p.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`${cmd} exited ${code}`))));
+      const p = spawn(cmd, args, { stdio: "ignore" });
+      const timer = setTimeout(() => { p.kill("SIGKILL"); reject(new Error(`${cmd} timed out after 120 s`)); }, 120_000);
+      p.on("error", (e) => { clearTimeout(timer); reject(e); });
+      p.on("close", (code) => { clearTimeout(timer); code === 0 ? resolve() : reject(new Error(`${cmd} exited ${code}`)); });
     });
   return run("unzip", ["-o", zipFile, "-d", outDir]).catch(() => run("python3", ["-m", "zipfile", "-e", zipFile, outDir]));
+}
+
+/**
+ * Downloads the artifact zip. A transfer that goes quiet is cut after 25 s (and a whole attempt after 4 min) and retried: on
+ * the small VM a stalled download used to hang the job for good.
+ */
+async function downloadArtifact(url: string, token: string, zipFile: string): Promise<boolean> {
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    const ctl = new AbortController();
+    let idle: NodeJS.Timeout | undefined;
+    const kick = (ms: number) => { if (idle) clearTimeout(idle); idle = setTimeout(() => ctl.abort(), ms); };
+    const whole = setTimeout(() => ctl.abort(), 240_000);
+    try {
+      kick(45_000); // time to the first byte (GitHub redirects to storage first)
+      const res = await fetchRetry(url, { headers: authHeaders(token), signal: ctl.signal }, 2);
+      if (!res.ok || !res.body) {
+        logger.warn(`[CloudShortRenderer] Failed to download artifact: ${res.status} (attempt ${attempt}/4)`);
+      } else {
+        const body = Readable.fromWeb(res.body as any);
+        body.on("data", () => kick(25_000)); // every chunk resets the stall timer
+        await pipeline(body, fs.createWriteStream(zipFile), { signal: ctl.signal });
+        return true;
+      }
+    } catch (err) {
+      logger.warn(`[CloudShortRenderer] Artifact download attempt ${attempt}/4 failed: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      if (idle) clearTimeout(idle);
+      clearTimeout(whole);
+    }
+    await sleep(2000);
+  }
+  return false;
 }
 
 /**
@@ -44,10 +87,7 @@ export async function renderShortCloud(
     : "pradeep90043/shorts-automation";
   const repo = process.env.VOICEBOX_GITHUB_REPO || defaultRepo;
 
-  const defaultBaseUrl = process.env.BOT_ENV === "dev"
-    ? "https://shorts-dev.duckdns.org"
-    : "https://shorts-automation.duckdns.org";
-  const baseUrl = (process.env.BASE_URL || process.env.PUBLIC_URL || defaultBaseUrl).replace(/\/+$/, "");
+  const baseUrl = publicBaseUrl();
 
   const id = context.id;
   const tempDir = context.tempDir;
@@ -56,7 +96,8 @@ export async function renderShortCloud(
   // 1. Write short_spec.json for the runner
   const spec = {
     jobId: id,
-    profile: (context.channel || "codeorcap").toLowerCase(),
+    // the CHANNEL (codeorcap, storiyum, ...): context.channel is the source creator (or "manual_inject"), which picked no sticker and fell back to CodeOrCap's watermark
+    profile: (context.channelProfileKey || "codeorcap").toLowerCase(),
     mood: (context.metadata?.mood || "technical").toLowerCase(),
     cropTopPct: settings.cropTopPct ?? 0,
     cropBottomPct: settings.cropBottomPct ?? 0,
@@ -68,6 +109,8 @@ export async function renderShortCloud(
     useVoiceover: !!context.useVoiceover,
     durationSeconds: context.videoDurationSeconds || 0,
     blurRegions: context.brandingDetection?.zones || [],
+    // InfoOnSpot's branded broadcast frame is built by the app (infoonspotTemplate.ts); the runner lays it over the video
+    ...(((context.channelProfileKey || "").toLowerCase() === "infoonspot" && infoOverlayFile(tempDir)) ? { infoOverlay: infoOverlayFile(tempDir) } : {}),
   };
 
   const specPath = path.join(tempDir, "short_spec.json");
@@ -168,16 +211,8 @@ export async function renderShortCloud(
   }
 
   logger.info(`[CloudShortRenderer] Downloading artifact ${artifact.name} (${artifact.size_in_bytes} bytes)...`);
-  const downloadRes = await fetchRetry(artifact.archive_download_url, {
-    headers: authHeaders(token),
-  });
-  if (!downloadRes.ok || !downloadRes.body) {
-    logger.warn(`[CloudShortRenderer] Failed to download artifact: ${downloadRes.status}`);
-    return null;
-  }
-
   const zipFile = path.join(tempDir, `short-${id}.zip`);
-  await pipeline(Readable.fromWeb(downloadRes.body as any), fs.createWriteStream(zipFile));
+  if (!(await downloadArtifact(artifact.archive_download_url, token, zipFile))) return null;
 
   // Unzip artifact
   await unzip(zipFile, tempDir);

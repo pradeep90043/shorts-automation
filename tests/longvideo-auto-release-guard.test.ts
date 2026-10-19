@@ -1,3 +1,4 @@
+import { cleanScriptMarkers } from "../src/longvideo-auto/guardrails";
 import assert from "assert";
 import { assignRelease, istMinuteToUtcMs } from "../src/longvideo-auto/release";
 import { checkScript, numbersIn } from "../src/longvideo-auto/guardrails";
@@ -45,4 +46,10 @@ assert.ok(checkScript({ channelKey: "codeorcap", script: "छोटा", title: 
 assert.ok(checkScript({ channelKey: "codeorcap", script: goodScript + " [TODO]", title: "t", sourceText: source, targetWords: 110, tolerance: 0.5 }).problems.some((p) => p.includes("placeholder")));
 assert.ok(checkScript({ channelKey: "codeorcap", script: goodScript, title: "x".repeat(101), sourceText: source, targetWords: 110, tolerance: 0.5 }).problems.some((p) => p.includes("title")));
 
+// harmless markers are cleaned, template slots are kept (and rejected)
+assert.strictEqual(cleanScriptMarkers("आज [1] की बात [संगीत] शुरू<br>करते हैं"), "आज की बात शुरू करते हैं");
+assert.ok(cleanScriptMarkers("नमस्ते [channel name] दोस्तों").includes("[channel name]"));
+assert.ok(cleanScriptMarkers("नमस्ते [यहाँ नाम] दोस्तों").includes("[यहाँ नाम]"));
+const slotCheck = checkScript({ channelKey: "codeorcap", script: goodScript + " [channel name]", title: "t", sourceText: source, targetWords: 110, tolerance: 0.5 });
+assert.ok(slotCheck.problems.some((p) => p.includes('"[channel name]"')));
 console.log("✓ longvideo-auto release + guardrails");

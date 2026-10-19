@@ -1,0 +1,54 @@
+# The dev stack for a GitHub-hosted "dev session" (.github/workflows/dev-session.yml). Same app image and the same settings
+# as every other environment; only the plumbing differs: a throw-away Postgres and FreeLLMAPI on the runner, reached from the
+# internet through Cloudflare quick tunnels. Never touches production data (DATABASE_URL is forced to the local Postgres).
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres
+    environment:
+      - POSTGRES_USER=botuser
+      - POSTGRES_PASSWORD=botpass
+      - POSTGRES_DB=shortsbot
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  freellmapi-dev:
+    image: ghcr.io/tashfeenahmed/freellmapi:latest
+    container_name: freellmapi-dev
+    environment:
+      - PORT=3001
+      - ENCRYPTION_KEY=${FREELLM_ENC}
+    volumes:
+      - ./session/freellm-data:/app/server/data
+    ports:
+      - "127.0.0.1:3001:3001"
+
+  bot-dev:
+    image: shorts-dev:session
+    container_name: codeorcap-bot-dev
+    env_file: .env.dev
+    shm_size: 1gb
+    environment:
+      - BOT_ENV=dev
+      - SHORTS_GRID=off
+      - CHANNEL_WATCHER=off   # a dev session only runs what you inject: no automatic reel picking
+      - TZ=Asia/Kolkata
+      - DATABASE_URL=postgresql://botuser:botpass@postgres:5432/shortsbot
+      - FREELLMAPI_URL=http://freellmapi-dev:3001
+      - FREELLMAPI_FALLBACK_URL=${LLM_FALLBACK_URL:-}
+      - FREELLMAPI_FALLBACK_KEY=${LLM_FALLBACK_KEY:-}
+      - FREELLMAPI_KEY=${FREELLMAPI_KEY}
+      - PUBLIC_URL=${PUBLIC_URL}
+      - BASE_URL=${PUBLIC_URL}   # a BASE_URL in the dev settings (the old VM address) would otherwise win
+    depends_on:
+      - postgres
+      - freellmapi-dev
+    volumes:
+      - ./session/output:/app/output
+      - ./session/logs:/app/logs
+      - ./session/data:/root/.shorts-automation
+      - ./assets/music:/app/assets/music
+      - ./assets/stickers:/app/assets/stickers
+      - ./assets/templates:/app/assets/templates
+    ports:
+      - "127.0.0.1:3002:3002"

@@ -1,4 +1,5 @@
 import fs from "fs";
+import { publicBaseUrl } from "../utils/publicUrl";
 import path from "path";
 import { randomBytes } from "crypto";
 import { spawn } from "child_process";
@@ -262,7 +263,7 @@ async function renderViaGithubActions(
 
   const defaultRepo = process.env.BOT_ENV === "dev" ? "pradeep90043/my-video-test" : "pradeep90043/my-video";
   const repo = process.env.MY_VIDEO_GITHUB_REPO || process.env.RENDER_GITHUB_REPO || defaultRepo;
-  const publicUrl = process.env.PUBLIC_URL || "https://shorts-automation.duckdns.org";
+  const publicUrl = publicBaseUrl();
   const bundleUrl = `${publicUrl}/api/longvideo/bundle/${spec.slug}`;
   const progressToken = resume?.token ?? randomBytes(12).toString("hex");
   cloudProgress.set(spec.slug, { token: progressToken, chunks: new Map() });
