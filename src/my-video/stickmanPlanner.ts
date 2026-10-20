@@ -927,7 +927,42 @@ export async function planStickmanVideo(
         "This is usually a temporary LLM problem - start the video again.",
     );
   }
-  return attachPhotos(finalizePlan(beats, visuals, meta, script, titleHint));
+  const plan = finalizePlan(beats, visuals, meta, script, titleHint);
+  const named = addNamedPhotoRequests(plan.scenes);
+  if (named) pipelineLogger.info(`Requested ${named} real photo(s) for beats that name a known place or institution`, "StickmanPlanner");
+  return attachPhotos(plan);
+}
+
+
+/** Named, photographable subjects (English or Hindi spelling) -> search words for the photo fetcher. */
+const NAMED_PHOTO_SUBJECTS: [RegExp, string, string][] = [
+  [/सुप्रीम कोर्ट|supreme court/i, "Supreme Court of India", "Supreme Court"],
+  [/रिज़र्व बैंक|रिजर्व बैंक|आरबीआई|\bRBI\b|reserve bank of india/i, "Reserve Bank of India", "RBI"],
+  [/संसद|parliament/i, "Parliament House New Delhi", "Parliament"],
+  [/इसरो|\bISRO\b/i, "ISRO rocket launch", "ISRO"],
+  [/वानखेड़े|wankhede/i, "Wankhede Stadium", "Wankhede Stadium"],
+  [/ताज महल|taj mahal/i, "Taj Mahal", "Taj Mahal"],
+  [/लाल किला|red fort/i, "Red Fort Delhi", "Red Fort"],
+  [/गेटवे ऑफ इंडिया|gateway of india/i, "Gateway of India Mumbai", "Gateway of India"],
+  [/बीएसई|bombay stock exchange|\bBSE\b/i, "Bombay Stock Exchange building", "BSE, Mumbai"],
+  [/एनएसई|national stock exchange|\bNSE\b/i, "National Stock Exchange of India", "NSE"],
+  [/मेट्रो|\bmetro\b/i, "Delhi Metro train", "Metro"],
+  [/वंदे भारत|vande bharat/i, "Vande Bharat Express", "Vande Bharat"],
+  [/इंडिया गेट|india gate/i, "India Gate", "India Gate"],
+];
+
+/** Beats that name a real place/institution but got no panel from the AI get a photo request (at most 1 beat in 4, at most 8 per video). */
+export function addNamedPhotoRequests(scenes: StickmanScene[]): number {
+  let added = 0, lastAt = -4;
+  scenes.forEach((sc, i) => {
+    const v = sc.visual as any;
+    if (added >= 8 || i - lastAt < 4 || v.photo || v.photoQuery || PANEL_KEYS.some((k) => v[k] && k !== "scene")) return;
+    const hit = NAMED_PHOTO_SUBJECTS.find(([re]) => re.test(sc.text));
+    if (!hit) return;
+    v.photoQuery = { query: hit[1], caption: hit[2] };
+    added++; lastAt = i;
+  });
+  return added;
 }
 
 /** Replaces each photo query with a licensed picture (and credits it in the description); beats without one keep their drawing. */
