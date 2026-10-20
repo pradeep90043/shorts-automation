@@ -35,9 +35,19 @@ def model_entries(base):
     return body.get("models", body) if isinstance(body, dict) else body
 
 
+def engine_matches(engine, model_name):
+    """Weights of exactly this engine. "chatterbox" used to match chatterbox-turbo too: the Hindi voice downloaded (and the runners
+    cached and restored) both models, 7.3 GB, when it needs only the multilingual one."""
+    want = engine.replace("_", "-")
+    name = model_name.replace("_", "-")
+    if want == "chatterbox":
+        return name.startswith("chatterbox") and "turbo" not in name
+    return want in name
+
+
 def ensure_model(base, engine, wait_seconds):
     """Download the weights of `engine` (all its sizes the API reports) and wait until they are cached."""
-    entries = [m for m in model_entries(base) if engine.replace("_", "-") in m["model_name"].replace("_", "-")]
+    entries = [m for m in model_entries(base) if engine_matches(engine, m["model_name"])]
     print("models for engine:", [(m["model_name"], m.get("downloaded")) for m in entries], flush=True)
     if not entries:
         print("all models:", [m["model_name"] for m in model_entries(base)], flush=True)
@@ -145,7 +155,7 @@ def main():
             # The chatterbox download can end with a progress-bar error in the library although the files are complete.
             # Asking again finds them cached, so the model loads without downloading.
             for m in model_entries(a.base):
-                if a.engine.replace("_", "-") in m["model_name"].replace("_", "-"):
+                if engine_matches(a.engine, m["model_name"]):
                     requests.post(f"{a.base}/models/download", json={"model_name": m["model_name"]}, timeout=60)
             time.sleep(45 * attempt)
         if not r.ok:

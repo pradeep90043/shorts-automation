@@ -114,12 +114,20 @@ jobs:
           MODEL="$PWD/bd.rnnn" bash scripts/voice_denoise.sh sample.wav sample-clean.wav
           mv sample-clean.wav sample.wav
 
+      - name: Pre-pull the Voicebox image (in the background, while the model cache restores)
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          setsid nohup docker pull ghcr.io/pradeep90043/voicebox-cpu:latest > /tmp/pull.log 2>&1 < /dev/null &
+          disown || true
+
       - name: Restore model cache
         id: cache
         uses: actions/cache/restore@v4
         with:
           path: ~/vb-hf
-          key: voicebox-hf-${{ inputs.engine }}-v1
+          key: voicebox-hf-${{ inputs.engine }}-v2
 
       - name: Start Voicebox
         env:
@@ -156,7 +164,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ~/vb-hf
-          key: voicebox-hf-${{ inputs.engine }}-v1
+          key: voicebox-hf-${{ inputs.engine }}-v2
 
       - name: Container log (on failure)
         if: failure()
