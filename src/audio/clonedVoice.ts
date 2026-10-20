@@ -269,7 +269,7 @@ export function startClonedLines(slug: string, lines: VoiceboxLine[], profileKey
         lines: spoken,
         language: english ? "en" : "hi",
         speed: "1.0",
-        inputs: { ...voiceInputsFor(profileKey), shard_chars: process.env.VOICE_SHARD_CHARS || "60", ...(english ? { denoise: "false" } : {}) },
+        inputs: { ...voiceInputsFor(profileKey), shard_chars: process.env.VOICE_SHARD_CHARS || "60", max_shards: process.env.VOICE_MAX_SHARDS || "8", ...(english ? { denoise: "false" } : {}) },
         giveUpMs: budgetMs,
       });
     try {
