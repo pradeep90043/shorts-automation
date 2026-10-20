@@ -20,7 +20,7 @@ import urllib.request
 REEL_REGEX = re.compile(r"instagram\.com/reel/([A-Za-z0-9_-]+)")
 
 NICHE_KEYWORDS = {
-    # anything tech: coding, dev careers, AI, security, cloud, gadgets, tech news and facts.
+    # anything tech (coding, dev careers, AI, security, cloud, gadgets) plus science and any verifiable claim (health, space, nature, viral hoaxes).
     # (Used to be only fact-check / myth-busting queries, which kept returning the same few reels.)
     "codeorcap": [
         # coding + dev craft
@@ -56,6 +56,25 @@ NICHE_KEYWORDS = {
         "tech facts did you know",
         "tech myth busted",
         "tech explained",
+        # science + anything that can be shown as claim -> verify -> verdict (the old science reels were the viral ones)
+        "science facts",
+        "science explained",
+        "physics explained",
+        "space facts",
+        "human body facts",
+        "psychology facts",
+        "health myths debunked",
+        "nutrition myths",
+        "history facts you did not know",
+        "viral claim fact check",
+        "is this true myth vs fact",
+        "mind blowing facts",
+        "science experiment",
+        "chemistry facts",
+        "animal facts nature",
+        "viral video real or fake",
+        "optical illusion explained",
+        "viral hoax debunked",
     ],
     # any story: movies, series, cartoons, anime, short films
     "storiyum": [

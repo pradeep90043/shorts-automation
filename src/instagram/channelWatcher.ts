@@ -298,6 +298,24 @@ export class ChannelWatcher {
   private seCache: { at: number; limit: number; reels: Awaited<ReturnType<typeof searchReelsViaSearchEngine>> } | null = null;
   private static readonly SE_CACHE_TTL_MS = 20 * 60 * 1000;
 
+  /**
+   * Search-engine hits are tagged "search:<keyword>" and arrive grouped by keyword, so taking the first N picks N reels of ONE
+   * topic (5 ethical-hacking Shorts in a day). Round-robin across the keywords instead; hits without a keyword tag keep their order.
+   */
+  static interleaveBySearchTopic<T extends { channel?: string; creatorUsername?: string }>(pool: T[]): T[] {
+    const groups = new Map<string, T[]>();
+    const rest: T[] = [];
+    for (const r of pool) {
+      const tag = !r.creatorUsername && r.channel?.startsWith("search:") ? r.channel : "";
+      if (!tag) { rest.push(r); continue; }
+      groups.set(tag, [...(groups.get(tag) ?? []), r]);
+    }
+    const out: T[] = [];
+    const lists = [...groups.values()];
+    for (let i = 0; lists.some((l) => i < l.length); i++) for (const l of lists) if (i < l.length) out.push(l[i]);
+    return [...rest, ...out];
+  }
+
   private scrapersInCooldown(): boolean {
     return Date.now() < this.scrapersDeadUntil;
   }
@@ -708,7 +726,7 @@ export class ChannelWatcher {
     const allPicks: Array<{ shortcode: string; url: string; channel: string }> = [];
     const seenShortcodes = new Set<string>();
 
-    for (const r of this.hashtagReelPool) {
+    for (const r of ChannelWatcher.interleaveBySearchTopic(this.hashtagReelPool)) {
       if (allPicks.length >= dailyCount) break;
       const creator = (r.creatorUsername || r.channel || "").toLowerCase().trim();
       if (excludes.has(creator)) {
