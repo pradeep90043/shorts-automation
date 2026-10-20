@@ -115,6 +115,17 @@ export class FreeLlmApiClient {
     const timeoutMs = timeoutOverrideMs ?? (isVision ? Number(process.env.AI_VISION_TIMEOUT_MS) || 50000 : 60000);
     const primaryModel = modelOverride || (isVision ? this.visionModel : this.model);
 
+    // TEXT_MODEL_PIN: a model that answers directly, tried first for plain text calls. The dev router otherwise picks a reasoning model
+    // (nvidia/nemotron: "Here's a thinking process: ...") whose answers have no JSON and no clean prose. Any failure or empty answer
+    // continues with the normal routing below, so the pin can only help.
+    const pin = process.env.TEXT_MODEL_PIN;
+    if (!isVision && !modelOverride && pin) {
+      try {
+        const pinned = await this.executeChatRequest(this.baseUrl, this.apiKey, pin, messages, Math.min(timeoutMs, 40_000), maxTokens);
+        if (pinned && pinned.trim()) return pinned;
+      } catch { /* fall through to the normal routing */ }
+    }
+
     try {
       return await this.executeChatRequest(this.baseUrl, this.apiKey, primaryModel, messages, timeoutMs, maxTokens);
     } catch (primaryErr: any) {
