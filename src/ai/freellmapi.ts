@@ -102,7 +102,9 @@ export class FreeLlmApiClient {
   }
 
   private async generateChatNow(messages: any[], isVision = false, timeoutOverrideMs?: number): Promise<string> {
-    const timeoutMs = timeoutOverrideMs ?? (isVision ? 120000 : 60000);
+    // A vision answer normally takes 6-30 s (the stage's median is ~10 s). One still running at 50 s is stuck on a rate-limited or hung free
+// provider; waiting 120 s for it cost reels 2-4 minutes each (three attempts). The retry is routed to another provider.
+    const timeoutMs = timeoutOverrideMs ?? (isVision ? Number(process.env.AI_VISION_TIMEOUT_MS) || 50000 : 60000);
     const primaryModel = isVision ? this.visionModel : this.model;
 
     try {
