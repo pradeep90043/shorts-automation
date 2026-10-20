@@ -1130,39 +1130,48 @@ Description: ${description}\n`;
         ? `You are a viral YouTube Shorts growth hacker for ${this.theme.channelDescriptor} called "${this.profile.brandName}". ${contentContext} Generate the most scroll-stopping, curiosity-gap, high-CTR metadata possible based on the text.\n${this.theme.titleRules}\n${this.theme.descriptionRules(this.profile.brandName)}\n${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} describing the content. Additionally, generate a 'howItWorks' field containing a detailed, clear, and educational explanation (approx 2-3 sentences, 30-50 words) explaining how the code snippet or trick works step-by-step to add original educational value. Also, generate a 'diagramTitle' field (a 2-4 word diagram title) and a 'diagramWorkflow' field containing a valid, simple Mermaid.js flowchart (graph TD/LR) with 3-5 nodes explaining the process/timeline/workflow to add original educational value. Use double quotes around node labels.\nReturn ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate","voiceoverScript":"...","howItWorks":"...","diagramWorkflow":"...","diagramTitle":"..."}}`
         : `You are a YouTube Shorts strategist for ${this.theme.channelDescriptor} called "${this.profile.brandName}". ${contentContext} Generate SEO-optimised metadata based on the text.\n${this.theme.titleRules}\n${this.theme.descriptionRules(this.profile.brandName)}\n${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} describing the content. Additionally, generate a 'howItWorks' field containing a detailed, clear, and educational explanation (approx 2-3 sentences, 30-50 words) explaining how the code snippet or trick works step-by-step to add original educational value. Also, generate a 'diagramTitle' field (a 2-4 word diagram title) and a 'diagramWorkflow' field containing a valid, simple Mermaid.js flowchart (graph TD/LR) with 3-5 nodes explaining the process/timeline/workflow to add original educational value. Use double quotes around node labels.\nReturn ONLY raw JSON: {"metadata":{"title":"...","description":"...","tags":["..."],"mood":"other","factCheckScore":10,"verdict":"Accurate","voiceoverScript":"...","howItWorks":"...","diagramWorkflow":"...","diagramTitle":"..."}}`;
       
-      // Retry timeouts once — the free API is intermittently slow. If
-      // FreeLLMAPI still fails, Gemini gets one attempt with the same prompt
-      // before giving up to the hardcoded template.
-      let raw = "";
-      try {
-        raw = await this.freellmapi.generateText(prompt);
-      } catch (e: any) {
-        const msg = e?.message || String(e);
-        if (msg.includes("timed out")) {
-          pipelineLogger.warn(
-            "Text fallback timed out. Retrying once...",
-            "DirectUploader",
-          );
+      // Retry timeouts once — the free API is intermittently slow. If FreeLLMAPI still fails, Gemini gets one attempt with the same
+      // prompt. An answer that is not usable JSON (a free model once answered with the bare placeholder "[EMOJI]") is asked for again,
+      // up to 3 times in all, before the hardcoded template is used.
+      let lastErr: unknown;
+      for (let textAttempt = 1; textAttempt <= 3; textAttempt++) {
+        try {
+          let raw = "";
           try {
             raw = await this.freellmapi.generateText(prompt);
-          } catch (e2: any) {
-            raw = await this.tryGeminiTextFallback(prompt, e2);
+          } catch (e: any) {
+            const msg = e?.message || String(e);
+            if (msg.includes("timed out")) {
+              pipelineLogger.warn(
+                "Text fallback timed out. Retrying once...",
+                "DirectUploader",
+              );
+              try {
+                raw = await this.freellmapi.generateText(prompt);
+              } catch (e2: any) {
+                raw = await this.tryGeminiTextFallback(prompt, e2);
+              }
+            } else {
+              raw = await this.tryGeminiTextFallback(prompt, e);
+            }
           }
-        } else {
-          raw = await this.tryGeminiTextFallback(prompt, e);
+          const data = parseAiJson<{metadata?: VideoMetadata} & Partial<VideoMetadata>>(raw);
+
+          let meta = data.metadata;
+          if (!meta && data.title && data.description) {
+            meta = data as any;
+          }
+
+          if (meta && meta.title && meta.description && Array.isArray(meta.tags)) {
+            return this.ensureRequiredHashtags(meta);
+          }
+          throw new Error("Invalid format from text fallback");
+        } catch (e: any) {
+          lastErr = e;
+          if (textAttempt < 3) pipelineLogger.warn(`Text fallback answer unusable (${e?.message || e}) — asking again (${textAttempt}/3)...`, "DirectUploader");
         }
       }
-      const data = parseAiJson<{metadata?: VideoMetadata} & Partial<VideoMetadata>>(raw);
-      
-      let meta = data.metadata;
-      if (!meta && data.title && data.description) {
-         meta = data as any;
-      }
-      
-      if (meta && meta.title && meta.description && Array.isArray(meta.tags)) {
-         return this.ensureRequiredHashtags(meta);
-      }
-      throw new Error("Invalid format from text fallback");
+      throw lastErr;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       pipelineLogger.warn(
