@@ -668,14 +668,29 @@ Use this to write a voiceover script that matches the content arc of the video. 
         // A malformed-JSON response can't be fixed by re-asking the same
         // provider the same way — but a different provider might return
         // valid JSON from the identical prompt+images.
-        if (usedProvider === "FreeLLMAPI" && this.gemini.enabled) {
-          pipelineLogger.warn(
-            `FreeLLMAPI returned malformed JSON (${parseErr.message}) — retrying vision via Gemini...`,
-            "DirectUploader",
-          );
+        // A second sample of the same model usually parses (the free models cut a long JSON answer off now and then): ask again
+        // up to twice before giving a Short the weaker text-only metadata. Then, if there is one, Gemini.
+        let recovered: UnifiedVisionResponse | null = null;
+        if (usedProvider === "FreeLLMAPI" && this.freellmapi) {
+          for (let again = 1; again <= 2 && !recovered; again++) {
+            pipelineLogger.warn(
+              `FreeLLMAPI returned malformed JSON (${parseErr.message}) — asking again (${again}/2)...`,
+              "DirectUploader",
+            );
+            try {
+              raw = await this.freellmapi.generateVision(prompt, base64s, mimeTypes);
+              recovered = parseAiJson<UnifiedVisionResponse>(raw);
+              pipelineLogger.info(`Vision JSON parsed on the re-ask (${again}/2).`, "DirectUploader");
+            } catch (againErr: any) {
+              pipelineLogger.warn(`Re-ask ${again}/2 failed: ${againErr.message || againErr}`, "DirectUploader");
+            }
+          }
+        }
+        if (!recovered && usedProvider === "FreeLLMAPI" && this.gemini.enabled) {
+          pipelineLogger.warn("Retrying vision via Gemini...", "DirectUploader");
           try {
             raw = await this.gemini.generateVision(prompt, base64s, mimeTypes);
-            data = parseAiJson<UnifiedVisionResponse>(raw);
+            recovered = parseAiJson<UnifiedVisionResponse>(raw);
             usedProvider = "Gemini";
             pipelineLogger.info("Gemini vision fallback succeeded.", "DirectUploader");
           } catch (geminiErr: any) {
@@ -683,11 +698,10 @@ Use this to write a voiceover script that matches the content arc of the video. 
               `Gemini vision fallback also failed: ${geminiErr.message || geminiErr}`,
               "DirectUploader",
             );
-            throw parseErr;
           }
-        } else {
-          throw parseErr;
         }
+        if (!recovered) throw parseErr;
+        data = recovered;
       }
 
       // Fallback if the LLM forgot the "metadata" wrapper but included the fields at the root
