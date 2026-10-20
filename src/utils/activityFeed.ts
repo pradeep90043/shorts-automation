@@ -170,6 +170,7 @@ export function buildActivityFeed(input: FeedInput): ActivityItem[] {
   }
 
   const items: ActivityItem[] = [];
+  const usedJobs = new Set<string>(); // jobs already shown through a reel_history row
   for (const h of input.history) {
     const shortcode = str(h.shortcode);
     if (!shortcode || shortcode.startsWith("failed-fetch-") || shortcode.startsWith("no-unseen-")) continue;
@@ -182,6 +183,7 @@ export function buildActivityFeed(input: FeedInput): ActivityItem[] {
     );
     const jobs = profile ? input.jobsFor(profile) : null;
     const job = (queueItem?.jobId && jobs?.byId.get(queueItem.jobId)) || jobs?.byShortcode.get(shortcode) || null;
+    if (job) usedJobs.add(`${rowKey}/${job.id}`);
 
     const publishedAt = iso(h.published_at) || (queueItem?.published ? iso(queueItem?.publishedAt) : null);
     const failed = !!h.failed || !!queueItem?.failed || job?.status === "failed";
@@ -237,6 +239,57 @@ export function buildActivityFeed(input: FeedInput): ActivityItem[] {
     });
   }
 
+  // Every job that ran is shown, also when no reel_history row exists: a reel injected from the dashboard (the only way reels
+  // enter a dev session) is never "picked" by the watcher, so it used to be invisible here.
+  for (const p of input.profiles) {
+    const rowKey = p.isDefault ? "default" : p.key.toLowerCase();
+    const jobs = input.jobsFor(p);
+    if (!jobs) continue;
+    for (const job of jobs.byId.values()) {
+      if (usedJobs.has(`${rowKey}/${job.id}`) || usedJobs.has(`${p.key.toLowerCase()}/${job.id}`)) continue;
+      const shortcode = job.shortcode || job.id;
+      const failed = job.status === "failed";
+      const published = !!job.youtubeUrl;
+      const status: ActivityStatus = published ? "published" : failed ? "failed"
+        : job.status === "final_review" || job.status === "settings_review" || job.status === "completed" ? "in_review" : "in_progress";
+      const startedAt = iso(job.createdAt);
+      const updatedAt = iso(job.updatedAt);
+      const endMs = new Date((status === "published" || status === "failed" || status === "in_review" ? updatedAt : null) || 0).getTime();
+      items.push({
+        shortcode,
+        profileKey: rowKey,
+        channelKey: p.key.toLowerCase(),
+        brandName: p.brandName,
+        sourceUrl: job.shortcode ? `https://www.instagram.com/reel/${job.shortcode}/` : "",
+        creator: job.creator,
+        status,
+        statusLabel: STATUS_LABEL[status],
+        step: status === "published" ? "Published" : job.currentStep || "",
+        jobId: job.id,
+        pickedAt: startedAt,
+        scheduledAt: null,
+        startedAt,
+        updatedAt,
+        publishedAt: published ? updatedAt : null,
+        durationSec: startedAt && endMs > 0 && endMs >= new Date(startedAt).getTime() ? Math.round((endMs - new Date(startedAt).getTime()) / 1000) : null,
+        activityAt: updatedAt || startedAt,
+        youtubeUrl: job.youtubeUrl,
+        instagramUrl: job.instagramUrl,
+        facebookUrl: job.facebookUrl,
+        title: job.title,
+        description: job.description,
+        hashtags: job.hashtags,
+        mood: job.mood,
+        music: job.music,
+        hasVoiceover: job.hasVoiceover,
+        hasOriginalAudio: job.hasOriginalAudio,
+        transcriptWords: job.transcriptWords,
+        audioCopyright: job.audioCopyright,
+        failedReason: failed ? job.error || "No reason recorded" : "",
+      });
+    }
+  }
+
   items.sort((a, b) => new Date(b.activityAt || 0).getTime() - new Date(a.activityAt || 0).getTime());
-  return items.slice(0, input.limit ?? 30);
+  return items.slice(0, input.limit ?? 50);
 }
