@@ -5,7 +5,7 @@ Makes Chatterbox's generate() read exaggeration / cfg_weight / temperature from 
 (scripts/voicebox_emotion.py writes it before each line). Backs the file up, checks the result compiles, and restores the backup
 if anything looks wrong, so a failed patch leaves Voicebox exactly as it was. Prints PATCHED / SKIPPED.
 """
-import glob
+import os
 import py_compile
 import re
 import shutil
@@ -22,7 +22,18 @@ def _emo(key, default):
 
 '''
 
-cands = glob.glob("/**/backends/chatterbox_backend.py", recursive=True)
+def find_backend():
+    """Look only where Voicebox lives, never across the whole filesystem (/proc, the model cache: that scan hung the step for 15+ minutes)."""
+    skip = {"proc", "sys", "dev", ".cache", "huggingface", "node_modules", "__pycache__", "models"}
+    for root in ("/app", "/opt", "/home", "/usr/local/lib", "/srv", "/voicebox"):
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if d not in skip]
+            if dirpath.endswith("backends") and "chatterbox_backend.py" in filenames:
+                return [os.path.join(dirpath, "chatterbox_backend.py")]
+    return []
+
+
+cands = find_backend()
 if not cands:
     print("SKIPPED: chatterbox_backend.py not found")
     sys.exit(0)

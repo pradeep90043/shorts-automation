@@ -135,8 +135,9 @@ jobs:
       - name: Voice emotion patch (best effort)
         # Lets Chatterbox read per-line expressiveness (scripts/voicebox_emotion.py). A failed or skipped patch changes nothing.
         continue-on-error: true
+        timeout-minutes: 2   # never hold a voice shard for more than this: the patch is an extra, not a requirement
         run: |
-          if docker exec -u root -i voicebox python3 - < scripts/voicebox_emotion_patch.py | tee /tmp/emo-patch.log | grep -q '^PATCHED'; then
+          if timeout 90 docker exec -u root -i voicebox python3 - < scripts/voicebox_emotion_patch.py | tee /tmp/emo-patch.log | grep -q '^PATCHED'; then
             docker restart voicebox >/dev/null
             echo "emotion patch applied, Voicebox restarted"
           else
