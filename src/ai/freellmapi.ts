@@ -63,7 +63,7 @@ export class FreeLlmApiClient {
           messages,
           // Without it each free provider applies its own default (about 1,024 tokens): the unified vision answer, a long JSON, was cut
           // off at ~3,100 characters and could not be parsed, so Shorts fell back to weaker metadata (seen 2026-10-20).
-          max_tokens: Number(process.env.AI_MAX_TOKENS) || 4096,
+          ...(process.env.AI_MAX_TOKENS === "off" ? {} : { max_tokens: Number(process.env.AI_MAX_TOKENS) || 4096 }),
         }),
         signal: controller.signal,
       });
