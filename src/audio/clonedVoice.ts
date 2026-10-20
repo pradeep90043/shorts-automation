@@ -89,7 +89,8 @@ export function isMostlyDevanagari(t: string): boolean {
 export function devanagariFromAnswer(raw: string, minWords = 3): string {
   // The prompt asks for the final text between <<< and >>>. A reasoning model writes its analysis first (and may draft the text in it),
   // so the LAST marked block is the final answer.
-  const marked = [...raw.matchAll(/<<<([\s\S]*?)>>>/g)].map((m) => m[1].trim()).filter((m) => hasDevanagari(m));
+  // A line break INSIDE a block is the model wrapping a long line, not two sentences: join it, or the one-word tail ("जाएगा।") is dropped.
+  const marked = [...raw.matchAll(/<<<([\s\S]*?)>>>/g)].map((m) => m[1].replace(/\s*\n\s*/g, " ").trim()).filter((m) => hasDevanagari(m));
   if (marked.length) {
     const fromMarked = strictDevanagari(marked[marked.length - 1], 1);
     if (fromMarked) return fromMarked;
@@ -213,8 +214,9 @@ export function parseBatchAnswer(answer: string, sources: string[]): (string | n
   return sources.map((src, k) => {
     // candidates for line k+1: "<<<...>>>" blocks and plain "k+1. text" lines (models often drop the markers), judged last to first
     const marked = [...answer.matchAll(new RegExp(`(?:^|\\n)\\s*${k + 1}[.)]\\s*<<<([\\s\\S]*?)>>>`, "g"))].map((m) => m[1].trim());
-    const plain = [...answer.matchAll(new RegExp(`(?:^|\\n)\\s*${k + 1}[.)]\\s+([^\\n]+)`, "g"))].map((m) => m[1].replace(/<<<|>>>/g, "").trim());
-    for (const cand of [...marked, ...plain].reverse()) {
+    // a long line may be wrapped by the model: everything up to the next number belongs to this line
+    const plain = [...answer.matchAll(new RegExp(`(?:^|\\n)\\s*${k + 1}[.)]\\s+([\\s\\S]*?)(?=\\n\\s*\\d+[.)]\\s|$)`, "g"))].map((m) => m[1].replace(/<<<|>>>/g, "").trim());
+    for (const cand of [...marked, ...plain].reverse().map((c) => c.replace(/\s*\n\s*/g, " "))) {
       const out = devanagariFromAnswer(cand, src.trim().split(/\s+/).length < 4 ? 1 : 3);
       if (plausibleRewrite(out, src)) return out;
     }

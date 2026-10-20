@@ -10,6 +10,12 @@ import { devanagariFromAnswer, splitForVoice, toDevanagari, plausibleRewrite, pa
   assert.strictEqual(parsed[1], "सब्सक्राइब करना मत भूलिए।");
   assert.strictEqual(parsed[2], null, "notes are not a rewrite");
   assert.deepStrictEqual(parseBatchAnswer("no blocks at all", src), [null, null, null]);
+  // a long line wrapped by the model keeps its tail (a one-word "जाएगा।" on the second line was once dropped, ending a Short's sentence mid-way)
+  const wrapped = "1. <<<आरबीआई ने रेपो रेट बढ़ाया तो आपकी ईएमआई बढ़ेगी\nऔर आपका लोन महंगा हो जाएगा।>>>\n2. सब्सक्राइब करना मत\nभूलिए।\n3. क्रूड ऑयल की कीमत।";
+  const w = parseBatchAnswer(wrapped, ["RBI ne repo rate badhaya to aapki EMI badhegi aur loan mehenga ho jayega.", "Subscribe karna mat bhooliye.", "Crude oil ki keemat."]);
+  assert.strictEqual(w[0], "आरबीआई ने रेपो रेट बढ़ाया तो आपकी ईएमआई बढ़ेगी और आपका लोन महंगा हो जाएगा।");
+  assert.strictEqual(w[1], "सब्सक्राइब करना मत भूलिए।");
+  assert.strictEqual(devanagariFromAnswer("<<<इसलिए अभी अपना लोन चेक करो, क्योंकि प्रिंसिपल कम होगा तो बोझ भी कम हो\nजाएगा।>>>"), "इसलिए अभी अपना लोन चेक करो, क्योंकि प्रिंसिपल कम होगा तो बोझ भी कम हो जाएगा।");
 }
 
 // The exact fragments a reasoning model's notes produced and a Short was narrated with: none may pass as a rewrite
