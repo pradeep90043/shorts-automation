@@ -923,6 +923,23 @@ export async function planStickmanVideo(
     const left = open.filter((i) => isThin(visuals[i])).length;
     pipelineLogger.info(`Stickman director round ${r + 1}/${ROUNDS.length}: ${beats.length - left}/${beats.length} beats directed`, "StickmanPlanner");
   }
+  // The free AI is rate-limited and returns some answers broken: when most of the video IS directed, the beats it left open get a
+  // drawing composed from the library by keywords (sceneForSentence) plus the beat's first words on screen, instead of discarding the
+  // whole video after 20+ minutes. When less than 60% is directed the model is really down, and the plan still throws below.
+  if (process.env.DIRECTOR_COMPOSED_FALLBACK !== "off") {
+    const directed = all.filter((i) => visuals[i] && !isThin(visuals[i])).length;
+    if (directed >= beats.length * 0.6 && directed < beats.length) {
+      let filled = 0;
+      for (const i of all) {
+        if (visuals[i] && !isThin(visuals[i])) continue;
+        const words = beats[i].replace(/\s+/g, " ").trim().split(" ");
+        const spec = sceneForSentence(beats[i]);
+        visuals[i] = { ...(visuals[i] ?? {}), callouts: [words.slice(0, 5).join(" ")], ...(spec ? { scene: spec } : {}) };
+        filled++;
+      }
+      pipelineLogger.warn(`Stickman director: ${filled} beat(s) the AI left open were composed from the drawing library`, "StickmanPlanner");
+    }
+  }
   const missing = all.filter((i) => !visuals[i]).length;
   const bare = all.filter((i) => !locked.has(i) && visuals[i] && isThin(visuals[i])).length;
   if (missing || bare > Math.ceil(beats.length * 0.3)) {
