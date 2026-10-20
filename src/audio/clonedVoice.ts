@@ -82,9 +82,13 @@ export function devanagariFromAnswer(raw: string): string {
     .split(/\n+/)
     .map((l) => l.replace(/^[\s"'`*\-•\d.)]+|["'`\s]+$/g, "").trim())
     .filter((l) => hasDevanagari(l))
+    .filter((l, i, all) => all.indexOf(l) === i) // a model stuck in a loop repeats the same line
     .join(" ")
     .trim();
 }
+
+/** A Devanagari rewrite is about as long as its source; one several times longer is chain-of-thought or a runaway answer (10,000+ characters once). */
+export const devanagariTooLong = (out: string, source: string): boolean => out.length > Math.max(80, source.length * 3);
 
 async function lineToDevanagari(text: string, ask: (p: string) => Promise<string>): Promise<string | null> {
   if (hasDevanagari(text) || !/[A-Za-z]/.test(text)) return text; // already Devanagari, or a bare figure
@@ -95,6 +99,10 @@ async function lineToDevanagari(text: string, ask: (p: string) => Promise<string
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       const out = devanagariFromAnswer(await ask(prompt));
+      if (devanagariTooLong(out, text)) {
+        pipelineLogger.warn(`Hindi text for one line, attempt ${attempt}/3: answer is ${out.length} characters for a ${text.length}-character line (runaway)`, "ClonedVoice");
+        continue;
+      }
       if (out.length >= Math.min(8, text.length / 3)) return out;
       pipelineLogger.warn(`Hindi text for one line, attempt ${attempt}/3: answer had no usable Devanagari`, "ClonedVoice");
     } catch (err) {

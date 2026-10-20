@@ -140,6 +140,10 @@ def main():
 
     for line in lines:
         t0 = time.time()
+        if len(line["text"]) > 3000:
+            # A runaway text (a Short's line is ~150 characters, a video scene under ~600) would keep this runner busy for the full 30
+            # minutes and delay the whole batch: stop at once so the app falls back instead of waiting out its timeout.
+            sys.exit(f"{line['name']}: {len(line['text'])} characters is not a narration line, refusing to speak it")
         emotion = line.get("emotion") if emo.enabled() else None
         if a.engine == "chatterbox":
             emo.set_chatterbox("voicebox", emotion)  # also clears the previous line's setting when this one is neutral
@@ -152,6 +156,8 @@ def main():
             if r.ok:
                 break
             print(f"{line['name']}: attempt {attempt} HTTP {r.status_code} {r.text[:400]}", flush=True)
+            if 400 <= r.status_code < 500 and r.status_code not in (408, 429):
+                break  # the request itself is invalid (e.g. text over 10,000 characters): asking again cannot help; it cost 4.5 minutes
             # The chatterbox download can end with a progress-bar error in the library although the files are complete.
             # Asking again finds them cached, so the model loads without downloading.
             for m in model_entries(a.base):
