@@ -166,21 +166,33 @@ export class FreeLlmApiClient {
     const images = Array.isArray(imageBase64) ? imageBase64 : [imageBase64];
     const mimeTypes = Array.isArray(mimeType) ? mimeType : Array(images.length).fill(mimeType);
 
-    const imageContentParts = images.map((base64, idx) => ({
-      type: 'image_url' as const,
-      image_url: {
-        url: `data:${mimeTypes[idx] || 'image/jpeg'};base64,${base64}`
-      }
-    }));
+    const ask = (picked: number[]) =>
+      this.generateChat([
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: prompt },
+            ...picked.map((idx) => ({
+              type: 'image_url' as const,
+              image_url: { url: `data:${mimeTypes[idx] || 'image/jpeg'};base64,${images[idx]}` },
+            })),
+          ],
+        },
+      ], true);
 
-    return this.generateChat([
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: prompt },
-          ...imageContentParts
-        ]
+    const all = images.map((_, i) => i);
+    try {
+      return await ask(all);
+    } catch (err: any) {
+      // "Too many images provided. This model supports up to 3 images": the router picked a provider with an image limit. Ask again with
+      // that many frames, spread evenly over the clip (first, middle, last), instead of failing the whole analysis.
+      const limit = Number(/supports up to (\d+) images?/i.exec(String(err?.message ?? err))?.[1]);
+      if (Number.isFinite(limit) && limit >= 1 && limit < images.length) {
+        const picked = Array.from({ length: limit }, (_, k) => all[Math.round((k * (images.length - 1)) / Math.max(1, limit - 1))]);
+        pipelineLogger.warn(`A provider takes at most ${limit} images: asking again with ${limit} of the ${images.length} frames`, 'AI');
+        return ask([...new Set(picked)]);
       }
-    ], true);
+      throw err;
+    }
   }
 }
