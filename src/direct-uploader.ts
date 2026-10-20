@@ -5699,7 +5699,8 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     }
     // the diagram title is shown on screen: Hindi too
     if (insightLang(process.env, key) === "hi" && meta.diagramTitle && !/[\u0900-\u097F]/.test(meta.diagramTitle)) {
-      const t = await toDevanagari([{ name: "title", text: meta.diagramTitle }]);
+      // best effort: an English label ("RBI Rate Hike & EMI Impact Flow") costs retries for nothing, so it gets 20 s, then stays as it is
+      const t = await Promise.race([toDevanagari([{ name: "title", text: meta.diagramTitle }]), new Promise<null>((r) => setTimeout(() => r(null), 20_000))]);
       if (t) meta.diagramTitle = t[0].text;
     }
     meta.howItWorks = text; // "" -> deriveTranscriptionWorkflow uses the reel's transcript / caption
