@@ -969,16 +969,18 @@ export function addNamedPhotoRequests(scenes: StickmanScene[]): number {
 export async function attachPhotos(plan: StickmanPlan, max = Number(process.env.PHOTOS_PER_VIDEO) || 12): Promise<StickmanPlan> {
   if (process.env.PHOTOS === "off") return plan;
   const credits = new Map<string, string>();
+  const usedPages = new Set<string>(); // a picture is shown once per video: a repeated subject gets the next result, or keeps its drawing
   let used = 0;
   for (const sc of plan.scenes) {
     const q = (sc.visual as any).photoQuery;
     if (!q || used >= max) continue;
     const clip = q.clip ? await findLicensedClip(q.query) : null;
-    const hit = clip ?? (await findLicensedPhoto(q.query));
+    const hit = clip ?? (await findLicensedPhoto(q.query, usedPages));
     if (!hit) continue;
     used++;
     (sc.visual as any).photo = { url: hit.url, credit: hit.credit, license: hit.license, caption: q.caption, ...(clip ? { video: true, startFrom: clip.startFrom ?? 0 } : {}) };
     delete (sc.visual as any).scene; // the real photo replaces the fallback drawing
+    usedPages.add(hit.pageUrl);
     credits.set(hit.pageUrl, `${hit.credit} (${hit.license}) ${hit.pageUrl}`);
   }
   if (credits.size) plan.description = `${plan.description}\n\nPhoto credits:\n${[...credits.values()].join("\n")}`.slice(0, 4900);

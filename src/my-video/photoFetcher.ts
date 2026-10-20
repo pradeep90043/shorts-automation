@@ -36,7 +36,7 @@ async function getJson(url: string, headers: Record<string, string> = {}): Promi
   return res.json();
 }
 
-export async function searchWikimedia(query: string): Promise<LicensedPhoto | null> {
+export async function searchWikimedia(query: string, exclude: ReadonlySet<string> = new Set()): Promise<LicensedPhoto | null> {
   const api = "https://commons.wikimedia.org/w/api.php?" + new URLSearchParams({
     action: "query", format: "json", generator: "search", gsrnamespace: "6", gsrsearch: `${query} filetype:bitmap`, gsrlimit: "12",
     prop: "imageinfo", iiprop: "url|size|mime|extmetadata", iiurlwidth: "1400",
@@ -52,6 +52,7 @@ export async function searchWikimedia(query: string): Promise<LicensedPhoto | nu
     if (!ALLOWED.test(license)) continue;
     if (String(meta.Restrictions?.value ?? "").trim()) continue; // personality / trademark restrictions
     const author = strip(String(meta.Artist?.value ?? "")).slice(0, 50) || "Wikimedia Commons";
+    if (exclude.has(ii.descriptionurl)) continue; // already used earlier in this video: the next result is a different picture
     return {
       url: ii.thumburl || ii.url,
       credit: `Photo: ${author} / Wikimedia Commons`.slice(0, 100),
@@ -63,24 +64,24 @@ export async function searchWikimedia(query: string): Promise<LicensedPhoto | nu
   return null;
 }
 
-export async function searchPexels(query: string): Promise<LicensedPhoto | null> {
+export async function searchPexels(query: string, exclude: ReadonlySet<string> = new Set()): Promise<LicensedPhoto | null> {
   const key = pexelsKey();
   if (!key) return null;
   const data = await getJson(`https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&per_page=5&orientation=landscape`, { Authorization: key });
-  const p = (data?.photos ?? []).find((x: any) => relevantTo(query, `${x.alt ?? ""} ${String(x.url ?? "").split("/photo/")[1] ?? ""}`.replace(/-/g, " ")));
+  const p = (data?.photos ?? []).find((x: any) => !exclude.has(x.url) && relevantTo(query, `${x.alt ?? ""} ${String(x.url ?? "").split("/photo/")[1] ?? ""}`.replace(/-/g, " ")));
   if (!p?.src?.large2x) return null;
   return { url: p.src.large2x, credit: `Photo: ${String(p.photographer ?? "Pexels").slice(0, 50)} / Pexels`, license: "Pexels License", pageUrl: p.url, source: "pexels" };
 }
 
 /** Best licensed photo for `query`, or null (never throws: a missing photo must not fail a video). */
-export async function findLicensedPhoto(query: string): Promise<LicensedPhoto | null> {
+export async function findLicensedPhoto(query: string, exclude: ReadonlySet<string> = new Set()): Promise<LicensedPhoto | null> {
   const q = query.replace(/\s+/g, " ").trim().slice(0, 120);
   if (!q) return null;
   for (const [name, fn] of [["Wikimedia", searchWikimedia], ["Pexels", searchPexels]] as const) {
     try {
-      let hit = await fn(q);
+      let hit = await fn(q, exclude);
       const short = words(q).filter((w) => !GENERIC.has(w)).slice(0, 3).join(" ");
-      if (!hit && short && short !== q.toLowerCase()) hit = await fn(short); // "Reserve Bank India headquarters Mumbai" -> "reserve bank mumbai"
+      if (!hit && short && short !== q.toLowerCase()) hit = await fn(short, exclude); // "Reserve Bank India headquarters Mumbai" -> "reserve bank mumbai"
       if (hit) { pipelineLogger.info(`[Photo] "${q}" -> ${name}: ${hit.credit} (${hit.license})`, "PhotoFetcher"); return hit; }
     } catch (err: any) {
       pipelineLogger.warn(`[Photo] ${name} search for "${q}" failed: ${err?.message ?? err}`, "PhotoFetcher");
