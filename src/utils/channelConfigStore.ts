@@ -179,7 +179,9 @@ async function initChannelConfigsTableOnce(retryOnRace: boolean): Promise<boolea
     }
     return true;
   } catch (err) {
-    if (retryOnRace && (err as any)?.code === "23505") return false;
+    // 23505 (unique_violation on pg_type_typname_nsp_index) or 42710 (duplicate_object: type already exists): both mean another store
+    // created the table a moment earlier
+    if (retryOnRace && ["23505", "42710", "42P07"].includes((err as any)?.code)) return false;
     pipelineLogger.warn(`Failed to initialize channel_configs table: ${err instanceof Error ? err.message : err}`, "ChannelStore");
     return true;
   }
