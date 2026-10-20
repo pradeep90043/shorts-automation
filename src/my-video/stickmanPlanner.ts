@@ -826,7 +826,9 @@ ${idxs.map((i) => `${i}. ${beats[i]}`).join("\n")}
 Return ONLY raw JSON, no markdown:
 {${idxs.includes(0) ? '"title":"catchy YouTube title under 90 chars","description":"2-3 sentence description with 3-4 hashtags","tags":["8 relevant tags"],' : ""}"scenes":[{"i":${idxs[0]},${echoText ? '"text":"the beat copied EXACTLY, word for word",' : ""}"pose":"","mood":"","accent":"","camera":"","setting":"","title":"","callouts":["..."]}]}
 Add optional keys to a scene ONLY when needed: "chapter","flip","props":[{"type":""}] and at most one panel key ("steps","flow","code","terminal","browser","compare","counter","chart","progress","table","alert","news","photo","scene","svg","container","quiz") with the structure described above. Do NOT output keys with null values.
-"scenes" must have exactly ${idxs.length} entries, one per beat, in order; "i" is the beat number it directs (${idxs[0]} for the first beat below, counting up in the order given). Every scene needs a setting and at least one of: callouts, props or a panel.`;
+"scenes" must have exactly ${idxs.length} entries, one per beat, in order; "i" is the beat number it directs (${idxs[0]} for the first beat below, counting up in the order given). Every scene needs a setting and at least one of: callouts, props or a panel.
+Do not think out loud and do not analyse: the first character of your answer is "{".
+/no_think`;
 }
 
 /** One LLM call for the given beat numbers: returns the scenes it directed, keyed by beat number (possibly partial). */
@@ -838,7 +840,9 @@ export async function directBeats(
     const raw = await askLlm(prompt);
     if (!raw) return null;
     let parsed: any = null;
-    try { parsed = parseAiJson<any>(raw); } catch (err: any) {
+    // a reasoning model drafts the JSON inside its analysis ("tags":[...]): the last complete-looking object is the answer
+    const lastObj = Math.max(raw.lastIndexOf('{"title"'), raw.lastIndexOf('{"scenes"'));
+    try { parsed = parseAiJson<any>(lastObj > 0 ? raw.slice(lastObj) : raw); } catch (err: any) {
       pipelineLogger.warn(`Stickman plan JSON broken (${err.message}); salvaging complete scenes`, "StickmanPlanner");
     }
     const got: any[] = Array.isArray(parsed?.scenes) ? parsed.scenes : salvageScenes(raw);
