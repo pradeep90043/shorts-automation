@@ -102,7 +102,7 @@ export function clampRunaway(out: string, source: string): string {
 /** A Devanagari rewrite is about as long as its source; one much longer is chain-of-thought or a runaway answer (10,000+ characters once). */
 export const devanagariTooLong = (out: string, source: string): boolean => out.length > Math.max(80, source.length * 1.8);
 
-async function lineToDevanagari(text: string, ask: (p: string) => Promise<string>): Promise<string | null> {
+async function lineToDevanagari(text: string, ask: (p: string, o?: { maxTokens?: number }) => Promise<string>): Promise<string | null> {
   if (hasDevanagari(text) || !/[A-Za-z]/.test(text)) return text; // already Devanagari, or a bare figure
   const prompt =
     `Rewrite this Hinglish text (Hindi written in the English alphabet) in Devanagari exactly as it is spoken, for a text-to-speech voice. ` +
@@ -110,7 +110,9 @@ async function lineToDevanagari(text: string, ask: (p: string) => Promise<string
     `Return ONLY the Devanagari text, nothing else.\n\n${text}`;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      const out = devanagariFromAnswer(await ask(prompt));
+      // Devanagari costs ~1-2 tokens per character: 4x the source's characters (min 256) is generous, and a looping model stops there
+      // instead of filling the 4,096-token default (8-10,000 characters, ~40 s per attempt) before the clamp.
+      const out = devanagariFromAnswer(await ask(prompt, { maxTokens: Math.max(256, text.length * 4) }));
       if (devanagariTooLong(out, text)) {
         const kept = hasDevanagari(clampRunaway(out, text)) ? clampRunaway(out, text) : "";
         pipelineLogger.warn(`Hindi text for one line, attempt ${attempt}/3: answer is ${out.length} characters for a ${text.length}-character line (runaway)${kept ? `: kept its first ${kept.length}` : ""}`, "ClonedVoice");

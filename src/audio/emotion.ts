@@ -1,4 +1,4 @@
-import { makeAsk } from "../longvideo-auto/llm";
+import { makeAsk, type Ask } from "../longvideo-auto/llm";
 import { pipelineLogger } from "../utils/logger";
 
 /**
@@ -51,7 +51,7 @@ export function firstJsonArray(text: string): unknown[] | null {
 }
 
 /** One call for the whole script (context matters: a calm line after a shock is still "serious", not "surprise"). */
-export async function classifyEmotions(texts: string[], ask = makeAsk({ timeoutMs: 60_000, hedgeMs: 15_000 })): Promise<Emotion[]> {
+export async function classifyEmotions(texts: string[], ask: Ask = makeAsk({ timeoutMs: 60_000, hedgeMs: 15_000 })): Promise<Emotion[]> {
   const fallback = texts.map(ruleEmotion);
   if (!texts.length) return fallback;
   const prompt = `You direct the voice actor of a short video. For each numbered narration line choose HOW IT SHOULD BE SPOKEN, judging by its meaning and the lines around it.
@@ -61,7 +61,7 @@ Lines:
 ${texts.map((t, i) => `${i + 1}. ${t.slice(0, 300)}`).join("\n")}
 Return ONLY a raw JSON array of exactly ${texts.length} strings, in order, e.g. ["neutral","surprise"].`;
   try {
-    const raw = await ask(prompt);
+    const raw = await ask(prompt, { maxTokens: 64 + texts.length * 12 }); // an array of short words: a looping model stops early
     const arr = firstJsonArray(raw ?? "");
     if (!Array.isArray(arr)) return fallback;
     // a missing or unknown entry keeps the rule's answer

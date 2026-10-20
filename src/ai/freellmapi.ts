@@ -45,7 +45,8 @@ export class FreeLlmApiClient {
     apiKey: string,
     model: string,
     messages: any[],
-    timeoutMs: number
+    timeoutMs: number,
+    maxTokens?: number,
   ): Promise<string> {
     const url = `${targetUrl}/v1/chat/completions`;
     const controller = new AbortController();
@@ -63,7 +64,8 @@ export class FreeLlmApiClient {
           messages,
           // Without it each free provider applies its own default (about 1,024 tokens): the unified vision answer, a long JSON, was cut
           // off at ~3,100 characters and could not be parsed, so Shorts fell back to weaker metadata (seen 2026-10-20).
-          ...(process.env.AI_MAX_TOKENS === "off" ? {} : { max_tokens: Number(process.env.AI_MAX_TOKENS) || 4096 }),
+          // `maxTokens` is the caller's own need (a one-line rewrite needs ~300, not 4096: a model that loops fills whatever it is given)
+          ...(process.env.AI_MAX_TOKENS === "off" ? {} : { max_tokens: maxTokens ?? (Number(process.env.AI_MAX_TOKENS) || 4096) }),
         }),
         signal: controller.signal,
       });
@@ -92,10 +94,10 @@ export class FreeLlmApiClient {
    * Every request takes its turn at the process-wide gate (aiGate.ts): vision one at a time with a gap, text a few at a time, and a
    * rate-limit answer pauses all of them for a while. The free keys are shared by all channels and a burst benches every one of them.
    */
-  public async generateChat(messages: any[], isVision = false, timeoutOverrideMs?: number): Promise<string> {
+  public async generateChat(messages: any[], isVision = false, timeoutOverrideMs?: number, maxTokens?: number): Promise<string> {
     return (isVision ? visionGate : textGate).run(async () => {
       try {
-        return await this.generateChatNow(messages, isVision, timeoutOverrideMs);
+        return await this.generateChatNow(messages, isVision, timeoutOverrideMs, maxTokens);
       } catch (err: any) {
         if (isRateLimitError(String(err?.message ?? err))) {
           visionGate.backOff(RATE_LIMIT_BACKOFF_MS);
@@ -107,20 +109,20 @@ export class FreeLlmApiClient {
     });
   }
 
-  private async generateChatNow(messages: any[], isVision = false, timeoutOverrideMs?: number): Promise<string> {
+  private async generateChatNow(messages: any[], isVision = false, timeoutOverrideMs?: number, maxTokens?: number): Promise<string> {
     // A vision answer normally takes 6-30 s (the stage's median is ~10 s). One still running at 50 s is stuck on a rate-limited or hung free
 // provider; waiting 120 s for it cost reels 2-4 minutes each (three attempts). The retry is routed to another provider.
     const timeoutMs = timeoutOverrideMs ?? (isVision ? Number(process.env.AI_VISION_TIMEOUT_MS) || 50000 : 60000);
     const primaryModel = isVision ? this.visionModel : this.model;
 
     try {
-      return await this.executeChatRequest(this.baseUrl, this.apiKey, primaryModel, messages, timeoutMs);
+      return await this.executeChatRequest(this.baseUrl, this.apiKey, primaryModel, messages, timeoutMs, maxTokens);
     } catch (primaryErr: any) {
       if (this.fallbackUrl && this.fallbackApiKey) {
         const fbModel = isVision ? this.fallbackVisionModel : this.fallbackModel;
         console.warn(`[FreeLLMAPI] Primary endpoint ${this.baseUrl} failed (${primaryErr.message}). Failing over to fallback ${this.fallbackUrl}...`);
         try {
-          return await this.executeChatRequest(this.fallbackUrl, this.fallbackApiKey, fbModel, messages, timeoutMs);
+          return await this.executeChatRequest(this.fallbackUrl, this.fallbackApiKey, fbModel, messages, timeoutMs, maxTokens);
         } catch (fallbackErr: any) {
           console.error(`[FreeLLMAPI] Fallback endpoint ${this.fallbackUrl} also failed: ${fallbackErr.message}`);
           throw new Error(`FreeLLMAPI primary (${primaryErr.message}) and fallback (${fallbackErr.message}) both failed.`);
@@ -130,10 +132,10 @@ export class FreeLlmApiClient {
     }
   }
 
-  public async generateText(prompt: string, timeoutMs?: number): Promise<string> {
+  public async generateText(prompt: string, timeoutMs?: number, maxTokens?: number): Promise<string> {
     return this.generateChat([
       { role: 'user', content: prompt }
-    ], false, timeoutMs);
+    ], false, timeoutMs, maxTokens);
   }
 
   public async generateVision(
