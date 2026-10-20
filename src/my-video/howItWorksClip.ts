@@ -242,7 +242,8 @@ export async function renderHowItWorksClip(input: HowItWorksInput, outPath: stri
   if (isStickmanBusy()) { log("my-video is busy with a long video -> Pexels"); return false; }
   try { resolveMyVideoDir(); } catch { log("my-video is not installed here -> Pexels"); return false; }
 
-  const timeoutMs = (Number(process.env.HOWITWORKS_MYVIDEO_TIMEOUT_MIN) || 10) * 60_000;
+  // A clip takes 2-3 minutes; one still running at 5 is stuck (it waited 10 minutes once, holding the whole reel) and the Pexels route is ready.
+  const timeoutMs = (Number(process.env.HOWITWORKS_MYVIDEO_TIMEOUT_MIN) || 5) * 60_000;
   const directed = await directHowItWorks(input);
   const spec = buildHowItWorksSpec(input, `hiw-${randomUUID().slice(0, 8)}`, directed);
   // ready-made narration: my-video measures these files instead of synthesising, so every scene lasts as long as its line
