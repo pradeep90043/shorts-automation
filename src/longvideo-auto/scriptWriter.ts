@@ -1,6 +1,7 @@
 import { parseAiJson } from "../utils/json";
 import type { Ask } from "./llm";
 import { FINANCE_CHANNELS, numbersIn, wordsOf } from "./guardrails";
+import { pipelineLogger } from "../utils/logger";
 
 export interface ScriptRequest {
   channelKey: string;
@@ -148,12 +149,23 @@ export async function writeLongScript(r: ScriptRequest, ask: Ask): Promise<Scrip
   let prevEnd = "";
   for (let i = 0; i < outline.length; i++) {
     let text = "";
-    for (let attempt = 0; attempt < 2 && !text; attempt++) {
-      const raw = await ask(chapterPrompt(r, outline, i, perChapter, prevEnd));
+    const why: string[] = [];
+    for (let attempt = 0; attempt < 3 && !text; attempt++) {
+      // the last attempt is stricter about the language: free models sometimes answer in English or Hinglish when the sources are English
+      const prompt = chapterPrompt(r, outline, i, perChapter, prevEnd) +
+        (attempt >= 1 ? "\nIMPORTANT: your previous answer was not usable. Write the WHOLE chapter in Hindi in Devanagari script, with no English sentences, no preface and no notes." : "");
+      let raw = "";
+      try { raw = await ask(prompt); } catch (e) { why.push(`attempt ${attempt + 1}: ${e instanceof Error ? e.message.slice(0, 80) : e}`); continue; }
       const c = cleanNarration(raw);
-      if (c && wordsOf(c) >= Math.round(perChapter * 0.3) && isDevanagariHeavy(c)) text = c;
+      const w = wordsOf(c);
+      const need = Math.round(perChapter * 0.3);
+      if (c && w >= need && isDevanagariHeavy(c)) text = c;
+      else why.push(`attempt ${attempt + 1}: ${w}/${need} words, ${isDevanagariHeavy(c) ? "Devanagari" : "not Devanagari"}, starts "${c.slice(0, 60)}"`);
     }
-    if (!text) throw new Error(`chapter ${i + 1} ("${outline[i].heading}") could not be written in Devanagari`);
+    if (!text) {
+      pipelineLogger.warn(`[script] chapter ${i + 1} rejected: ${why.join(" | ")}`, "AutoLong");
+      throw new Error(`chapter ${i + 1} ("${outline[i].heading}") could not be written in Devanagari`);
+    }
     chapters.push({ heading: outline[i].heading, text });
     prevEnd = splitSentences(text).slice(-1)[0] ?? "";
   }
