@@ -35,6 +35,12 @@ export class JobQueue {
     return true;
   }
 
+  /** True while the job is still waiting for its turn on some channel queue (it has not started, so it has no job record yet). */
+  public static isWaiting(id: string): boolean {
+    for (const q of JobQueue.all) if (q.queue.some((j) => j.id === id)) return true;
+    return false;
+  }
+
   private static wakeAll(): void {
     // the queue whose oldest job arrived first gets the free slot first (first come, first served across channels)
     const byAge = [...JobQueue.all].sort((a, b) => (a.queue[0]?.order ?? Infinity) - (b.queue[0]?.order ?? Infinity));

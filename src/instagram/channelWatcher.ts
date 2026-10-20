@@ -1,4 +1,5 @@
 import { ChannelProfile, config } from "../config";
+import { JobQueue } from "../utils/queue";
 import { isOffValue } from "../utils/switches";
 import { NotifyService } from "../notify";
 import { WatchStore, QueuedReel } from "../utils/watchStore";
@@ -847,7 +848,8 @@ export class ChannelWatcher {
         const elapsedMs = now - firedAt;
         // Download + OCR can legitimately take 6+ min on the CPU-starved prod VM before the
         // job record exists; a 5 min cutoff marked healthy jobs failed while they were still running.
-        if (firedAt > 0 && elapsedMs > 15 * 60 * 1000) {
+        // A reel waiting for its turn (one Short is made at a time) has no job record yet either: its wait is not a failed download.
+        if (firedAt > 0 && elapsedMs > 15 * 60 * 1000 && !JobQueue.isWaiting(inFlight.jobId!)) {
           pipelineLogger.warn(
             `[${this.profile.brandName}] Job ${inFlight.jobId} was never initialized in the database (failed to download/init) and has timed out after ${Math.round(elapsedMs / 1000)}s. Marking as failed.`,
             "ChannelWatcher",
