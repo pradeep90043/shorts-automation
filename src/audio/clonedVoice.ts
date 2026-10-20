@@ -193,9 +193,58 @@ async function lineToDevanagari(text: string, ask: (p: string, o?: { maxTokens?:
  * out letter by letter. Each line is converted in its own small call (in parallel). null = a line could not be converted.
  */
 export async function toDevanagari(lines: VoiceboxLine[], ask = makeAsk({ timeoutMs: 75_000, hedgeMs: 15_000 })): Promise<VoiceboxLine[] | null> {
-  const out = await Promise.all(lines.map((l) => lineToDevanagari(l.text, ask)));
+  const needs = lines.map((l) => !hasDevanagari(l.text) && /[A-Za-z]/.test(l.text));
+  const todo = lines.map((_, i) => i).filter((i) => needs[i]);
+  const out: (string | null)[] = lines.map((l) => l.text);
+  // ONE call for the whole script first (groups of 10): 13 separate calls queued behind the AI request gate for up to 98 s and
+  // overran a rate-limited free key; the per-line call below is the fallback for any line the batch got wrong.
+  for (let g = 0; g < todo.length; g += 10) {
+    const group = todo.slice(g, g + 10);
+    const batch = await convertBatch(group.map((i) => lines[i].text), ask);
+    group.forEach((i, k) => { out[i] = batch?.[k] ?? null; });
+  }
+  await Promise.all(todo.filter((i) => out[i] === null).map(async (i) => { out[i] = await lineToDevanagari(lines[i].text, ask); }));
   if (out.some((t) => t === null)) return null;
   return lines.map((l, i) => ({ name: l.name, text: out[i] as string }));
+}
+
+/** The N rewrites of a batch answer ("1. <<<...>>>"), each only when it is a plausible rewrite of its line; undefined/null entries are redone one by one. */
+export function parseBatchAnswer(answer: string, sources: string[]): (string | null)[] {
+  return sources.map((src, k) => {
+    // candidates for line k+1: "<<<...>>>" blocks and plain "k+1. text" lines (models often drop the markers), judged last to first
+    const marked = [...answer.matchAll(new RegExp(`(?:^|\\n)\\s*${k + 1}[.)]\\s*<<<([\\s\\S]*?)>>>`, "g"))].map((m) => m[1].trim());
+    const plain = [...answer.matchAll(new RegExp(`(?:^|\\n)\\s*${k + 1}[.)]\\s+([^\\n]+)`, "g"))].map((m) => m[1].replace(/<<<|>>>/g, "").trim());
+    for (const cand of [...marked, ...plain].reverse()) {
+      const out = devanagariFromAnswer(cand, src.trim().split(/\s+/).length < 4 ? 1 : 3);
+      if (plausibleRewrite(out, src)) return out;
+    }
+    return null;
+  });
+}
+
+async function convertBatch(sources: string[], ask: (p: string, o?: { maxTokens?: number; model?: string }) => Promise<string>): Promise<(string | null)[] | null> {
+  if (!sources.length) return [];
+  const prompt =
+    `Rewrite each numbered Hinglish line (Hindi written in the English alphabet) in Devanagari exactly as it is spoken, for a text-to-speech voice. ` +
+    `Keep the meaning and every word; write English words in Devanagari too; keep numbers and punctuation. ` +
+    `Do not analyse or explain. Answer with one line per number, in this exact format, nothing else:\n1. <<<Devanagari text>>>\n2. <<<Devanagari text>>>\n\n` +
+    `${sources.map((s, k) => `${k + 1}. ${s}`).join("\n")}\n/no_think`;
+  const total = sources.reduce((n, s) => n + s.length, 0);
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const model = process.env.HINDI_CONVERT_MODEL || undefined;
+      const answer = await ask(prompt, { maxTokens: Math.min(6000, Math.max(1500, total * 8)), model });
+      const parsed = parseBatchAnswer(answer, sources);
+      const good = parsed.filter(Boolean).length;
+      pipelineLogger.info(`Hindi text: batch of ${sources.length} lines -> ${good} usable${model ? ` (model ${model})` : ""}`, "ClonedVoice");
+      if (good > 0) return parsed;
+      pipelineLogger.warn(`Hindi text: batch attempt ${attempt}/2 unusable (${answer.length} chars) starts: ${JSON.stringify(answer.slice(0, 120))}`, "ClonedVoice");
+    } catch (err) {
+      pipelineLogger.warn(`Hindi text: batch attempt ${attempt}/2: ${err instanceof Error ? err.message.slice(0, 160) : err}`, "ClonedVoice");
+    }
+    await new Promise((r) => setTimeout(r, Number(process.env.HINDI_BATCH_WAIT_MS ?? 4000))); // a rate-limited free key needs a moment
+  }
+  return null;
 }
 
 /**

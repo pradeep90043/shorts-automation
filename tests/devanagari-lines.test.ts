@@ -1,5 +1,16 @@
 import assert from "assert";
-import { devanagariFromAnswer, splitForVoice, toDevanagari, plausibleRewrite } from "../src/audio/clonedVoice";
+import { devanagariFromAnswer, splitForVoice, toDevanagari, plausibleRewrite, parseBatchAnswer } from "../src/audio/clonedVoice";
+
+// one batched call for the whole script: numbered <<< >>> blocks, a block that is notes instead of a rewrite is dropped (and redone alone)
+{
+  const src = ["RBI ne repo rate badhaya to aapki EMI badhegi.", "Subscribe karna mat bhooliye.", "Crude oil ki keemat"];
+  const answer = 'Here is the result:\n1. <<<आरबीआई ने रेपो रेट बढ़ाया तो आपकी ईएमआई बढ़ेगी।>>>\n2. <<<सब्सक्राइब करना मत भूलिए।>>>\n3. <<<क्रूड -> क्रूड, तेल -> तेल>>>';
+  const parsed = parseBatchAnswer(answer, src);
+  assert.strictEqual(parsed[0], "आरबीआई ने रेपो रेट बढ़ाया तो आपकी ईएमआई बढ़ेगी।");
+  assert.strictEqual(parsed[1], "सब्सक्राइब करना मत भूलिए।");
+  assert.strictEqual(parsed[2], null, "notes are not a rewrite");
+  assert.deepStrictEqual(parseBatchAnswer("no blocks at all", src), [null, null, null]);
+}
 
 // The exact fragments a reasoning model's notes produced and a Short was narrated with: none may pass as a rewrite
 {
@@ -66,12 +77,13 @@ assert.strictEqual(devanagariFromAnswer("Hindi: 25 बेसिस पॉइं�
   assert.strictEqual(res![0].text, "ईएमआई बढ़ सकती है");
   assert.strictEqual(res![2].text, "5.50");        // a bare figure is left alone, no call
   assert.strictEqual(res![3].text, "पहले से देवनागरी"); // already Devanagari, no call
-  assert.strictEqual(calls.length, 2);
+  // 2 batch attempts (this model does not answer in the numbered <<< >>> format) + 1 per-line call for each of the 2 lines that need it
+  assert.strictEqual(calls.length, 4);
   // a model that never answers in Devanagari fails the voice cleanly (after 3 tries per line) instead of hanging
   let n = 0;
   const bad = await toDevanagari([{ name: "claim", text: "hello there friend" }], async () => { n++; return "I cannot do that"; });
   assert.strictEqual(bad, null);
-  assert.strictEqual(n, 3);
+  assert.strictEqual(n, 5); // 2 batch attempts + 3 per-line attempts
   console.log("✓ devanagari lines");
 })();
 
