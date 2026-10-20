@@ -3751,6 +3751,60 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
    * automatically. On any compile/mix error, fall back to the manual review
    * flow (existing Publish/Cancel/Regenerate buttons) if a playable video exists.
    */
+  /** Clips being built in the background while the Short renders, by job id (see compileAndPublish). */
+  private hiwEarly = new Map<string, Promise<{ done: boolean; clonedHiwFiles?: string[] }>>();
+
+  /**
+   * The "how it works" clip made with my-video (GitHub cloud render), normalised to the Short's format at `transitionClipPath`.
+   * Needs only the metadata and the cloned voice lines, not the rendered Short, so it can run beside the Short's own cloud render.
+   * Never throws: done=false sends the caller to the Pexels route.
+   */
+  private async buildHowItWorksClip(
+    context: PipelineContext,
+    tempDir: string,
+    profileKey: string,
+    transitionClipPath: string,
+  ): Promise<{ done: boolean; clonedHiwFiles?: string[] }> {
+    let clonedHiwFiles: string[] | undefined;
+    try {
+      const workflowData = this.deriveTranscriptionWorkflow(context);
+      const rawExplanation = workflowData.explanation;
+      // One cloned voice: the lines the cloud run spoke for this clip, used only when they are exactly the lines the clip narrates now.
+      if (context.clonedVoice) {
+        const set = await context.clonedVoice;
+        const lines = howItWorksLines(rawExplanation, insightIntro(profileKey));
+        const asked = context.clonedHowItWorksLines ?? [];
+        const files = lines.map((_, i) => set?.file(`hiw_${i}`));
+        if (set && lines.length === asked.length && lines.every((l, i) => l === asked[i]) && files.every(Boolean)) clonedHiwFiles = files as string[];
+        else pipelineLogger.info("Cloned how-it-works narration is not usable for this clip: the clip uses its own voice", "DirectUploader");
+      }
+
+      const myVideoClip = path.join(tempDir, "hiw_myvideo.mp4");
+      const rendered = await renderHowItWorksClip(
+        // the short's own diagram (not the generic placeholder deriveTranscriptionWorkflow invents when it is missing)
+        { explanation: rawExplanation, intro: insightIntro(profileKey), title2: insightTitle(profileKey), language: insightLang(process.env, profileKey), title: context.metadata?.title, mermaid: context.metadata?.diagramWorkflow, diagramTitle: workflowData.diagramTitle, narrationFiles: clonedHiwFiles },
+        myVideoClip,
+      );
+      if (!rendered) return { done: false, clonedHiwFiles };
+      // normalise to the short's format (1080x1920, 30 fps, 44.1 kHz stereo, broadcast loudness) so the concat below accepts it
+      await new Promise<void>((resolve, reject) => {
+        const cmd =
+          `${config.binaries.ffmpeg} -y -i "${myVideoClip}" ` +
+          `-vf "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1,fps=30" ` +
+          `-af "aresample=44100,loudnorm=I=-16:TP=-1.5:LRA=11" -ar 44100 -ac 2 ` +
+          `-c:v libx264 -preset superfast -crf 20 -pix_fmt yuv420p -c:a aac "${transitionClipPath}"`;
+        exec(cmd, (err) => (err ? reject(err) : resolve()));
+      });
+      return { done: fs.existsSync(transitionClipPath) && fs.statSync(transitionClipPath).size > 1000, clonedHiwFiles };
+    } catch (myVideoErr) {
+      pipelineLogger.warn(
+        `my-video transition clip unusable, falling back to Pexels: ${myVideoErr instanceof Error ? myVideoErr.message : myVideoErr}`,
+        "DirectUploader",
+      );
+      return { done: false, clonedHiwFiles };
+    }
+  }
+
   private async compileAndPublish(context: PipelineContext): Promise<void> {
     const id = context.id;
     const tempDir = context.tempDir;
@@ -3811,6 +3865,12 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
           if (settings.captions) {
             const captionsPath = await this.writeCaptionsAss(context, context.originalVideoPath || path.join(tempDir, "video_raw.mp4"), useVoice);
             if (captionsPath) pipelineLogger.info("Captions prepared for the cloud render", "DirectUploader");
+          }
+          // Start the "how it works" clip now: it needs only the metadata and the voice lines, so its cloud render overlaps the Short's
+          // (they ran one after the other, ~75 s longer per reel). compileAndPublish's later V2 step picks it up from hiwEarly.
+          const earlyKey = this.profile.key.toLowerCase();
+          if (insightEnabledFor(earlyKey, this.profile.watch?.outroVersion) && !this.hiwEarly.has(id)) {
+            this.hiwEarly.set(id, this.buildHowItWorksClip(context, tempDir, earlyKey, path.join(tempDir, "transition_clip.mp4")));
           }
           const cloudOut = await renderShortCloud(context, (detail) => {
             this.db.updateJob(id, { currentStep: detail });
@@ -5286,47 +5346,14 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
           "DirectUploader",
         );
 
+        // The clip is normally already being built: compileAndPublish starts it before the Short render so the two cloud renders overlap.
+        const early = this.hiwEarly.get(context.id);
+        this.hiwEarly.delete(context.id);
+        const built = early ? await early : await this.buildHowItWorksClip(context, tempDir, profileKey, transitionClipPath);
         const workflowData = this.deriveTranscriptionWorkflow(context);
         const rawExplanation = workflowData.explanation;
-
-        // One cloned voice: the lines the cloud run spoke for this clip, used only when they are exactly the lines the clip narrates now.
-        let clonedHiwFiles: string[] | undefined;
-        if (context.clonedVoice) {
-          const set = await context.clonedVoice;
-          const lines = howItWorksLines(rawExplanation, insightIntro(profileKey));
-          const asked = context.clonedHowItWorksLines ?? [];
-          const files = lines.map((_, i) => set?.file(`hiw_${i}`));
-          if (set && lines.length === asked.length && lines.every((l, i) => l === asked[i]) && files.every(Boolean)) clonedHiwFiles = files as string[];
-          else pipelineLogger.info("Cloned how-it-works narration is not usable for this clip: the clip uses its own voice", "DirectUploader");
-        }
-
-        // Preferred: build the clip with my-video (GitHub cloud render). Any problem -> the Pexels route below, as before.
-        let myVideoDone = false;
-        try {
-          const myVideoClip = path.join(tempDir, "hiw_myvideo.mp4");
-          const rendered = await renderHowItWorksClip(
-            // the short's own diagram (not the generic placeholder deriveTranscriptionWorkflow invents when it is missing)
-            { explanation: rawExplanation, intro: insightIntro(profileKey), title2: insightTitle(profileKey), language: insightLang(process.env, profileKey), title: context.metadata?.title, mermaid: context.metadata?.diagramWorkflow, diagramTitle: workflowData.diagramTitle, narrationFiles: clonedHiwFiles },
-            myVideoClip,
-          );
-          if (rendered) {
-            // normalise to the short's format (1080x1920, 30 fps, 44.1 kHz stereo, broadcast loudness) so the concat below accepts it
-            await new Promise<void>((resolve, reject) => {
-              const cmd =
-                `${config.binaries.ffmpeg} -y -i "${myVideoClip}" ` +
-                `-vf "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1,fps=30" ` +
-                `-af "aresample=44100,loudnorm=I=-16:TP=-1.5:LRA=11" -ar 44100 -ac 2 ` +
-                `-c:v libx264 -preset superfast -crf 20 -pix_fmt yuv420p -c:a aac "${transitionClipPath}"`;
-              exec(cmd, (err) => (err ? reject(err) : resolve()));
-            });
-            myVideoDone = fs.existsSync(transitionClipPath) && fs.statSync(transitionClipPath).size > 1000;
-          }
-        } catch (myVideoErr) {
-          pipelineLogger.warn(
-            `my-video transition clip unusable, falling back to Pexels: ${myVideoErr instanceof Error ? myVideoErr.message : myVideoErr}`,
-            "DirectUploader",
-          );
-        }
+        const clonedHiwFiles = built.clonedHiwFiles;
+        const myVideoDone = built.done;
 
         if (!myVideoDone) {
         const speechScript = `${insightIntro(profileKey)} ${rawExplanation}`;
