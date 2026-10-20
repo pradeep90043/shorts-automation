@@ -89,18 +89,18 @@ export function devanagariFromAnswer(raw: string): string {
 
 /**
  * A looping answer starts with the correct rewrite and then repeats or rambles (a 121-character line came back as ~10,000 characters on three
- * attempts in a row). Keep its beginning: at most ~2x the source, cut at the last sentence end or space. "" when nothing usable is left.
+ * attempts in a row). Keep its beginning: at most ~1.4x the source (a real rewrite is 1-1.3x; at 2x the line took 296 s to speak instead of 68 s), cut at the last sentence end or space. "" when nothing usable is left.
  */
 export function clampRunaway(out: string, source: string): string {
-  const limit = Math.max(60, Math.round(source.length * 2));
+  const limit = Math.max(60, Math.round(source.length * 1.4));
   if (out.length <= limit) return out;
   const head = out.slice(0, limit);
   const cut = Math.max(head.lastIndexOf("।"), head.lastIndexOf("."), head.lastIndexOf("?"), head.lastIndexOf("!"), head.lastIndexOf(" "));
   return head.slice(0, cut > limit / 2 ? cut + 1 : limit).trim();
 }
 
-/** A Devanagari rewrite is about as long as its source; one several times longer is chain-of-thought or a runaway answer (10,000+ characters once). */
-export const devanagariTooLong = (out: string, source: string): boolean => out.length > Math.max(80, source.length * 3);
+/** A Devanagari rewrite is about as long as its source; one much longer is chain-of-thought or a runaway answer (10,000+ characters once). */
+export const devanagariTooLong = (out: string, source: string): boolean => out.length > Math.max(80, source.length * 1.8);
 
 async function lineToDevanagari(text: string, ask: (p: string) => Promise<string>): Promise<string | null> {
   if (hasDevanagari(text) || !/[A-Za-z]/.test(text)) return text; // already Devanagari, or a bare figure

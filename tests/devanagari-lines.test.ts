@@ -48,6 +48,6 @@ import { devanagariTooLong, devanagariFromAnswer as dfa, clampRunaway } from "..
   assert.ok(!devanagariTooLong("यह एक छोटा सा टेस्ट है", src), "a normal rewrite is kept");
     const loop = "यह एक छोटा सा टेस्ट है। " + "और फिर वही बात दोहराता रहता है ".repeat(300);
   const kept = clampRunaway(loop, src);
-  assert.ok(kept.startsWith("यह एक छोटा सा टेस्ट है।") && kept.length <= Math.max(60, src.length * 2) + 1, "the clean beginning of a looping answer is kept, cut at a boundary");
+  assert.ok(kept.startsWith("यह एक छोटा सा टेस्ट है।") && kept.length <= Math.max(60, Math.round(src.length * 1.4)) + 1, "the clean beginning of a looping answer is kept, cut at a boundary");
   console.log("✓ runaway Hindi answers are rejected");
 }
