@@ -14,6 +14,9 @@ import time
 
 import requests
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import voicebox_emotion as emo
+
 
 def wait_health(base, seconds):
     end = time.time() + seconds
@@ -127,6 +130,9 @@ def main():
 
     for line in lines:
         t0 = time.time()
+        emotion = line.get("emotion") if emo.enabled() else None
+        if a.engine == "chatterbox":
+            emo.set_chatterbox("voicebox", emotion)  # also clears the previous line's setting when this one is neutral
         for attempt in range(1, 4):
             r = requests.post(
                 f"{a.base}/v1/audio/speech",
@@ -147,6 +153,8 @@ def main():
         path = os.path.join(a.out, f"{line['name']}.wav")
         with open(path, "wb") as f:
             f.write(r.content)
+        if emotion and emo.apply_prosody(path, emotion):
+            print(f"{line['name']}: emotion {emotion} applied", flush=True)
         print(f"{line['name']}: {len(r.content)} bytes in {time.time() - t0:.1f}s", flush=True)
 
 

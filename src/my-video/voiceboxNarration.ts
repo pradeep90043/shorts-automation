@@ -1,4 +1,5 @@
 import fs from "fs";
+import { tagEmotions } from "../audio/emotion";
 import path from "path";
 import { spawn } from "child_process";
 import { Readable } from "stream";
@@ -16,6 +17,8 @@ export interface VoiceboxLine {
   /** file name without extension: segment_<scene index>_<scene id> */
   name: string;
   text: string;
+  /** how the line should sound (src/audio/emotion.ts); absent = neutral */
+  emotion?: string;
 }
 
 export interface VoiceboxRunRef {
@@ -120,7 +123,7 @@ export async function generateVoiceboxNarration(opts: VoiceboxOptions): Promise<
     }
   }
   if (!runId) {
-    const linesJson = JSON.stringify(opts.lines);
+    const linesJson = JSON.stringify(await tagEmotions(opts.lines));
     if (linesJson.length > MAX_INPUT_CHARS) {
       throw new Error(`The narration is too long for one voice run (${linesJson.length} of ${MAX_INPUT_CHARS} characters). Split the video in two parts.`);
     }
