@@ -2939,6 +2939,22 @@ ${this.theme.analysisRules}`;
         return;
       }
       context.settingsReviewDone = true;
+      // The voiceover is wanted but the AI left its script empty (seen 2026-10-21: a Prompt Gag Short was rendered muted). Write one from
+      // the title, description and transcript instead of publishing a silent Short.
+      if (context.reviewSettings?.voiceover && context.metadata && !context.metadata.voiceoverScript?.trim() && context.isVideo) {
+        const basis = [context.metadata.title, context.metadata.description, context.transcript?.text, context.metadata.howItWorks].filter(Boolean).join("\n").slice(0, 1500);
+        let script = "";
+        try {
+          const raw = await this.freellmapi?.generateText(
+            `${this.buildVoiceoverLengthInstruction(context)} in ${this.voiceoverPromptLanguage} about this Short. Natural, a hook in the first sentence. Output only the narration, between <<< and >>>.\n\n${basis}\n/no_think`,
+          );
+          const m = [...(raw ?? "").matchAll(/<<<([\s\S]*?)>>>/g)].pop();
+          script = (m ? m[1] : (raw ?? "")).replace(/\s*\n\s*/g, " ").trim();
+          if (script.length > 600 || /thinking process/i.test(script)) script = "";
+        } catch { /* use the description below */ }
+        context.metadata.voiceoverScript = script || (context.metadata.description ?? "").replace(/#\S+/g, "").trim();
+        pipelineLogger.warn(`The AI gave no voiceover script: ${script ? "written separately" : "the description is spoken"}`, "DirectUploader");
+      }
       context.useVoiceover = !!(
         context.reviewSettings?.voiceover && context.metadata?.voiceoverScript
       );
