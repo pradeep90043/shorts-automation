@@ -61,6 +61,9 @@ export class FreeLlmApiClient {
         body: JSON.stringify({
           model,
           messages,
+          // Without it each free provider applies its own default (about 1,024 tokens): the unified vision answer, a long JSON, was cut
+          // off at ~3,100 characters and could not be parsed, so Shorts fell back to weaker metadata (seen 2026-10-20).
+          max_tokens: Number(process.env.AI_MAX_TOKENS) || 4096,
         }),
         signal: controller.signal,
       });
@@ -71,6 +74,9 @@ export class FreeLlmApiClient {
       }
 
       const json = await res.json() as any;
+      if (json.choices?.[0]?.finish_reason === "length") {
+        console.warn(`[FreeLLMAPI] the answer was cut off by the token limit (${json.model ?? model})`);
+      }
       return json.choices?.[0]?.message?.content ?? '';
     } catch (err: any) {
       if (err.name === "AbortError") {
