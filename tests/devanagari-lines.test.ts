@@ -5,6 +5,11 @@ import { devanagariFromAnswer, splitForVoice, toDevanagari } from "../src/audio/
 assert.strictEqual(devanagariFromAnswer('"आरबीआई ब्याज दर बढ़ा सकता है।"'), "आरबीआई ब्याज दर बढ़ा सकता है।");
 assert.strictEqual(devanagariFromAnswer("We need to rewrite this in Devanagari.\nHere it is:\nआरबीआई ब्याज दर बढ़ा सकता है।"), "आरबीआई ब्याज दर बढ़ा सकता है।");
 assert.strictEqual(devanagariFromAnswer("only english words here"), "");
+// an echoed instruction quotes one Devanagari word but is English prose: it must never be spoken (a Short once read it aloud)
+assert.strictEqual(
+  devanagariFromAnswer('आरबीआई ब्याज दर बढ़ा सकता है।\nWrite English words in Devanagari too (e.g. "video" -> "वीडियो"); keep numbers and punctuation.'),
+  "आरबीआई ब्याज दर बढ़ा सकता है।",
+);
 
 
 // a long claim is split into sentence-sized pieces for parallel runners, and nothing is lost or reordered

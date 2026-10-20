@@ -73,6 +73,14 @@ export function clonedVoiceEnabled(profileKey: string): boolean {
  */
 const hasDevanagari = (t: string): boolean => /[\u0900-\u097F]/.test(t);
 
+/** More than 65% of the letters are Devanagari: Hindi text, not an English sentence that happens to quote one Hindi word. */
+export function isMostlyDevanagari(t: string): boolean {
+  const letters = t.replace(/[^\p{L}\p{M}]/gu, "");
+  if (!letters) return false;
+  const dev = (letters.match(/[\u0900-\u097F]/g) ?? []).length;
+  return dev / letters.length > 0.65;
+}
+
 /**
  * One line to Devanagari, as plain text. Free models truncate a long JSON answer (Devanagari costs many tokens) or answer in
  * chain-of-thought prose; a short one-line answer survives both: only the lines that contain Devanagari are kept.
@@ -81,7 +89,7 @@ export function devanagariFromAnswer(raw: string): string {
   return raw
     .split(/\n+/)
     .map((l) => l.replace(/^[\s"'`*\-•\d.)]+|["'`\s]+$/g, "").trim())
-    .filter((l) => hasDevanagari(l))
+    .filter((l) => isMostlyDevanagari(l)) // an echoed instruction ("... e.g. "video" -> "वीडियो"") has one Devanagari word but is English prose
     .filter((l, i, all) => all.indexOf(l) === i) // a model stuck in a loop repeats the same line
     .join(" ")
     .trim();
