@@ -87,6 +87,13 @@ export function isMostlyDevanagari(t: string): boolean {
  */
 /** The answer's Devanagari: judged sentence by sentence first, and when that finds nothing the original rule (any line that has Devanagari) minus lines quoting the instruction. */
 export function devanagariFromAnswer(raw: string, minWords = 3): string {
+  // The prompt asks for the final text between <<< and >>>. A reasoning model writes its analysis first (and may draft the text in it),
+  // so the LAST marked block is the final answer.
+  const marked = [...raw.matchAll(/<<<([\s\S]*?)>>>/g)].map((m) => m[1].trim()).filter((m) => hasDevanagari(m));
+  if (marked.length) {
+    const fromMarked = strictDevanagari(marked[marked.length - 1], 1);
+    if (fromMarked) return fromMarked;
+  }
   const strict = strictDevanagari(raw, minWords);
   if (strict) return strict;
   return raw
@@ -144,13 +151,13 @@ async function lineToDevanagari(text: string, ask: (p: string, o?: { maxTokens?:
   if (hasDevanagari(text) || !/[A-Za-z]/.test(text)) return text; // already Devanagari, or a bare figure
   const prompt =
     `Rewrite this Hinglish text (Hindi written in the English alphabet) in Devanagari exactly as it is spoken, for a text-to-speech voice. ` +
-    `Keep the meaning and every word; write English words in Devanagari too (e.g. "video" -> "वीडियो"); keep numbers and punctuation. ` +
-    `Return ONLY the Devanagari text, nothing else.\n\n${text}`;
+    `Keep the meaning and every word; write English words in Devanagari too; keep numbers and punctuation. ` +
+    `Do not analyse or explain. Put ONLY the final Devanagari text between <<< and >>>.\n\nText: ${text}\n/no_think`;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      // Devanagari costs ~1-2 tokens per character: 4x the source's characters (min 256) is generous, and a looping model stops there
-      // instead of filling the 4,096-token default (8-10,000 characters, ~40 s per attempt) before the clamp.
-      const answer = await ask(prompt, { maxTokens: Math.max(256, text.length * 4) });
+      // Room for a reasoning model's analysis AND the answer (the dev model writes "Here's a thinking process: ..." first, 800-2,000
+      // characters): 256 tokens cut it off before any Devanagari. Still far below the 4,096 default that let a loop run to 10,000 characters.
+      const answer = await ask(prompt, { maxTokens: Math.max(1200, text.length * 8) });
       const out = devanagariFromAnswer(answer, text.trim().split(/\s+/).length < 4 ? 1 : 3);
       if (!out) pipelineLogger.info(`Hindi text: rejected answer (${answer.length} chars) starts: ${JSON.stringify(answer.slice(0, 140))}`, "ClonedVoice");
       if (devanagariTooLong(out, text)) {

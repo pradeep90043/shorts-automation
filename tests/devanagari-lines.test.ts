@@ -5,6 +5,12 @@ import { devanagariFromAnswer, splitForVoice, toDevanagari } from "../src/audio/
 assert.strictEqual(devanagariFromAnswer('"आरबीआई ब्याज दर बढ़ा सकता है।"'), "आरबीआई ब्याज दर बढ़ा सकता है।");
 assert.strictEqual(devanagariFromAnswer("We need to rewrite this in Devanagari.\nHere it is:\nआरबीआई ब्याज दर बढ़ा सकता है।"), "आरबीआई ब्याज दर बढ़ा सकता है।");
 assert.strictEqual(devanagariFromAnswer("only english words here"), "");
+// a reasoning model analyses first and may draft the text in the analysis: the LAST <<< >>> block is the answer
+assert.strictEqual(
+  devanagariFromAnswer("Here's a thinking process:\n\n1.  **Analyze the Input:**\n   - Input text: \"RBI ne repo rate badhaya\"\n2. Draft: <<<आरबीआई ने रेपो रेट</>>> \n\nFinal: <<<आरबीआई ने रेपो रेट बढ़ाया।>>>"),
+  "आरबीआई ने रेपो रेट बढ़ाया।",
+);
+assert.strictEqual(devanagariFromAnswer("<<<आरबीआई ने रेपो रेट बढ़ाया।>>>"), "आरबीआई ने रेपो रेट बढ़ाया।");
 // an echoed instruction quotes one Devanagari word but is English prose: it must never be spoken (a Short once read it aloud)
 assert.strictEqual(
   devanagariFromAnswer('आरबीआई ब्याज दर बढ़ा सकता है।\nWrite English words in Devanagari too (e.g. "video" -> "वीडियो"); keep numbers and punctuation.'),
