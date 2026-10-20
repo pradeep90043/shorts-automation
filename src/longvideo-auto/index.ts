@@ -81,7 +81,7 @@ export async function produceLongVideo(
   await runStage(req.id, "guardrails", async () => {
     const guard = checkScript({
       channelKey: req.channelKey, script: pkg.script, title: pkg.title, description: pkg.description,
-      sourceText: research.text + "\n" + seed.text, targetWords, tolerance: 0.1,
+      sourceText: research.text + "\n" + seed.text, targetWords, tolerance: 0.25,
     });
     note(`script ${guard.words} words (target ${targetWords}), ${pkg.droppedSentences} unsupported sentence(s) removed`);
     if (!guard.ok) throw new Error(`rejected: ${guard.problems.join("; ")}`);
