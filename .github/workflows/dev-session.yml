@@ -128,6 +128,11 @@ jobs:
           if [ -n "$TOKEN" ]; then
             add() { curl -s -o /dev/null -w "  $1 key: %{http_code}\n" -X POST localhost:3001/api/keys -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
                       -d "$(python3 -c "import json,sys;print(json.dumps({'platform':sys.argv[1],'key':sys.argv[2],'label':'dev-session'}))" "$1" "$2")"; }
+            # The data saved by the last session already holds the keys added then: without this every session added one more copy of each
+            # (55 keys of 7 providers after nine sessions) and FreeLLMAPI spent its failover attempts on copies of the same failing key.
+            curl -s -m 20 -H "Authorization: Bearer $TOKEN" localhost:3001/api/keys \
+              | python3 -c 'import json,sys; d=json.load(sys.stdin); ks=d if isinstance(d,list) else d.get("keys",[]); print(chr(10).join(str(k["id"]) for k in ks if k.get("label")=="dev-session"))' 2>/dev/null \
+              | while read -r id; do [ -n "$id" ] && curl -s -o /dev/null -X DELETE "localhost:3001/api/keys/$id" -H "Authorization: Bearer $TOKEN"; done || true
             # the Groq key is the one in the dev settings (DEV_ENV), or a GROQ_API_KEY secret when there is one
             GROQ=$(grep -E '^GROQ_API_KEY=' .env.dev | tail -1 | cut -d= -f2- | tr -d '"' || true)
             [ -n "$GROQ" ] && echo "::add-mask::$GROQ"
