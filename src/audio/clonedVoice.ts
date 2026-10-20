@@ -147,7 +147,21 @@ export function clampRunaway(out: string, source: string): string {
 /** A Devanagari rewrite is about as long as its source; one much longer is chain-of-thought or a runaway answer (10,000+ characters once). */
 export const devanagariTooLong = (out: string, source: string): boolean => out.length > Math.max(80, source.length * 1.8);
 
-async function lineToDevanagari(text: string, ask: (p: string, o?: { maxTokens?: number }) => Promise<string>): Promise<string | null> {
+/**
+ * Is `out` a believable Devanagari rewrite of `source`? A reasoning model's notes pass every "has Devanagari" test: a Short was narrated
+ * with `आपके" or "आपक़े"?`, `क्रूड -> क्रूड, तेल -> तेल` and `पुट or डाल.` (word-choice alternatives from its thinking). A real rewrite
+ * is mostly Devanagari, about as long as the source, and has no arrows, no "x" or "y" alternatives and no stray English "or".
+ */
+export function plausibleRewrite(out: string, source: string): boolean {
+  if (!out || !isMostlyDevanagari(out)) return false;
+  if (/->|=>|\s(or|as|and)\s*["“”]|["“”]\s*(or|as|and)\s|\sor\s/i.test(out)) return false; // alternatives / glosses, never speech
+  if (/["“”][^"“”]{0,40}["“”]\s*\?/.test(out)) return false; // a quoted word followed by a question mark: the model asking itself
+  const ratio = out.length / Math.max(1, source.length);
+  const words = out.trim().split(/\s+/).length / Math.max(1, source.trim().split(/\s+/).length);
+  return ratio >= 0.5 && ratio <= 1.7 && words >= 0.5 && words <= 1.8;
+}
+
+async function lineToDevanagari(text: string, ask: (p: string, o?: { maxTokens?: number; model?: string }) => Promise<string>): Promise<string | null> {
   if (hasDevanagari(text) || !/[A-Za-z]/.test(text)) return text; // already Devanagari, or a bare figure
   const prompt =
     `Rewrite this Hinglish text (Hindi written in the English alphabet) in Devanagari exactly as it is spoken, for a text-to-speech voice. ` +
@@ -155,24 +169,23 @@ async function lineToDevanagari(text: string, ask: (p: string, o?: { maxTokens?:
     `Do not analyse or explain. Put ONLY the final Devanagari text between <<< and >>>.\n\nText: ${text}\n/no_think`;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      // Room for a reasoning model's analysis AND the answer (the dev model writes "Here's a thinking process: ..." first, 800-2,000
-      // characters): 256 tokens cut it off before any Devanagari. Still far below the 4,096 default that let a loop run to 10,000 characters.
-      const answer = await ask(prompt, { maxTokens: Math.max(1200, text.length * 8) });
-      const out = devanagariFromAnswer(answer, text.trim().split(/\s+/).length < 4 ? 1 : 3);
-      if (!out) pipelineLogger.info(`Hindi text: rejected answer (${answer.length} chars) starts: ${JSON.stringify(answer.slice(0, 140))}`, "ClonedVoice");
-      if (devanagariTooLong(out, text)) {
-        const kept = hasDevanagari(clampRunaway(out, text)) ? clampRunaway(out, text) : "";
-        pipelineLogger.warn(`Hindi text for one line, attempt ${attempt}/3: answer is ${out.length} characters for a ${text.length}-character line (runaway)${kept ? `: kept its first ${kept.length}` : ""}`, "ClonedVoice");
-        if (kept.length >= Math.min(8, text.length / 3)) return kept;
-        continue;
-      }
-      if (out.length >= Math.min(8, text.length / 3)) return out;
-      pipelineLogger.warn(`Hindi text for one line, attempt ${attempt}/3: answer had no usable Devanagari`, "ClonedVoice");
+      // The first attempt can pin a model that does not think out loud (HINDI_CONVERT_MODEL: the dev router picked a reasoning model that
+      // wrote "Here's a thinking process: ..." and drafted alternatives); later attempts use the normal routing.
+      const model = attempt === 1 ? process.env.HINDI_CONVERT_MODEL || undefined : undefined;
+      // Room for a reasoning model's analysis AND the answer, still far below the 4,096 default that let a loop run to 10,000 characters.
+      const answer = await ask(prompt, { maxTokens: Math.max(1200, text.length * 8), model });
+      let out = devanagariFromAnswer(answer, text.trim().split(/\s+/).length < 4 ? 1 : 3);
+      if (devanagariTooLong(out, text)) out = clampRunaway(out, text); // a looping answer's clean beginning
+      if (plausibleRewrite(out, text)) return out;
+      pipelineLogger.warn(
+        `Hindi text for one line, attempt ${attempt}/3: answer rejected (${answer.length} chars${model ? `, model ${model}` : ""}) starts: ${JSON.stringify(answer.slice(0, 120))}`,
+        "ClonedVoice",
+      );
     } catch (err) {
       pipelineLogger.warn(`Hindi text for one line, attempt ${attempt}/3: ${err instanceof Error ? err.message : err}`, "ClonedVoice");
     }
   }
-  return null;
+  return null; // better the normal voice than a narration made of word lists
 }
 
 /**

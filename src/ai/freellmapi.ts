@@ -94,10 +94,10 @@ export class FreeLlmApiClient {
    * Every request takes its turn at the process-wide gate (aiGate.ts): vision one at a time with a gap, text a few at a time, and a
    * rate-limit answer pauses all of them for a while. The free keys are shared by all channels and a burst benches every one of them.
    */
-  public async generateChat(messages: any[], isVision = false, timeoutOverrideMs?: number, maxTokens?: number): Promise<string> {
+  public async generateChat(messages: any[], isVision = false, timeoutOverrideMs?: number, maxTokens?: number, modelOverride?: string): Promise<string> {
     return (isVision ? visionGate : textGate).run(async () => {
       try {
-        return await this.generateChatNow(messages, isVision, timeoutOverrideMs, maxTokens);
+        return await this.generateChatNow(messages, isVision, timeoutOverrideMs, maxTokens, modelOverride);
       } catch (err: any) {
         if (isRateLimitError(String(err?.message ?? err))) {
           visionGate.backOff(RATE_LIMIT_BACKOFF_MS);
@@ -109,11 +109,11 @@ export class FreeLlmApiClient {
     });
   }
 
-  private async generateChatNow(messages: any[], isVision = false, timeoutOverrideMs?: number, maxTokens?: number): Promise<string> {
+  private async generateChatNow(messages: any[], isVision = false, timeoutOverrideMs?: number, maxTokens?: number, modelOverride?: string): Promise<string> {
     // A vision answer normally takes 6-30 s (the stage's median is ~10 s). One still running at 50 s is stuck on a rate-limited or hung free
 // provider; waiting 120 s for it cost reels 2-4 minutes each (three attempts). The retry is routed to another provider.
     const timeoutMs = timeoutOverrideMs ?? (isVision ? Number(process.env.AI_VISION_TIMEOUT_MS) || 50000 : 60000);
-    const primaryModel = isVision ? this.visionModel : this.model;
+    const primaryModel = modelOverride || (isVision ? this.visionModel : this.model);
 
     try {
       return await this.executeChatRequest(this.baseUrl, this.apiKey, primaryModel, messages, timeoutMs, maxTokens);
@@ -132,10 +132,10 @@ export class FreeLlmApiClient {
     }
   }
 
-  public async generateText(prompt: string, timeoutMs?: number, maxTokens?: number): Promise<string> {
+  public async generateText(prompt: string, timeoutMs?: number, maxTokens?: number, model?: string): Promise<string> {
     return this.generateChat([
       { role: 'user', content: prompt }
-    ], false, timeoutMs, maxTokens);
+    ], false, timeoutMs, maxTokens, model);
   }
 
   public async generateVision(

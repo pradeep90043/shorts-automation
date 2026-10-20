@@ -40,6 +40,9 @@ services:
       - FREELLMAPI_KEY=${FREELLMAPI_KEY}
       - PUBLIC_URL=${PUBLIC_URL}
       - BASE_URL=${PUBLIC_URL}   # a BASE_URL in the dev settings (the old VM address) would otherwise win
+      # The dev router sends plain text calls to nvidia/nemotron (a reasoning model: "Here's a thinking process: ..."). The Hindi rewrite
+      # tries a model that answers directly first, and falls back to normal routing on a rejected answer.
+      - HINDI_CONVERT_MODEL=gemini-3.5-flash-lite
     depends_on:
       - postgres
       - freellmapi-dev

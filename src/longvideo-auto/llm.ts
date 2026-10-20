@@ -4,7 +4,7 @@ import { config } from "../config";
 import { pipelineLogger } from "../utils/logger";
 
 /** `maxTokens`: the most the answer may need (a one-line rewrite ~300); without it the client default applies. */
-export type Ask = (prompt: string, opts?: { maxTokens?: number }) => Promise<string>;
+export type Ask = (prompt: string, opts?: { maxTokens?: number; model?: string }) => Promise<string>;
 
 let geminiDownUntil = 0;
 
@@ -16,10 +16,10 @@ let geminiDownUntil = 0;
 export function makeAsk(opts: { timeoutMs?: number; hedgeMs?: number } = {}): Ask {
   const timeoutMs = opts.timeoutMs ?? (Number(process.env.AUTO_LONG_LLM_TIMEOUT_MS) || 150_000);
   const hedgeMs = opts.hedgeMs ?? (Number(process.env.AUTO_LONG_HEDGE_MS) || 25_000);
-  return async (prompt: string, askOpts?: { maxTokens?: number }): Promise<string> => {
+  return async (prompt: string, askOpts?: { maxTokens?: number; model?: string }): Promise<string> => {
     const providers: { name: string; ask: () => Promise<string> }[] = [];
     if (config.ai.provider === "freellmapi" || process.env.FREELLMAPI_KEY) {
-      providers.push({ name: "FreeLLMAPI", ask: () => new FreeLlmApiClient().generateText(prompt, timeoutMs, askOpts?.maxTokens) });
+      providers.push({ name: "FreeLLMAPI", ask: () => new FreeLlmApiClient().generateText(prompt, timeoutMs, askOpts?.maxTokens, askOpts?.model) });
     }
     if (process.env.GEMINI_API_KEY) {
       providers.push({

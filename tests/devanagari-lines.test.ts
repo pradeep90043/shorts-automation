@@ -1,5 +1,20 @@
 import assert from "assert";
-import { devanagariFromAnswer, splitForVoice, toDevanagari } from "../src/audio/clonedVoice";
+import { devanagariFromAnswer, splitForVoice, toDevanagari, plausibleRewrite } from "../src/audio/clonedVoice";
+
+// The exact fragments a reasoning model's notes produced and a Short was narrated with: none may pass as a rewrite
+{
+  const garbage: [string, string][] = [
+    ['आपके" or "आपक़े"?', "Aapke liye"],
+    ["क्रूड -> क्रूड, तेल -> तेल, कीमतें -> कीमतें.", "Crude oil ki keemat"],
+    ["पुट or डाल.", "put karo"],
+    ['रिजर्व बैंक ऑफ इंडिया. की" or "रबीआई की". होने वाली है".', "Reserve Bank of India ki hone wali baithak"],
+    ['हाइक" or "हाइक"? कन्फ़र्म" or "कन्फर्म". ऑप्शन्स" or "ऑप्शन".', "hike confirm options"],
+  ];
+  for (const [bad, src] of garbage) assert.ok(!plausibleRewrite(bad, src), `must reject: ${bad}`);
+  assert.ok(plausibleRewrite("आरबीआई ने रेपो रेट बढ़ाया तो आपकी ईएमआई बढ़ेगी।", "RBI ne repo rate badhaya to aapki EMI badhegi."));
+  assert.ok(plausibleRewrite("सब्सक्राइब करना मत भूलिए।", "Subscribe karna mat bhooliye."));
+  assert.ok(!plausibleRewrite("आरबीआई ने रेपो रेट बढ़ाया तो आपकी ईएमआई बढ़ेगी। " + "और भी बहुत कुछ ".repeat(30), "RBI ne repo rate badhaya."), "far too long for its source");
+}
 
 // plain answers, quotes, numbering and chain-of-thought prose around the real answer
 assert.strictEqual(devanagariFromAnswer('"आरबीआई ब्याज दर बढ़ा सकता है।"'), "आरबीआई ब्याज दर बढ़ा सकता है।");
