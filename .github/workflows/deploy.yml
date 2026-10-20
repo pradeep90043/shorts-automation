@@ -91,6 +91,7 @@ jobs:
             if [ -n "${DASHBOARD_PASSWORD}" ]; then printf 'DASHBOARD_PASSWORD=%s\n' "${DASHBOARD_PASSWORD}" >> .env.dev; else printf 'DASHBOARD_PASSWORD=codeorcap@2026\n' >> .env.dev; fi
             if [ -n "${GROQ_API_KEY}" ]; then printf 'GROQ_API_KEY=%s\n' "${GROQ_API_KEY}" >> .env.dev; fi
             if [ -n "${PEXELS_API_KEY}" ]; then printf 'PEXELS_API_KEY=%s\n' "${PEXELS_API_KEY}" >> .env.dev; fi
+            if [ -n "${GEMINI_API_KEY}" ]; then printf 'GEMINI_API_KEY=%s\n' "${GEMINI_API_KEY}" >> .env.dev; fi
             if [ -n "${COVER_IMAGE_API_KEY}" ]; then printf 'COVER_IMAGE_API_KEY=%s\n' "${COVER_IMAGE_API_KEY}" >> .env.dev; fi
             if [ -n "${COVER_IMAGE_API_URL}" ]; then printf 'COVER_IMAGE_API_URL=%s\n' "${COVER_IMAGE_API_URL}" >> .env.dev; fi
             printf 'VOICEBOX_GITHUB_REPO=pradeep90043/shorts-automation-test\n' >> .env.dev
@@ -103,6 +104,7 @@ jobs:
             if [ -n "${DASHBOARD_PASSWORD}" ]; then printf 'DASHBOARD_PASSWORD=%s\n' "${DASHBOARD_PASSWORD}" >> .env; fi
             if [ -n "${GROQ_API_KEY}" ]; then printf 'GROQ_API_KEY=%s\n' "${GROQ_API_KEY}" >> .env; fi
             if [ -n "${PEXELS_API_KEY}" ]; then printf 'PEXELS_API_KEY=%s\n' "${PEXELS_API_KEY}" >> .env; fi
+            if [ -n "${GEMINI_API_KEY}" ]; then printf 'GEMINI_API_KEY=%s\n' "${GEMINI_API_KEY}" >> .env; fi
             if [ -n "${COVER_IMAGE_API_KEY}" ]; then printf 'COVER_IMAGE_API_KEY=%s\n' "${COVER_IMAGE_API_KEY}" >> .env; fi
             if [ -n "${COVER_IMAGE_API_URL}" ]; then printf 'COVER_IMAGE_API_URL=%s\n' "${COVER_IMAGE_API_URL}" >> .env; fi
             # This VM has 1 GB for everything: one Short at a time, a small Node heap
@@ -116,6 +118,7 @@ jobs:
           DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           COVER_IMAGE_API_KEY: ${{ secrets.COVER_IMAGE_API_KEY }}
           COVER_IMAGE_API_URL: ${{ secrets.COVER_IMAGE_API_URL }}
           PRODUCTION_COOKIES: ${{ secrets.PRODUCTION_COOKIES }}
