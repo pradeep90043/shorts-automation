@@ -705,30 +705,45 @@ Use this to write a voiceover script that matches the content arc of the video. 
       }
 
       // Fallback if the LLM forgot the "metadata" wrapper but included the fields at the root
-      if (!data.metadata && (data as any).title && (data as any).description) {
-        data.metadata = {
-          title: (data as any).title,
-          description: (data as any).description,
-          tags: Array.isArray((data as any).tags) ? (data as any).tags : [],
-          hashtags: Array.isArray((data as any).hashtags) ? (data as any).hashtags : [],
-          primaryKeyword: (data as any).primaryKeyword,
-          mood: (data as any).mood,
-          voiceoverScript: (data as any).voiceoverScript,
-          howItWorks: (data as any).howItWorks,
-          diagramWorkflow: (data as any).diagramWorkflow,
-          diagramTitle: (data as any).diagramTitle,
-          coverCategory: (data as any).coverCategory,
-          coverEmoji: (data as any).coverEmoji,
-          coverHeadline: (data as any).coverHeadline,
-        };
+      const normalizeVision = (d: UnifiedVisionResponse): UnifiedVisionResponse => {
+        if (!d.metadata && (d as any).title && (d as any).description) {
+          d.metadata = {
+            title: (d as any).title,
+            description: (d as any).description,
+            tags: Array.isArray((d as any).tags) ? (d as any).tags : [],
+            hashtags: Array.isArray((d as any).hashtags) ? (d as any).hashtags : [],
+            primaryKeyword: (d as any).primaryKeyword,
+            mood: (d as any).mood,
+            voiceoverScript: (d as any).voiceoverScript,
+            howItWorks: (d as any).howItWorks,
+            diagramWorkflow: (d as any).diagramWorkflow,
+            diagramTitle: (d as any).diagramTitle,
+            coverCategory: (d as any).coverCategory,
+            coverEmoji: (d as any).coverEmoji,
+            coverHeadline: (d as any).coverHeadline,
+          };
+        }
+        return d;
+      };
+      const hasMetadata = (d: UnifiedVisionResponse): boolean =>
+        !!(d.metadata && d.metadata.title && d.metadata.description && Array.isArray(d.metadata.tags));
+      data = normalizeVision(data);
+      // Parsed but incomplete (a field cut off or left out): ask again, like a malformed answer, before the weaker text-only route.
+      for (let again = 1; again <= 2 && !hasMetadata(data) && usedProvider === "FreeLLMAPI" && this.freellmapi; again++) {
+        pipelineLogger.warn(`AI JSON is missing metadata fields — asking again (${again}/2)...`, "DirectUploader");
+        try {
+          raw = await this.freellmapi.generateVision(prompt, base64s, mimeTypes);
+          const d2 = normalizeVision(parseAiJson<UnifiedVisionResponse>(raw));
+          if (hasMetadata(d2)) {
+            data = d2;
+            pipelineLogger.info(`Complete vision JSON on the re-ask (${again}/2).`, "DirectUploader");
+          }
+        } catch (againErr: any) {
+          pipelineLogger.warn(`Re-ask ${again}/2 failed: ${againErr.message || againErr}`, "DirectUploader");
+        }
       }
 
-      if (
-        !data.metadata ||
-        !data.metadata.title ||
-        !data.metadata.description ||
-        !Array.isArray(data.metadata.tags)
-      ) {
+      if (!hasMetadata(data)) {
         pipelineLogger.error(`Invalid AI JSON received. Missing required metadata fields. Raw response: ${raw}`, new Error("AI JSON missing metadata fields"), "DirectUploader");
         throw new Error("AI JSON missing metadata fields");
       }
