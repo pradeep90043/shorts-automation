@@ -860,7 +860,7 @@ export async function directBeats(
       valid.forEach((sc, pos) => { if (pos < idxs.length && !byIndex.has(idxs[pos])) byIndex.set(idxs[pos], sc); });
     }
     if (byIndex.size < idxs.length) {
-      pipelineLogger.warn(`Stickman director gave ${byIndex.size}/${idxs.length} usable scenes`, "StickmanPlanner");
+      pipelineLogger.warn(`Stickman director gave ${byIndex.size}/${idxs.length} usable scenes (${raw.length} chars, starts: ${raw.replace(/\s+/g, " ").slice(0, 160)} ... ends: ${raw.replace(/\s+/g, " ").slice(-120)})`, "StickmanPlanner");
     }
     return byIndex.size ? { meta: parsed ?? {}, byIndex } : null;
   } catch (err: any) {
