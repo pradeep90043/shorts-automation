@@ -10,6 +10,16 @@ assert.strictEqual(
   devanagariFromAnswer('आरबीआई ब्याज दर बढ़ा सकता है।\nWrite English words in Devanagari too (e.g. "video" -> "वीडियो"); keep numbers and punctuation.'),
   "आरबीआई ब्याज दर बढ़ा सकता है।",
 );
+// the real rewrite and the echo on the SAME line (a ratio filter on whole lines dropped this and muted a Short)
+assert.strictEqual(
+  devanagariFromAnswer('आरबीआई ब्याज दर बढ़ा सकता है। Keep the meaning and every word; write English words in Devanagari too (e.g. "video" -> "वीडियो"); keep numbers and punctuation.'),
+  "आरबीआई ब्याज दर बढ़ा सकता है।",
+);
+// a sentence repeated with its last copy cut off is kept once
+assert.strictEqual(devanagariFromAnswer("ध्यान रखिए, सभी बैंक्स तुरंत रेट नहीं बढ़ाते. ध्यान रखिए, सभी बैंक्स तुरंत रेट नहीं बढ़"), "ध्यान रखिए, सभी बैंक्स तुरंत रेट नहीं बढ़ाते.");
+// a short source line may legitimately be one or two words
+assert.strictEqual(devanagariFromAnswer("ठीक है", 1), "ठीक है");
+assert.strictEqual(devanagariFromAnswer("Hindi: 25 बेसिस पॉइंट की बढ़ोतरी हो सकती है"), "25 बेसिस पॉइंट की बढ़ोतरी हो सकती है");
 
 
 // a long claim is split into sentence-sized pieces for parallel runners, and nothing is lost or reordered

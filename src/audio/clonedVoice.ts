@@ -85,12 +85,23 @@ export function isMostlyDevanagari(t: string): boolean {
  * One line to Devanagari, as plain text. Free models truncate a long JSON answer (Devanagari costs many tokens) or answer in
  * chain-of-thought prose; a short one-line answer survives both: only the lines that contain Devanagari are kept.
  */
-export function devanagariFromAnswer(raw: string): string {
-  return raw
-    .split(/\n+/)
-    .map((l) => l.replace(/^[\s"'`*\-•\d.)]+|["'`\s]+$/g, "").trim())
-    .filter((l) => isMostlyDevanagari(l)) // an echoed instruction ("... e.g. "video" -> "वीडियो"") has one Devanagari word but is English prose
-    .filter((l, i, all) => all.indexOf(l) === i) // a model stuck in a loop repeats the same line
+export function devanagariFromAnswer(raw: string, minWords = 3): string {
+  // The Hindi is taken as SPANS of Devanagari text (letters, spaces, digits, punctuation): English around it is dropped, and so is an
+  // echoed instruction that quotes one Hindi word ('... e.g. "video" -> "वीडियो"') because a span that short is not a sentence.
+  // A model often puts the real rewrite and the echo on the SAME line, so whole lines cannot be judged.
+  const spans = raw.match(/[ऀ-ॿ\d₹][ऀ-ॿ \t\d,.।!?'"%₹:;()\-–—]*/g) ?? []; // a line break ends a span: repeated lines then collapse
+  return spans
+    .map((s) => s.replace(/^[\s"'`*\-•]+|["'`\s]+$/g, "").replace(/^\d+[.)]\s+/, "").trim()) // quotes/bullets/"1." numbering, but a figure like "25 बेसिस पॉइंट" stays
+    .filter((s) => s.split(/\s+/).length >= minWords)
+    .filter((s, i, all) => all.indexOf(s) === i) // a model stuck in a loop repeats the same sentence
+    .join(" ")
+    .split(/(?<=[।.?!])\s+/)
+    .filter((sent, i, all) => {
+      // a looping answer repeats a sentence, the last copy cut off: keep a sentence only once (also when it is the start of an earlier one)
+      const norm = (x: string) => x.replace(/[\s।.?!,'"]+/g, "");
+      const n = norm(sent);
+      return n.length > 0 && !all.slice(0, i).some((p) => norm(p).startsWith(n));
+    })
     .join(" ")
     .trim();
 }
@@ -120,7 +131,7 @@ async function lineToDevanagari(text: string, ask: (p: string, o?: { maxTokens?:
     try {
       // Devanagari costs ~1-2 tokens per character: 4x the source's characters (min 256) is generous, and a looping model stops there
       // instead of filling the 4,096-token default (8-10,000 characters, ~40 s per attempt) before the clamp.
-      const out = devanagariFromAnswer(await ask(prompt, { maxTokens: Math.max(256, text.length * 4) }));
+      const out = devanagariFromAnswer(await ask(prompt, { maxTokens: Math.max(256, text.length * 4) }), text.trim().split(/\s+/).length < 4 ? 1 : 3);
       if (devanagariTooLong(out, text)) {
         const kept = hasDevanagari(clampRunaway(out, text)) ? clampRunaway(out, text) : "";
         pipelineLogger.warn(`Hindi text for one line, attempt ${attempt}/3: answer is ${out.length} characters for a ${text.length}-character line (runaway)${kept ? `: kept its first ${kept.length}` : ""}`, "ClonedVoice");
