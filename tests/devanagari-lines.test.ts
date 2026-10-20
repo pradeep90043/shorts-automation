@@ -39,12 +39,15 @@ assert.strictEqual(devanagariFromAnswer("only english words here"), "");
   console.log("✓ devanagari lines");
 })();
 
-import { devanagariTooLong, devanagariFromAnswer as dfa } from "../src/audio/clonedVoice";
+import { devanagariTooLong, devanagariFromAnswer as dfa, clampRunaway } from "../src/audio/clonedVoice";
 {
   const src = "Yeh ek chhota sa test hai";
   const runaway = Array.from({ length: 400 }, () => "यह एक छोटा सा टेस्ट है और यह चलता ही रहता है").join("\n");
   assert.ok(devanagariTooLong(dfa(runaway), src) === false || dfa(runaway).length < 400, "a repeated line is collapsed");
   assert.ok(devanagariTooLong("क".repeat(5000), src), "a 5,000-character answer for a short line is rejected");
   assert.ok(!devanagariTooLong("यह एक छोटा सा टेस्ट है", src), "a normal rewrite is kept");
+    const loop = "यह एक छोटा सा टेस्ट है। " + "और फिर वही बात दोहराता रहता है ".repeat(300);
+  const kept = clampRunaway(loop, src);
+  assert.ok(kept.startsWith("यह एक छोटा सा टेस्ट है।") && kept.length <= Math.max(60, src.length * 2) + 1, "the clean beginning of a looping answer is kept, cut at a boundary");
   console.log("✓ runaway Hindi answers are rejected");
 }
