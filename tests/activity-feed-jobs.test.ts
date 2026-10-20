@@ -26,3 +26,20 @@ const feed2 = buildActivityFeed({
 assert.strictEqual(feed2.filter((f) => f.shortcode === "AAA").length, 1);
 assert.strictEqual(feed2.length, 3);
 console.log("✓ activity feed lists every job, once");
+
+import { mergeLiveJobs } from "../src/utils/activityFeed";
+{
+  const profiles = [{ key: "prompt_gag", brandName: "PromptGag" }, { key: "storiyum", brandName: "Storiyum" }];
+  const base = buildActivityFeed({ history: [], queues: {}, profiles, jobsFor: () => ({ byId, byShortcode }) as any });
+  const live = [
+    { id: "gen-1", channel: "Storiyum", startedAt: Date.parse("2026-10-20T05:40:00Z"), state: "running" as const, current: { label: "Waiting for its turn" } },
+    { id: "j1", channel: "Storiyum", startedAt: Date.parse("2026-10-20T04:00:00Z"), state: "review" as const }, // already in the feed as job j1
+  ];
+  const merged = mergeLiveJobs(base, live, profiles);
+  assert.strictEqual(merged.length, base.length + 1, "only the job the feed does not have is added");
+  const w = merged.find((m) => m.jobId === "gen-1")!;
+  assert.strictEqual(w.step, "Waiting for its turn");
+  assert.strictEqual(w.channelKey, "storiyum");
+  assert.strictEqual(w.status, "in_progress");
+  console.log("✓ live jobs (waiting reels) join the activity feed");
+}

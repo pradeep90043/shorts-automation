@@ -1122,8 +1122,8 @@
       tr.style.cursor = 'pointer';
       tr.innerHTML =
         '<td><div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">' +
-          '<a href="' + esc(safeUrl(item.sourceUrl)) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="color:var(--primary);font-weight:600;text-decoration:none;">📷 Source Reel</a>' +
-          '<span class="code-badge" title="Instagram shortcode">' + esc(item.shortcode) + '</span>' +
+          (item.sourceUrl ? '<a href="' + esc(safeUrl(item.sourceUrl)) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="color:var(--primary);font-weight:600;text-decoration:none;">📷 Source Reel</a>' : '<span style="color:#fff;font-weight:600;">Reel in progress</span>') +
+          '<span class="code-badge" title="Instagram shortcode / job id">' + esc(item.shortcode) + '</span>' +
           (creator ? '<span style="color:var(--text-muted);font-size:11px;">' + creator + '</span>' : '') +
         '</div>' +
         (item.title ? '<div style="color:#fff;font-size:12px;font-weight:600;margin-top:3px;">' + esc(item.title) + '</div>' : '') +

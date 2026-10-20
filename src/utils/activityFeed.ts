@@ -293,3 +293,72 @@ export function buildActivityFeed(input: FeedInput): ActivityItem[] {
   items.sort((a, b) => new Date(b.activityAt || 0).getTime() - new Date(a.activityAt || 0).getTime());
   return items.slice(0, input.limit ?? 50);
 }
+
+/** The slice of a live job (src/utils/jobProgress.ts) the activity feed needs. */
+export interface LiveJobLike {
+  id: string;
+  channel: string;
+  startedAt: number;
+  endedAt?: number;
+  state: "running" | "review" | "done" | "failed";
+  lastError?: string;
+  current?: { label: string };
+}
+
+const norm = (v: string): string => v.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/**
+ * A reel waiting for its turn (or just injected) has no job record yet, so the feed built from the job files cannot show it. The
+ * live tracker knows every reel of this process from the moment it is injected: add the ones the feed does not already have,
+ * so "Recent Processing Activity" lists everything the session is working on, queued ones included.
+ */
+export function mergeLiveJobs(
+  feed: ActivityItem[],
+  live: LiveJobLike[],
+  profiles: { key: string; brandName: string; isDefault?: boolean }[],
+  limit = 50,
+): ActivityItem[] {
+  const known = new Set(feed.map((f) => f.jobId).filter(Boolean));
+  const out = [...feed];
+  for (const j of live) {
+    if (known.has(j.id)) continue;
+    const prof = profiles.find((p) => norm(p.brandName) === norm(j.channel) || norm(p.key) === norm(j.channel));
+    const status: ActivityStatus = j.state === "failed" ? "failed" : j.state === "review" || j.state === "done" ? "in_review" : "in_progress";
+    const started = new Date(j.startedAt).toISOString();
+    const updated = new Date(j.endedAt ?? Date.now()).toISOString();
+    out.push({
+      shortcode: j.id,
+      profileKey: prof ? (prof.isDefault ? "default" : prof.key.toLowerCase()) : norm(j.channel),
+      channelKey: prof ? prof.key.toLowerCase() : norm(j.channel),
+      brandName: prof?.brandName || j.channel,
+      sourceUrl: "",
+      creator: "",
+      status,
+      statusLabel: STATUS_LABEL[status],
+      step: j.current?.label || (status === "in_review" ? "Ready for your review" : ""),
+      jobId: j.id,
+      pickedAt: started,
+      scheduledAt: null,
+      startedAt: started,
+      updatedAt: updated,
+      publishedAt: null,
+      durationSec: j.endedAt ? Math.max(0, Math.round((j.endedAt - j.startedAt) / 1000)) : null,
+      activityAt: updated,
+      youtubeUrl: "",
+      instagramUrl: "",
+      facebookUrl: "",
+      title: "",
+      description: "",
+      hashtags: [],
+      mood: "",
+      music: "",
+      hasVoiceover: null,
+      hasOriginalAudio: null,
+      transcriptWords: null,
+      audioCopyright: "",
+      failedReason: status === "failed" ? j.lastError || "No reason recorded" : "",
+    });
+  }
+  out.sort((a, b) => new Date(b.activityAt || 0).getTime() - new Date(a.activityAt || 0).getTime());
+  return out.slice(0, limit);
+}

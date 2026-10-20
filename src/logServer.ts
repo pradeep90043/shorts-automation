@@ -31,7 +31,7 @@ import { buildImportPrompts, buildPlanOnlyPrompt, checkImportedPlan, checkPlanOn
 import { cancelStickmanJob, continueStickmanJob, getStickmanJob, getStickmanJobForPoll, listStickmanJobs, markRemotePublic, resetPublish, restartStickmanJob, setRunnerPublishProvider, setRunnerUploadedHook, startPublish, startStickmanJob } from "./my-video/stickmanJobs";
 import { handleRunnerPublish, recordCloudProgress, resolveMyVideoDir } from "./my-video/myVideoService";
 import { pipelineLogger } from "./utils/logger";
-import { buildActivityFeed, loadJobSummaries, jobsFileFor } from "./utils/activityFeed";
+import { buildActivityFeed, mergeLiveJobs, loadJobSummaries, jobsFileFor } from "./utils/activityFeed";
 import { dmStore, dmKnowledgeBase, inboundDmManager, outboundDmManager, aiDmBrain, getPersona } from "./instagram/dm";
 
 function escapeHtml(s: string): string {
@@ -415,12 +415,14 @@ function buildRecentActivity(reelHistory: any[], watchStates: any[]) {
     const logDir = config.paths.logDir || path.resolve(__dirname, "../logs");
     const queues: Record<string, any[]> = {};
     for (const w of watchStates) queues[String(w.profile_key).toLowerCase()] = Array.isArray(w.queue) ? w.queue : [];
-    return buildActivityFeed({
+    const profiles = config.profiles.map((p) => ({ key: p.key || p.brandName, brandName: p.brandName, isDefault: p.isDefault }));
+    const feed = buildActivityFeed({
       history: reelHistory,
       queues,
-      profiles: config.profiles.map((p) => ({ key: p.key || p.brandName, brandName: p.brandName, isDefault: p.isDefault })),
+      profiles,
       jobsFor: (p) => loadJobSummaries(jobsFileFor(logDir, p)),
     });
+    return mergeLiveJobs(feed, jobProgress().snapshot(), profiles);
   } catch (err) {
     pipelineLogger.warn(`Activity feed build failed: ${err instanceof Error ? err.message : err}`, "LogServer");
     return [];
