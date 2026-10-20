@@ -126,6 +126,15 @@ export class FreeLlmApiClient {
       } catch { /* fall through to the normal routing */ }
     }
 
+    // VISION_MODEL_PIN: the same idea for images: the router sometimes sends a vision request to a slow or hung provider (50 s, then a retry).
+    const visionPin = process.env.VISION_MODEL_PIN;
+    if (isVision && !modelOverride && visionPin) {
+      try {
+        const pinned = await this.executeChatRequest(this.baseUrl, this.apiKey, visionPin, messages, Math.min(timeoutMs, 30_000), maxTokens);
+        if (pinned && pinned.trim()) return pinned;
+      } catch { /* fall through to the normal routing */ }
+    }
+
     try {
       return await this.executeChatRequest(this.baseUrl, this.apiKey, primaryModel, messages, timeoutMs, maxTokens);
     } catch (primaryErr: any) {
