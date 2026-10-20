@@ -59,8 +59,21 @@ export interface StoredChannelConfig {
 
 let tableInitialized = false;
 
+/**
+ * Four channel stores start at once against a FRESH database (every dev session) and each runs CREATE TABLE IF NOT EXISTS: Postgres
+ * answers one of them with "duplicate key value violates unique constraint pg_type_typname_nsp_index" (23505). The table exists by then;
+ * run once more so the seeding still happens, instead of leaving that store without it.
+ */
 export async function initChannelConfigsTable(): Promise<void> {
-  if (tableInitialized) return;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (await initChannelConfigsTableOnce(attempt < 2)) return;
+    await new Promise((r) => setTimeout(r, 400 + attempt * 400));
+  }
+}
+
+/** true = done (or failed for another reason); false = lost the CREATE race, try again */
+async function initChannelConfigsTableOnce(retryOnRace: boolean): Promise<boolean> {
+  if (tableInitialized) return true;
   try {
     const pool = await getPool();
     await pool.query(`
@@ -164,8 +177,11 @@ export async function initChannelConfigsTable(): Promise<void> {
         });
       }
     }
+    return true;
   } catch (err) {
+    if (retryOnRace && (err as any)?.code === "23505") return false;
     pipelineLogger.warn(`Failed to initialize channel_configs table: ${err instanceof Error ? err.message : err}`, "ChannelStore");
+    return true;
   }
 }
 
