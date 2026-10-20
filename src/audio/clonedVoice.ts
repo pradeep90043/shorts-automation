@@ -85,14 +85,33 @@ export function isMostlyDevanagari(t: string): boolean {
  * One line to Devanagari, as plain text. Free models truncate a long JSON answer (Devanagari costs many tokens) or answer in
  * chain-of-thought prose; a short one-line answer survives both: only the lines that contain Devanagari are kept.
  */
+/** The answer's Devanagari: judged sentence by sentence first, and when that finds nothing the original rule (any line that has Devanagari) minus lines quoting the instruction. */
 export function devanagariFromAnswer(raw: string, minWords = 3): string {
-  // The Hindi is taken as SPANS of Devanagari text (letters, spaces, digits, punctuation): English around it is dropped, and so is an
-  // echoed instruction that quotes one Hindi word ('... e.g. "video" -> "वीडियो"') because a span that short is not a sentence.
-  // A model often puts the real rewrite and the echo on the SAME line, so whole lines cannot be judged.
-  const spans = raw.match(/[ऀ-ॿ\d₹][ऀ-ॿ \t\d,.।!?'"%₹:;()\-–—]*/g) ?? []; // a line break ends a span: repeated lines then collapse
-  return spans
-    .map((s) => s.replace(/^[\s"'`*\-•]+|["'`\s]+$/g, "").replace(/^\d+[.)]\s+/, "").trim()) // quotes/bullets/"1." numbering, but a figure like "25 बेसिस पॉइंट" stays
-    .filter((s) => s.split(/\s+/).length >= minWords)
+  const strict = strictDevanagari(raw, minWords);
+  if (strict) return strict;
+  return raw
+    .split(/\n+/)
+    .map((l) => l.replace(/^[\s"'`*\-•\d.)]+|["'`\s]+$/g, "").trim())
+    .filter((l) => hasDevanagari(l) && !/->|e\.g\.|Devanagari|Keep the meaning|text-to-speech|Return ONLY/i.test(l)) // never the instruction itself
+    .filter((l, i, all) => all.indexOf(l) === i)
+    .join(" ")
+    .trim();
+}
+
+function strictDevanagari(raw: string, minWords: number): string {
+  // Judged SENTENCE by sentence, not line by line: a model often puts the real rewrite and an echoed instruction on the same line, and the
+  // Hindi may carry Latin acronyms ("EMI", "RBI"). A sentence is kept when most of its letters are Devanagari: that keeps Hindi with an
+  // acronym and drops English prose, an echoed instruction ('... e.g. "video" -> "वीडियो"') and chain-of-thought.
+  const sentences = raw.split(/\n+/).flatMap((line) => line.split(/(?<=[।.?!;])\s+/));
+  return sentences
+    .map((s) =>
+      s
+        .replace(/^[\s"'`*\-•]+|["'`\s]+$/g, "")
+        .replace(/^\d+[.)]\s+/, "") // "1." numbering, but a figure like "25 बेसिस पॉइंट" stays
+        .replace(/^[A-Za-z][A-Za-z\s:,'"()\-]*?(?=[ऀ-ॿ\d₹])/, "") // a Latin preface in the same sentence ("Hindi: ...", "Here it is: ...")
+        .trim(),
+    )
+    .filter((s) => isMostlyDevanagari(s) && s.split(/\s+/).length >= minWords)
     .filter((s, i, all) => all.indexOf(s) === i) // a model stuck in a loop repeats the same sentence
     .join(" ")
     .split(/(?<=[।.?!])\s+/)
@@ -131,7 +150,9 @@ async function lineToDevanagari(text: string, ask: (p: string, o?: { maxTokens?:
     try {
       // Devanagari costs ~1-2 tokens per character: 4x the source's characters (min 256) is generous, and a looping model stops there
       // instead of filling the 4,096-token default (8-10,000 characters, ~40 s per attempt) before the clamp.
-      const out = devanagariFromAnswer(await ask(prompt, { maxTokens: Math.max(256, text.length * 4) }), text.trim().split(/\s+/).length < 4 ? 1 : 3);
+      const answer = await ask(prompt, { maxTokens: Math.max(256, text.length * 4) });
+      const out = devanagariFromAnswer(answer, text.trim().split(/\s+/).length < 4 ? 1 : 3);
+      if (!out) pipelineLogger.info(`Hindi text: rejected answer (${answer.length} chars) starts: ${JSON.stringify(answer.slice(0, 140))}`, "ClonedVoice");
       if (devanagariTooLong(out, text)) {
         const kept = hasDevanagari(clampRunaway(out, text)) ? clampRunaway(out, text) : "";
         pipelineLogger.warn(`Hindi text for one line, attempt ${attempt}/3: answer is ${out.length} characters for a ${text.length}-character line (runaway)${kept ? `: kept its first ${kept.length}` : ""}`, "ClonedVoice");
