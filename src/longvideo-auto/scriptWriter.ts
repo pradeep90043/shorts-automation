@@ -79,8 +79,22 @@ export function chapterPrompt(r: ScriptRequest, outline: { heading: string; poin
     `SOURCES:\n${trimTo(r.research, 7000) || "(none)"}`,
     "",
     STYLE_RULES,
-    `Length: about ${words} words. Output ONLY the narration text of this chapter.`,
+    `Length: about ${words} words. Output ONLY the narration text of this chapter, between <<< and >>> (nothing before or after). Do not think out loud.`,
+    "/no_think",
   ].filter(Boolean).join("\n");
+}
+
+/**
+ * The narration inside the LAST <<< >>> block; without markers (a reasoning model "thinking out loud" in English first) only the lines that
+ * are Devanagari prose, so the analysis around the real text is never narrated and a good chapter hidden in it is not lost.
+ */
+export function extractNarration(raw: string): string {
+  const blocks = [...raw.matchAll(/<<<([\s\S]*?)>>>/g)].map((m) => m[1].trim()).filter((b) => isDevanagariHeavy(b));
+  if (blocks.length) return blocks[blocks.length - 1];
+  const open = raw.lastIndexOf("<<<");
+  if (open >= 0 && isDevanagariHeavy(raw.slice(open + 3))) return raw.slice(open + 3).replace(/>>>[\s\S]*$/, "").trim();
+  const lines = raw.split("\n").filter((l) => l.trim().split(/\s+/).length >= 5 && isDevanagariHeavy(l));
+  return lines.length ? lines.join("\n") : raw;
 }
 
 /** Removes what a narrator must not read: markdown, bullets, headings, emojis, "Chapter 3:" labels, quotes around the text. */
@@ -156,7 +170,7 @@ export async function writeLongScript(r: ScriptRequest, ask: Ask): Promise<Scrip
         (attempt >= 1 ? "\nIMPORTANT: your previous answer was not usable. Write the WHOLE chapter in Hindi in Devanagari script, with no English sentences, no preface and no notes." : "");
       let raw = "";
       try { raw = await ask(prompt); } catch (e) { why.push(`attempt ${attempt + 1}: ${e instanceof Error ? e.message.slice(0, 80) : e}`); continue; }
-      const c = cleanNarration(raw);
+      const c = cleanNarration(extractNarration(raw));
       const w = wordsOf(c);
       const need = Math.round(perChapter * 0.3);
       if (c && w >= need && isDevanagariHeavy(c)) text = c;
