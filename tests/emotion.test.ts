@@ -16,6 +16,10 @@ import { classifyEmotions, ruleEmotion, tagEmotions } from "../src/audio/emotion
   const fb = await classifyEmotions(["Wow, unbelievable!"], async () => { throw new Error("down"); });
   assert.deepStrictEqual(fb, ["surprise"]);
 
+  // trailing prose after the array must not break the answer
+  const tail = await classifyEmotions(["Hello", "Beware of this scam."], async () => 'Sure! ["warm","serious"] — note: [none]');
+  assert.deepStrictEqual(tail, ["warm", "serious"]);
+
   process.env.VOICE_EMOTION = "off";
   const lines = [{ name: "a", text: "Wow" }];
   assert.deepStrictEqual(await tagEmotions(lines), lines);

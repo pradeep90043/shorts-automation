@@ -33,6 +33,23 @@ const asEmotion = (v: unknown): Emotion | null => {
   return (EMOTIONS as readonly string[]).includes(s) ? (s as Emotion) : null;
 };
 
+/** The first complete top-level [...] in `text` (strings respected), parsed; null when there is none. Models add prose after the array. */
+export function firstJsonArray(text: string): unknown[] | null {
+  const open = text.indexOf("[");
+  if (open < 0) return null;
+  let depth = 0, inStr = false, esc = false;
+  for (let i = open; i < text.length; i++) {
+    const c = text[i];
+    if (inStr) { if (esc) esc = false; else if (c === "\\") esc = true; else if (c === '"') inStr = false; continue; }
+    if (c === '"') inStr = true;
+    else if (c === "[") depth++;
+    else if (c === "]" && --depth === 0) {
+      try { const v = JSON.parse(text.slice(open, i + 1)); return Array.isArray(v) ? v : null; } catch { return null; }
+    }
+  }
+  return null;
+}
+
 /** One call for the whole script (context matters: a calm line after a shock is still "serious", not "surprise"). */
 export async function classifyEmotions(texts: string[], ask = makeAsk({ timeoutMs: 60_000, hedgeMs: 15_000 })): Promise<Emotion[]> {
   const fallback = texts.map(ruleEmotion);
@@ -45,8 +62,7 @@ ${texts.map((t, i) => `${i + 1}. ${t.slice(0, 300)}`).join("\n")}
 Return ONLY a raw JSON array of exactly ${texts.length} strings, in order, e.g. ["neutral","surprise"].`;
   try {
     const raw = await ask(prompt);
-    const m = /\[[\s\S]*\]/.exec(raw ?? "");
-    const arr = m ? JSON.parse(m[0]) : null;
+    const arr = firstJsonArray(raw ?? "");
     if (!Array.isArray(arr)) return fallback;
     // a missing or unknown entry keeps the rule's answer
     return texts.map((_, i) => asEmotion(arr[i]) ?? fallback[i]);
