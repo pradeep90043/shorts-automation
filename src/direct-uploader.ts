@@ -3904,7 +3904,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
           const basis = [context.metadata?.title, context.metadata?.description, context.transcript?.text, context.metadata?.howItWorks, script].filter(Boolean).join("\n").slice(0, 2000);
           try {
             const raw = await this.freellmapi?.generateText(
-              `Write the narration of a 45-second vertical story video for the channel "${this.profile.brandName}": about 120 words in ${this.voiceoverPromptLanguage}. ` +
+              `Write the narration of a 45-second vertical story video for the channel "${this.profile.brandName}": about 120 words in Hindi written in Devanagari script (English brand words may stay in Latin letters, but every sentence is Hindi). ` +
                 `A hook in the first sentence, then the story in short spoken sentences, and a closing line that makes the viewer follow. No headings, no emojis, no stage directions. ` +
                 `Base it only on this material:\n${basis}\n\nOutput only the narration, between <<< and >>>.\n/no_think`,
               undefined, 2500,

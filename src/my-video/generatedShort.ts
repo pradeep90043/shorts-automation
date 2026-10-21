@@ -12,8 +12,18 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function devanagariScript(script: string): Promise<string> {
   if (/[ऀ-ॿ]/.test(script) && !/[A-Za-z]{4,}\s+[A-Za-z]{3,}/.test(script)) return script;
   const sentences = script.split(/(?<=[।.!?])\s+/).map((s) => s.trim()).filter(Boolean);
-  const out = await toDevanagari(sentences.map((text, i) => ({ name: `g${i}`, text })));
-  return out ? out.map((l) => l.text).join(" ") : script;
+  const lines = sentences.map((text, i) => ({ name: `g${i}`, text }));
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const out = await toDevanagari(lines);
+    if (out) return out.map((l) => l.text).join(" ");
+  }
+  // all-or-nothing failed three times: sentence by sentence, an English sentence that cannot be converted is dropped (the cloned Hindi voice cannot read it)
+  const kept: string[] = [];
+  for (const l of lines) {
+    const one = /[\u0900-\u097F]/.test(l.text) ? [l] : await toDevanagari([l]);
+    if (one) kept.push(one[0].text);
+  }
+  return kept.length ? kept.join(" ") : script;
 }
 
 export interface GeneratedShortInput {
