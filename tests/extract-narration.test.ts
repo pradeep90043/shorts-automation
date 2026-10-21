@@ -7,4 +7,6 @@ assert.strictEqual(extractNarration(`Here's a thinking process: 1. Analyze the r
 assert.strictEqual(extractNarration(`Here's a thinking process:\n1. Analyze the Request: Topic: Chapter\n2. Draft the text.\n${deva}\nNote: check length.`), deva);
 assert.strictEqual(extractNarration(`<<<${deva}`), deva, "an unclosed block");
 assert.strictEqual(extractNarration("only english"), "only english");
+import { cleanNarration } from "../src/longvideo-auto/scriptWriter";
+assert.ok(!/<<<|>>>/.test(cleanNarration(`<<<${deva}>>> और <<<बाकी`)), "no marker is ever narrated");
 console.log("✓ extractNarration");

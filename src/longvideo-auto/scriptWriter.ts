@@ -101,6 +101,7 @@ export function extractNarration(raw: string): string {
 export function cleanNarration(raw: string): string {
   return raw
     .replace(/```[\s\S]*?```/g, " ")
+    .replace(/<<<|>>>/g, " ")
     .replace(/^\s*#{1,6}\s.*$/gm, " ")
     .replace(/^\s*(chapter|अध्याय|भाग)\s*\d+\s*[:.\-–]?.*$/gim, " ")
     .replace(/^\s*[-*•]\s+/gm, "")
