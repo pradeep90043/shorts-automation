@@ -79,7 +79,7 @@ export class FreeLlmApiClient {
       if (json.choices?.[0]?.finish_reason === "length") {
         console.warn(`[FreeLLMAPI] the answer was cut off by the token limit (${json.model ?? model})`);
       }
-      if (process.env.AI_LOG_MODEL !== "off") console.log(`[FreeLLMAPI] ${model} answered as ${json.model ?? "?"}`);
+      if (process.env.AI_LOG_MODEL !== "off" && json.model && json.model !== model) pipelineLogger.info(`asked ${model}, answered by ${json.model}`, 'AI');
       return json.choices?.[0]?.message?.content ?? '';
     } catch (err: any) {
       if (err.name === "AbortError") {
@@ -124,7 +124,7 @@ export class FreeLlmApiClient {
       try {
         const ans = await this.executeChatRequest(this.baseUrl, this.apiKey, modelOverride, messages, Math.min(timeoutMs, 60_000), maxTokens);
         if (ans && ans.trim()) return ans;
-      } catch { /* the chosen model is down or rate-limited: normal routing below */ }
+      } catch (e: any) { pipelineLogger.warn(`${modelOverride} not usable (${String(e?.message ?? e).replace(/\s+/g, " ").slice(0, 160)}): normal routing`, 'AI'); }
       return this.generateChatNow(messages, isVision, timeoutOverrideMs, maxTokens, undefined);
     }
     if (!isVision && !modelOverride && pin) {
