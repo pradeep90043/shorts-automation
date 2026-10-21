@@ -8,7 +8,14 @@ import { askLlm, cleanScript, splitScriptIntoBeats, type StickmanPlan } from "./
  * staging; whatever it leaves out or gets wrong is filled by rules, so a story always has a plan.
  * The enumerations mirror my-video/src/stickman/story/cast.ts.
  */
-export const STORY_BGS = ["village", "forest", "home", "room_night", "school", "street", "market", "palace", "temple", "hospital", "river", "road", "office", "farm", "mountain", "beach"];
+export const STORY_BGS = ["village", "forest", "home", "room_night", "school", "street", "market", "palace", "temple", "hospital", "river", "road", "office", "farm", "mountain", "beach", "bank", "stock", "newsroom", "govt", "studio"];
+export type Look = "story" | "finance" | "news";
+/** places that make sense for each niche (the AI is only offered these) */
+const LOOK_BGS: Record<Look, string[]> = {
+  story: ["village", "forest", "home", "room_night", "school", "street", "market", "palace", "temple", "hospital", "river", "road", "office", "farm", "mountain", "beach"],
+  finance: ["bank", "stock", "office", "home", "market", "street", "village", "farm", "road"],
+  news: ["newsroom", "govt", "street", "studio", "hospital", "school", "market", "road", "river", "village"],
+};
 const TIMES = ["day", "dusk", "night"];
 const POSES = ["stand", "talk", "point", "wave", "sad", "happy", "angry", "scared", "walk", "think", "bow"];
 const MOODS = ["neutral", "happy", "sad", "angry", "scared", "surprised", "laugh", "worried"];
@@ -27,6 +34,9 @@ const hex = (v: unknown, fallback: string): string => (typeof v === "string" && 
 
 /** Background by what the beat talks about (Hindi and English words); the previous background is kept when nothing matches. */
 const BG_WORDS: [string, RegExp][] = [
+  ["stock", /शेयर|सेंसेक्स|निफ्टी|स्टॉक|म्यूचुअल|एसआईपी|sensex|nifty|stock|mutual fund|sip/i],
+  ["bank", /बैंक|आरबीआई|ईएमआई|लोन|ब्याज|रेपो|खाता|bank|rbi|emi|loan|interest|repo/i],
+  ["govt", /संसद|सरकार|मंत्री|प्रधानमंत्री|चुनाव|नीति|कानून|parliament|government|minister|election/i],
   ["school", /स्कूल|कक्षा|टीचर|शिक्षक|परीक्षा|school|class|teacher|exam/i],
   ["hospital", /अस्पताल|डॉक्टर|बीमार|दवा|hospital|doctor|sick/i],
   ["market", /बाज़ार|बाजार|दुकान|मंडी|खरीद|market|shop/i],
@@ -53,14 +63,22 @@ const MOOD_WORDS: [string, RegExp][] = [
 const firstMatch = (list: [string, RegExp][], text: string): string | undefined => list.find(([, re]) => re.test(text))?.[0];
 
 /** A cast when the AI gave none: two people who look different from each other (and from the CodeOrCap stickman). */
-function fallbackCast(): StoryMember[] {
+function fallbackCast(look: Look = "story"): StoryMember[] {
+  if (look === "news") return [
+    { id: "anchor", name: "", age: "adult", skin: SKINS[1], hair: "side", hairColor: "#1B1B1B", outfit: "suit", color: "#1F3A5F", glasses: true },
+    { id: "reporter", name: "", age: "adult", skin: SKINS[2], hair: "ponytail", hairColor: "#2B1A12", outfit: "dress", color: "#C0392B" },
+  ];
+  if (look === "finance") return [
+    { id: "advisor", name: "सलाहकार", age: "adult", skin: SKINS[2], hair: "short", hairColor: "#1B1B1B", outfit: "suit", color: "#0B6E4F", glasses: true },
+    { id: "customer", name: "", age: "adult", skin: SKINS[3], hair: "short", hairColor: "#1B1B1B", outfit: "kurta", color: "#F39C12" },
+  ];
   return [
     { id: "hero", name: "", age: "adult", skin: SKINS[2], hair: "short", hairColor: "#1B1B1B", outfit: "shirt", color: COLORS[0], color2: "#2D3436" },
     { id: "friend", name: "", age: "adult", skin: SKINS[1], hair: "long", hairColor: "#2B1A12", outfit: "kurta", color: COLORS[1], color2: "#2D3436", bindi: true },
   ];
 }
 
-export function sanitizeCast(raw: unknown): StoryMember[] {
+export function sanitizeCast(raw: unknown, look: Look = "story"): StoryMember[] {
   const list = Array.isArray(raw) ? raw : [];
   const seen = new Set<string>();
   const out: StoryMember[] = [];
@@ -75,18 +93,21 @@ export function sanitizeCast(raw: unknown): StoryMember[] {
       color2: hex(r?.color2, outfit === "saree" ? "#F1C40F" : "#2D3436"), glasses: !!r?.glasses, beard: !!r?.beard, bindi: !!r?.bindi,
     });
   });
-  return out.length ? out : fallbackCast();
+  return out.length ? out : fallbackCast(look);
 }
 
 export interface Staged {
+  look: Look; headline?: string; stat?: { label: string; value: string }; place?: string;
   bg: string; time: string;
   chars: { id: string; x: number; pose: string; mood: string; flip: boolean; scale: number; delay: number; speaking: boolean }[];
 }
 
 /** One beat's scene from what the AI said (or nothing): everything is clamped to what my-video can draw. */
-export function sanitizeStaging(raw: any, text: string, cast: StoryMember[], prev: Staged | undefined, index: number): Staged {
+export function sanitizeStaging(raw: any, text: string, cast: StoryMember[], prev: Staged | undefined, index: number, look: Look = "story"): Staged {
   const ids = new Set(cast.map((c) => c.id));
-  const bg = pick(STORY_BGS, raw?.bg, firstMatch(BG_WORDS, text) ?? prev?.bg ?? "village");
+  const allowed = LOOK_BGS[look];
+  const byWords = firstMatch(BG_WORDS, text);
+  const bg = pick(allowed, raw?.bg, byWords && allowed.includes(byWords) ? byWords : prev?.bg ?? allowed[0]);
   const time = pick(TIMES, raw?.time, firstMatch(TIME_WORDS, text) ?? prev?.time ?? "day");
   let chars = (Array.isArray(raw?.chars) ? raw.chars : []).filter((c: any) => ids.has(c?.id)).slice(0, 4);
   if (!chars.length) {
@@ -107,25 +128,39 @@ export function sanitizeStaging(raw: any, text: string, cast: StoryMember[], pre
     speaking: !!c.speaking,
   }));
   if (!staged.some((c: { speaking: boolean }) => c.speaking)) staged[0].speaking = true;
-  return { bg, time, chars: staged };
+  // niche frame: a headline for news / finance, a big figure for finance, a place for news
+  const clean = (v: unknown, max: number): string | undefined => (typeof v === "string" && v.trim() ? v.trim().slice(0, max) : undefined);
+  const words = text.replace(/\s+/g, " ").trim().split(" ");
+  const headline = look === "story" ? undefined : clean(raw?.headline, 70) ?? words.slice(0, 7).join(" ");
+  const figure = text.match(/[₹$]\s?[\d,.]+(?:\s?(?:करोड़|लाख|हज़ार|अरब))?|[\d,.]+\s?(?:%|प्रतिशत|अंक|रुपये|रुपए)/);
+  const stat = look === "finance"
+    ? (raw?.stat && clean(raw.stat.value, 14) && clean(raw.stat.label, 30) ? { label: clean(raw.stat.label, 30)!, value: clean(raw.stat.value, 14)! } : figure ? { label: "आँकड़ा", value: figure[0].replace(/\s?प्रतिशत/, "%").trim().slice(0, 14) } : undefined)
+    : undefined;
+  const place = look === "news" ? clean(raw?.place, 24) ?? prev?.place : undefined;
+  return { look, headline, stat, place, bg, time, chars: staged };
 }
 
 const BATCH = 14;
-const castPrompt = (beats: string[], title: string): string =>
-  `You are the storyboard artist of a Hindi story video "${title}". Read the narration beats and design the CAST and the staging of every beat.\n` +
+const LOOK_BRIEF: Record<Look, string> = {
+  story: "a Hindi story video",
+  finance: "a Hindi personal-finance explainer (money, loans, markets). The cast is people in a money situation: an adviser (suit) and an ordinary customer (kurta, saree, shirt). Each scene also gets a short \"headline\" (at most 7 Hindi words) and, when the beat names a number, a \"stat\":{\"label\":\"2-3 words\",\"value\":\"5.50%\"}",
+  news: "a Hindi news video. The cast is an anchor (suit), a reporter and the people in the news (officials, citizens). Each scene also gets a short \"headline\" (at most 7 Hindi words, like a news ticker) and a \"place\" (city or location in Hindi, when known)",
+};
+const castPrompt = (beats: string[], title: string, look: Look): string =>
+  `You are the storyboard artist of ${LOOK_BRIEF[look]} "${title}". Read the narration beats and design the CAST and the staging of every beat.\n` +
   `Return ONLY raw JSON: {"cast":[{"id":"short_latin_id","name":"Hindi first name","age":"${AGES.join("|")}","skin":"#hex","hair":"${HAIRS.join("|")}","hairColor":"#hex","outfit":"${OUTFITS.join("|")}","color":"#hex","color2":"#hex","glasses":false,"beard":false,"bindi":false}],` +
-  `"scenes":[{"i":0,"bg":"${STORY_BGS.join("|")}","time":"${TIMES.join("|")}","chars":[{"id":"cast id","x":0-100,"pose":"${POSES.join("|")}","mood":"${MOODS.join("|")}","flip":false,"speaking":true}]}]}\n` +
+  `"scenes":[{"i":0,"bg":"${LOOK_BGS[look].join("|")}","time":"${TIMES.join("|")}","headline":"","place":"","chars":[{"id":"cast id","x":0-100,"pose":"${POSES.join("|")}","mood":"${MOODS.join("|")}","flip":false,"speaking":true}]}]}\n` +
   `Rules: 2 to 4 cast members, each clearly different (age, clothes, colours) and matching the story (a grandfather is an elder with a dhoti or kurta, a mother wears a saree, a student a uniform). ` +
   `One scene per beat, in order. The background must fit WHERE the beat happens and the time of day WHEN; change it when the place changes. ` +
   `Put only the people who are in that beat on stage (1-3), x = where they stand left (10) to right (90), the speaker or main person speaking:true, moods and poses that show the emotion of the beat. ` +
   `Do not think out loud: the first character of your answer is "{".\n/no_think\n\nBeats:\n${beats.map((b, i) => `${i}. ${b}`).join("\n")}`;
-const stagePrompt = (beats: string[], from: number, cast: StoryMember[]): string =>
-  `Stage these beats of a Hindi story. Cast: ${JSON.stringify(cast.map((c) => ({ id: c.id, name: c.name, age: c.age })))}.\n` +
-  `Return ONLY raw JSON: {"scenes":[{"i":${from},"bg":"${STORY_BGS.join("|")}","time":"${TIMES.join("|")}","chars":[{"id":"cast id","x":0-100,"pose":"${POSES.join("|")}","mood":"${MOODS.join("|")}","flip":false,"speaking":true}]}]}\n` +
+const stagePrompt = (beats: string[], from: number, cast: StoryMember[], look: Look): string =>
+  `Stage these beats of ${LOOK_BRIEF[look]}. Cast: ${JSON.stringify(cast.map((c) => ({ id: c.id, name: c.name, age: c.age })))}.\n` +
+  `Return ONLY raw JSON: {"scenes":[{"i":${from},"bg":"${LOOK_BGS[look].join("|")}","time":"${TIMES.join("|")}","headline":"","place":"","chars":[{"id":"cast id","x":0-100,"pose":"${POSES.join("|")}","mood":"${MOODS.join("|")}","flip":false,"speaking":true}]}]}\n` +
   `One scene per beat in order, i counts from ${from}. Background = where the beat happens; only people in the beat are on stage. No thinking out loud; start with "{".\n/no_think\n\n${beats.map((b, k) => `${from + k}. ${b}`).join("\n")}`;
 
 /** The plan of a story video: scenes carry `visual.story`, the cast travels with the plan. */
-export async function planStoryboard(script: string, titleHint?: string): Promise<StickmanPlan & { cast: StoryMember[] }> {
+export async function planStoryboard(script: string, titleHint?: string, look: Look = "story"): Promise<StickmanPlan & { cast: StoryMember[] }> {
   const beats = splitScriptIntoBeats(cleanScript(script));
   if (!beats.length) throw new Error("Script is empty");
   const title = titleHint?.trim() || beats[0].slice(0, 80);
@@ -142,21 +177,21 @@ export async function planStoryboard(script: string, titleHint?: string): Promis
   let aiOk = false;
   try {
     const first = beats.slice(0, BATCH);
-    const parsed: any = parseAiJson(await askLlm(castPrompt(first, title)));
-    cast = sanitizeCast(parsed?.cast);
+    const parsed: any = parseAiJson(await askLlm(castPrompt(first, title, look)));
+    cast = sanitizeCast(parsed?.cast, look);
     take(parsed, 0);
     aiOk = Array.isArray(parsed?.cast) && parsed.cast.length > 0;
   } catch (err: any) {
     pipelineLogger.warn(`Storyboard cast/staging answer unusable (${String(err?.message ?? err).slice(0, 120)}): staging by rules`, "StoryPlanner");
   }
-  if (!cast.length) cast = fallbackCast();
+  if (!cast.length) cast = fallbackCast(look);
   for (let from = BATCH; from < beats.length; from += BATCH) {
-    try { take(parseAiJson(await askLlm(stagePrompt(beats.slice(from, from + BATCH), from, cast))), from); } catch { /* rules below */ }
+    try { take(parseAiJson(await askLlm(stagePrompt(beats.slice(from, from + BATCH), from, cast, look))), from); } catch { /* rules below */ }
   }
 
   let prev: Staged | undefined;
   const scenes = beats.map((text, i) => {
-    const st = sanitizeStaging(raws.get(i), text, cast, prev, i);
+    const st = sanitizeStaging(raws.get(i), text, cast, prev, i, look);
     prev = st;
     return {
       id: `s${String(i + 1).padStart(2, "0")}`,

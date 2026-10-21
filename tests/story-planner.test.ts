@@ -21,6 +21,20 @@ const keep = sanitizeStaging({ bg: "nowhere" }, "और फिर कुछ ह�
 assert.strictEqual(keep.bg, "school", "the previous place stays when nothing says otherwise");
 
 assert.strictEqual(visualStyleFor("storiyum", {}), "story");
+assert.strictEqual(visualStyleFor("prompt_gag", {}), "finance");
+assert.strictEqual(visualStyleFor("infoonspot", {}), "news");
 assert.strictEqual(visualStyleFor("codeorcap", {}), "stickman");
-assert.strictEqual(visualStyleFor("storiyum", { STORY_STYLE_CHANNELS: "off" }), "stickman");
+assert.strictEqual(visualStyleFor("storiyum", { CHANNEL_STYLES: "off" }), "stickman");
+assert.strictEqual(visualStyleFor("codeorcap", { CHANNEL_STYLES: "codeorcap:finance" }), "finance");
+
+// niche frames: finance gets a headline and the figure named in the beat; news keeps its place; backgrounds stay inside the niche
+const fcast = sanitizeCast(undefined, "finance");
+assert.strictEqual(fcast[0].id, "advisor");
+const f = sanitizeStaging(undefined, "रेपो रेट 5.50% हो गई और ईएमआई बढ़ेगी", fcast, undefined, 0, "finance");
+assert.strictEqual(f.bg, "bank");
+assert.strictEqual(f.stat?.value, "5.50%");
+assert.ok(f.headline && f.headline.split(" ").length <= 7);
+const n = sanitizeStaging({ bg: "palace", place: "दिल्ली", headline: "संसद में हंगामा" }, "संसद में हंगामा हुआ", sanitizeCast(undefined, "news"), undefined, 0, "news");
+assert.strictEqual(n.bg, "govt", "a bad background becomes the one the words point to");
+assert.strictEqual(n.place, "दिल्ली");
 console.log("✓ storyboard planner");

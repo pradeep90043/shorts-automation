@@ -282,8 +282,8 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
         ? planFromPlanOnly(job.input.plan, title)
         : imported
           ? await importStickmanPlan(fit.script, job.input.plan, { repair: job.input.repairMissing, titleHint: title, notes })
-          : visualStyleFor(job.input.channelKey) === "story"
-            ? await planStoryboard(fit.script, title)
+          : visualStyleFor(job.input.channelKey) !== "stickman"
+            ? await planStoryboard(fit.script, title, visualStyleFor(job.input.channelKey) as "story" | "finance" | "news")
             : await planStickmanVideo(fit.script, title, notes);
       if (isCancelled(job)) return;
       job.plan = plan;
