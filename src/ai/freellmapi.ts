@@ -40,6 +40,19 @@ export class FreeLlmApiClient {
     }
   }
 
+  private static catalogLogged = false;
+  /** AI_LOG_CATALOG=on: logs the model ids this router accepts, once per process (to pick valid ids for the *_MODEL settings) */
+  private async logCatalogOnce(): Promise<void> {
+    if (FreeLlmApiClient.catalogLogged || process.env.AI_LOG_CATALOG !== "on") return;
+    FreeLlmApiClient.catalogLogged = true;
+    try {
+      const res = await fetch(`${this.baseUrl}/v1/models`, { headers: { Authorization: `Bearer ${this.apiKey}` } });
+      const j = await res.json() as any;
+      const ids = (j?.data ?? []).map((m: any) => m.id).filter(Boolean);
+      pipelineLogger.info(`Router models (${ids.length}): ${ids.join(", ").slice(0, 3500)}`, 'AI');
+    } catch (e: any) { pipelineLogger.warn(`Router model list unavailable: ${e?.message ?? e}`, 'AI'); }
+  }
+
   private async executeChatRequest(
     targetUrl: string,
     apiKey: string,
@@ -48,6 +61,7 @@ export class FreeLlmApiClient {
     timeoutMs: number,
     maxTokens?: number,
   ): Promise<string> {
+    void this.logCatalogOnce();
     const url = `${targetUrl}/v1/chat/completions`;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -122,9 +136,9 @@ export class FreeLlmApiClient {
     const pin = process.env.TEXT_MODEL_PIN;
     if (!isVision && modelOverride) {
       try {
-        const ans = await this.executeChatRequest(this.baseUrl, this.apiKey, modelOverride, messages, Math.min(timeoutMs, 60_000), maxTokens);
+        const ans = await this.executeChatRequest(this.baseUrl, this.apiKey, modelOverride, messages, Math.min(timeoutMs, 60_000), Math.min(maxTokens ?? 4096, Number(process.env.CHOSEN_MODEL_MAX_TOKENS) || 4096));
         if (ans && ans.trim()) return ans;
-      } catch (e: any) { pipelineLogger.warn(`${modelOverride} not usable (${String(e?.message ?? e).replace(/\s+/g, " ").slice(0, 160)}): normal routing`, 'AI'); }
+      } catch (e: any) { pipelineLogger.warn(`${modelOverride} not usable (${String(e?.message ?? e).replace(/\s+/g, " ").slice(0, 700)}): normal routing`, 'AI'); }
       return this.generateChatNow(messages, isVision, timeoutOverrideMs, maxTokens, undefined);
     }
     if (!isVision && !modelOverride && pin) {
