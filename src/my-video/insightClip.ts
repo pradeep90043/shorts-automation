@@ -1,3 +1,4 @@
+import { isGeneratedShortChannel } from "./generatedChannels";
 import { isOffValue } from "../utils/switches";
 import { numbersIn } from "../longvideo-auto/guardrails";
 
@@ -84,7 +85,8 @@ export function insightChannels(env: NodeJS.ProcessEnv = process.env): Set<strin
 
 /** Whether a channel's Short gets the clip: it is on the list AND its outro version is v2 (the existing per-channel switch). */
 export function insightEnabledFor(channelKey: string, outroVersion: string | undefined, env: NodeJS.ProcessEnv = process.env): boolean {
-  return insightChannels(env).has(channelKey.toLowerCase()) && (outroVersion || "v2") === "v2";
+  // a Short made entirely by my-video (generatedShort.ts) has no extra clip: it already is one
+  return insightChannels(env).has(channelKey.toLowerCase()) && (outroVersion || "v2") === "v2" && !isGeneratedShortChannel(channelKey, env);
 }
 
 /**
