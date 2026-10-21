@@ -12,8 +12,8 @@ import { writeLongScript } from "./scriptWriter";
 import { autoLongStatus, runStage } from "./status";
 import type { LongRequest } from "./types";
 
-export const LONG_TARGET_SEC = 600;
-/** the length to make: 10 minutes, or LONG_TARGET_SEC (seconds) for a short test video on a dev session */
+export const LONG_TARGET_SEC = 300;
+/** the length to make: 5 minutes, or LONG_TARGET_SEC (seconds) for a short test video on a dev session */
 const targetSecNow = (): number => Math.min(900, Math.max(60, Number(process.env.LONG_TARGET_SEC) || LONG_TARGET_SEC));
 /** about 165 spoken words per minute: measured on 2- and 5-minute test videos (656 words played for 237 s = 2.77 words/s) */
 export const targetWordsFor = (sec: number): number => Math.round(sec * 2.75);

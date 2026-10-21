@@ -8,7 +8,7 @@ import { LongQueue } from "../src/longvideo-auto/queue";
 import { wordsOf } from "../src/longvideo-auto/guardrails";
 import type { LongCandidate } from "../src/longvideo-auto/types";
 
-assert.strictEqual(targetWordsFor(600), 1650);
+assert.strictEqual(targetWordsFor(300), 825);
 
 const sentence = "यह एक सरल वाक्य है जो विषय को आसान भाषा में समझाता है।";
 const chapter = Array(Math.round(167 / wordsOf(sentence))).fill(sentence).join(" ");
