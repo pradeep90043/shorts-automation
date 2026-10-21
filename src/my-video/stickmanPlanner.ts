@@ -629,10 +629,17 @@ let geminiDownUntil = 0;
 // planning answers are long structured JSON: the router often needs 60-120 s, so give each call longer than the 60 s default
 const PLAN_CALL_TIMEOUT_MS = Number(process.env.PLAN_CALL_TIMEOUT_MS) || 150_000;
 const HEDGE_MS = Number(process.env.PLAN_HEDGE_MS) || 25_000;
+/** DIRECTOR_MODELS (comma list): director calls take turns over models that answer directly, so no single free key hits its rate limit */
+let directorTurn = 0;
+const nextDirectorModel = (): string | undefined => {
+  const list = (process.env.DIRECTOR_MODELS || "").split(",").map((m) => m.trim()).filter(Boolean);
+  return list.length ? list[directorTurn++ % list.length] : undefined;
+};
+
 async function askLlm(prompt: string): Promise<string> {
   const providers: { name: string; ask: () => Promise<string> }[] = [];
   if (config.ai.provider === "freellmapi" || process.env.FREELLMAPI_KEY) {
-    providers.push({ name: "FreeLLMAPI", ask: () => new FreeLlmApiClient().generateText(prompt, PLAN_CALL_TIMEOUT_MS, Number(process.env.DIRECTOR_MAX_TOKENS) || 12000) }); // room for a reasoning model to finish thinking and then answer
+    providers.push({ name: "FreeLLMAPI", ask: () => new FreeLlmApiClient().generateText(prompt, PLAN_CALL_TIMEOUT_MS, Number(process.env.DIRECTOR_MAX_TOKENS) || 12000, nextDirectorModel()) }); // room for a reasoning model to finish thinking and then answer
   }
   if (process.env.GEMINI_API_KEY) {
     providers.push({

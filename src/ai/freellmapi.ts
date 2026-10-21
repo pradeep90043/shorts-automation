@@ -79,6 +79,7 @@ export class FreeLlmApiClient {
       if (json.choices?.[0]?.finish_reason === "length") {
         console.warn(`[FreeLLMAPI] the answer was cut off by the token limit (${json.model ?? model})`);
       }
+      if (process.env.AI_LOG_MODEL !== "off") console.log(`[FreeLLMAPI] ${model} answered as ${json.model ?? "?"}`);
       return json.choices?.[0]?.message?.content ?? '';
     } catch (err: any) {
       if (err.name === "AbortError") {
@@ -119,6 +120,13 @@ export class FreeLlmApiClient {
     // (nvidia/nemotron: "Here's a thinking process: ...") whose answers have no JSON and no clean prose. Any failure or empty answer
     // continues with the normal routing below, so the pin can only help.
     const pin = process.env.TEXT_MODEL_PIN;
+    if (!isVision && modelOverride) {
+      try {
+        const ans = await this.executeChatRequest(this.baseUrl, this.apiKey, modelOverride, messages, Math.min(timeoutMs, 60_000), maxTokens);
+        if (ans && ans.trim()) return ans;
+      } catch { /* the chosen model is down or rate-limited: normal routing below */ }
+      return this.generateChatNow(messages, isVision, timeoutOverrideMs, maxTokens, undefined);
+    }
     if (!isVision && !modelOverride && pin) {
       try {
         const pinned = await this.executeChatRequest(this.baseUrl, this.apiKey, pin, messages, Math.min(timeoutMs, 40_000), maxTokens);
