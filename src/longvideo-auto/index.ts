@@ -13,6 +13,8 @@ import { autoLongStatus, runStage } from "./status";
 import type { LongRequest } from "./types";
 
 export const LONG_TARGET_SEC = 600;
+/** the length to make: 10 minutes, or LONG_TARGET_SEC (seconds) for a short test video on a dev session */
+const targetSecNow = (): number => Math.min(900, Math.max(60, Number(process.env.LONG_TARGET_SEC) || LONG_TARGET_SEC));
 /** about 134 spoken words per minute at the pace the cloned voices read Devanagari (2.4 words/s x 0.93 speech share) */
 export const targetWordsFor = (sec: number): number => Math.round(sec * 2.4 * 0.93);
 
@@ -67,10 +69,11 @@ export async function produceLongVideo(
     return r;
   });
 
-  const targetWords = targetWordsFor(LONG_TARGET_SEC);
+  const targetSec = targetSecNow();
+  const targetWords = targetWordsFor(targetSec);
   const pkg = await runStage(req.id, "script", () =>
     writeLongScript(
-      { channelKey: req.channelKey, brandName: brand, topic: seed.title, seedText: seed.text, research: research.text, targetWords },
+      { channelKey: req.channelKey, brandName: brand, topic: seed.title, seedText: seed.text, research: research.text, targetWords, chapters: Math.min(8, Math.max(2, Math.round(targetSec / 75))) },
       deps.ask,
     ),
   );
@@ -96,7 +99,7 @@ export async function produceLongVideo(
       language: "hi",
       channelKey: req.channelKey,
       orientation: "horizontal",
-      targetSec: LONG_TARGET_SEC,
+      targetSec,
       resolution: 1080,
     });
     deps.queue.update(req.id, { jobId: j.id });

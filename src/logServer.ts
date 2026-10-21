@@ -1794,6 +1794,8 @@ export function startLogServer(): void {
         const body = await parseJsonBody(req);
         const channel = String(body.channel || "").toLowerCase().trim();
         if (!channel) return send(400, { success: false, message: "channel is required" });
+        // dev only: make a short test video (60-900 s) instead of the 10-minute one
+        if (process.env.BOT_ENV === "dev" && Number(body.targetSec) > 0) process.env.LONG_TARGET_SEC = String(Math.round(Number(body.targetSec)));
         const r = await enqueueNow(longQueue(), candidateStore(), channel, {
           publishNow: body.publishNow === true,
           force: body.force === true,
