@@ -2921,6 +2921,20 @@ ${this.theme.analysisRules}`;
           context.aiRecommendedSettings.sticker = true;
         }
       }
+      // Channel policy: every reel except InfoOnSpot is voiceover-only. The source reel's own audio (cartoon/TV/music) is what
+      // triggers YouTube Content ID claims and Shazam cannot see most of it, so it is never kept on these channels.
+      if (!isInfoOnSpot && !isPromptGag) {
+        if (!context.reviewSettings) {
+          context.reviewSettings = { voiceover: true, originalAudio: false, captions: true, cropTopPct: 0, cropBottomPct: 0, sticker: true };
+        } else {
+          context.reviewSettings.voiceover = true;
+          context.reviewSettings.originalAudio = false;
+        }
+        if (context.aiRecommendedSettings) {
+          context.aiRecommendedSettings.voiceover = true;
+          context.aiRecommendedSettings.originalAudio = false;
+        }
+      }
       // If reviewSettings has undefined crop values, inherit them from AI recommendations
       if (context.reviewSettings && context.aiRecommendedSettings) {
         if (context.reviewSettings.cropTopPct === undefined || (context.reviewSettings.cropTopPct as any) === null) {
@@ -3854,6 +3868,8 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     const chatId = context.sourceMeta.chatId;
     const messageId = context.sourceMeta.messageId;
     const settings = context.reviewSettings!;
+    // also holds when the review gate toggled it back on
+    if (this.profile.key.toLowerCase() !== "infoonspot") settings.originalAudio = false;
 
     try {
       this.db.updateJob(id, {
