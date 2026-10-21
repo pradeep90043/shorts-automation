@@ -3896,8 +3896,24 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       const generatedShort = !!context.isVideo && isGeneratedShortChannel(this.profile.key);
       if (generatedShort) {
         this.db.updateJob(id, { currentStep: "Generating the Short with my-video" });
-        const script = (context.metadata?.voiceoverScript || context.metadata?.description || context.metadata?.title || "").trim();
+        let script = (context.metadata?.voiceoverScript || context.metadata?.description || context.metadata?.title || "").trim();
         if (!script) throw new Error("No narration to build the generated Short from");
+        // A Short made from nothing but its narration needs a real one: the reel's own voiceover line can be a sentence or two (26 words
+        // made a 28 s Short). Under ~80 words the model writes the full story from everything known about the reel.
+        if (script.split(/\s+/).length < 80) {
+          const basis = [context.metadata?.title, context.metadata?.description, context.transcript?.text, context.metadata?.howItWorks, script].filter(Boolean).join("\n").slice(0, 2000);
+          try {
+            const raw = await this.freellmapi?.generateText(
+              `Write the narration of a 45-second vertical story video for the channel "${this.profile.brandName}": about 120 words in ${this.voiceoverPromptLanguage}. ` +
+                `A hook in the first sentence, then the story in short spoken sentences, and a closing line that makes the viewer follow. No headings, no emojis, no stage directions. ` +
+                `Base it only on this material:\n${basis}\n\nOutput only the narration, between <<< and >>>.\n/no_think`,
+              undefined, 2500,
+            );
+            const m = [...(raw ?? "").matchAll(/<<<([\s\S]*?)>>>/g)].pop();
+            const written = (m ? m[1] : "").replace(/\s*\n\s*/g, " ").trim();
+            if (written.split(/\s+/).length >= 70 && written.length < 1400) { script = written; pipelineLogger.info(`Generated Short: narration written in full (${written.split(/\s+/).length} words)`, "DirectUploader"); }
+          } catch { /* the short script is used as it is */ }
+        }
         const out = await renderGeneratedShort({
           script, title: context.metadata?.title ?? "", channelKey: this.profile.key.toLowerCase(), language: "hi",
           outPath: finalVideoPath, onProgress: (detail) => this.db.updateJob(id, { currentStep: detail }),

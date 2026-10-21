@@ -63,6 +63,8 @@ export interface StickmanJobInput {
   language?: string;
   resolution?: 720 | 1080;
   channelKey?: string;
+  /** the finished file is only handed back: the runner must not upload it to YouTube itself (a Short is published by its own pipeline) */
+  noRunnerPublish?: boolean;
 }
 
 type StageStatus = "pending" | "running" | "done" | "failed";
@@ -337,7 +339,7 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
         scenes: plan.scenes,
         orientation: orientation ?? "horizontal",
         theme: "dark", // developers prefer a dark screen: code panels and the CodeOrCap brand are built for it
-        runnerPublish: runnerPublishProvider && job.input.channelKey ? () => runnerPublishProvider!(job) : undefined,
+        runnerPublish: runnerPublishProvider && job.input.channelKey && !job.input.noRunnerPublish ? () => runnerPublishProvider!(job) : undefined,
         onRunnerUploaded: runnerUploadedHook ? (videoId: string) => runnerUploadedHook!(job, videoId) : undefined,
         resolution: resolution ?? (orientation === "vertical" ? 1080 : 720),
         rate: job.estimate.rate,
