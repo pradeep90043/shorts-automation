@@ -211,6 +211,15 @@ export async function writeLongScript(r: ScriptRequest, ask: Ask): Promise<Scrip
     sents.pop();
     chapters[idx.i].text = sents.join(" ");
   }
+  // a 5-minute video has only 4 chapters (2 in the middle): when that was not enough, any chapter gives up sentences, the first keeps its
+  // hook and the last keeps its recap and subscribe ask
+  for (let guard = 0; guard < 400 && total() > hi; guard++) {
+    const idx = chapters.map((c, i) => ({ i, w: wordsOf(c.text), n: splitSentences(c.text).length })).filter((x) => x.n > 4).sort((a, b) => b.w - a.w)[0];
+    if (!idx) break;
+    const sents = splitSentences(chapters[idx.i].text);
+    sents.splice(idx.i === chapters.length - 1 ? sents.length - 3 : sents.length - 1, 1);
+    chapters[idx.i].text = sents.join(" ");
+  }
   for (let pass = 0; pass < 2 && total() < lo; pass++) {
     const shortest = chapters.map((c, i) => ({ i, w: wordsOf(c.text) })).filter((x) => x.i > 0 && x.i < chapters.length - 1).sort((a, b) => a.w - b.w)[0];
     if (!shortest) break;

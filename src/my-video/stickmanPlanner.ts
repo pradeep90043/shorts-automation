@@ -779,6 +779,7 @@ export function salvageScenes(raw: string): any[] {
     if (inStr) { if (esc) esc = false; else if (c === "\\") esc = true; else if (c === '"') inStr = false; continue; }
     if (c === '"') inStr = true;
     else if (c === "{") { if (depth++ === 0) begin = i; }
+    else if (c === "}" && depth === 0) continue; // a stray extra "}" after a scene (models write "...}}}]}") must not hide every later scene
     else if (c === "}" && --depth === 0 && begin >= 0) {
       try { out.push(JSON.parse(raw.slice(begin, i + 1))); } catch { out.push(undefined); }
       begin = -1;
