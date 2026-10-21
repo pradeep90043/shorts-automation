@@ -45,7 +45,7 @@ services:
       - HINDI_CONVERT_MODEL=gemini-3.5-flash-lite
       - TEXT_MODEL_PIN=gemini-3.5-flash-lite   # every plain text call tries this first, then the normal routing
       - VISION_MODEL_PIN=gemini-3.5-flash-lite   # the same for image requests (the session self-test answers a vision request with it)
-      - DIRECTOR_MODELS=command-a-03-2025,llama-3.3-70b-versatile,gemini-3.5-flash-lite   # director calls take turns over these (each free key has its own rate limit)
+      - DIRECTOR_MODELS=command-a,llama-3.3-70b,gemini-3.5-flash-lite,gemma-4-31b-it,mistral-small-4   # director calls take turns over these (each free key has its own rate limit)
       - AI_LOG_CATALOG=on
     depends_on:
       - postgres
