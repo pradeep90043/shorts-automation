@@ -632,7 +632,7 @@ const HEDGE_MS = Number(process.env.PLAN_HEDGE_MS) || 25_000;
 async function askLlm(prompt: string): Promise<string> {
   const providers: { name: string; ask: () => Promise<string> }[] = [];
   if (config.ai.provider === "freellmapi" || process.env.FREELLMAPI_KEY) {
-    providers.push({ name: "FreeLLMAPI", ask: () => new FreeLlmApiClient().generateText(prompt, PLAN_CALL_TIMEOUT_MS) });
+    providers.push({ name: "FreeLLMAPI", ask: () => new FreeLlmApiClient().generateText(prompt, PLAN_CALL_TIMEOUT_MS, Number(process.env.DIRECTOR_MAX_TOKENS) || 12000) }); // room for a reasoning model to finish thinking and then answer
   }
   if (process.env.GEMINI_API_KEY) {
     providers.push({
