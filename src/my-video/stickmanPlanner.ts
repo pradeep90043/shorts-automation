@@ -919,7 +919,7 @@ export async function planStickmanVideo(
   const groups = (idxs: number[], size: number) => Array.from({ length: Math.ceil(idxs.length / size) }, (_, g) => idxs.slice(g * size, g * size + size));
   const ROUNDS = [BATCH, 8, 5, 3, 2, 1, 1, 1]; // keeps shrinking: a stubborn beat is asked alone, with its neighbours as context
   const planStart = Date.now();
-  const PLAN_BUDGET_MS = (Number(process.env.PLAN_BUDGET_MIN) || 14) * 60_000; // never sit in "planning" for an hour
+  const PLAN_BUDGET_MS = (Number(process.env.PLAN_BUDGET_MIN) || 9) * 60_000; // never sit in "planning" for an hour
   for (let r = 0; r < ROUNDS.length; r++) {
     if (r > 0 && Date.now() - planStart > PLAN_BUDGET_MS) { pipelineLogger.warn("Stickman director: planning time budget used up", "StickmanPlanner"); break; }
     // early rounds also re-ask bare scenes; the last rounds only chase scenes the AI never directed at all
@@ -933,10 +933,10 @@ export async function planStickmanVideo(
   }
   // The free AI is rate-limited and returns some answers broken: when most of the video IS directed, the beats it left open get a
   // drawing composed from the library by keywords (sceneForSentence) plus the beat's first words on screen, instead of discarding the
-  // whole video after 20+ minutes. When less than 60% is directed the model is really down, and the plan still throws below.
+  // whole video after 20+ minutes. The free AI directed as little as 12 of 73 beats in 14 minutes, so this applies from 5% up; with (almost) nothing directed the model is really down, and the plan throws below.
   if (process.env.DIRECTOR_COMPOSED_FALLBACK !== "off") {
     const directed = all.filter((i) => visuals[i] && !isThin(visuals[i])).length;
-    if (directed >= beats.length * 0.6 && directed < beats.length) {
+    if (directed >= Math.max(1, beats.length * 0.05) && directed < beats.length) {
       let filled = 0;
       for (const i of all) {
         if (visuals[i] && !isThin(visuals[i])) continue;
