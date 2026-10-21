@@ -35,6 +35,8 @@ export interface StickmanVideoSpec {
   description?: string;
   tags?: string[];
   scenes: StickmanScene[];
+  /** storyboard videos: the characters of the story (see storyPlanner.ts) */
+  cast?: unknown[];
   /** "vertical" = 1080x1920 Short/Reel, default 16:9 long-form */
   orientation?: "horizontal" | "vertical";
   theme?: string;
@@ -525,6 +527,7 @@ const doRender = async (spec: StickmanVideoSpec, onProgress?: ProgressCallback):
     title: spec.title,
     description: spec.description,
     tags: spec.tags,
+    ...(spec.cast?.length ? { cast: spec.cast } : {}),
     scenes: spec.scenes,
   };
   fs.writeFileSync(path.join(projectDir, "video.json"), JSON.stringify(videoJson, null, 2));

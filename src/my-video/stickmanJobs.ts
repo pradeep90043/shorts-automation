@@ -1,3 +1,5 @@
+import { planStoryboard } from "./storyPlanner";
+import { visualStyleFor } from "./channelStyle";
 import fs from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
@@ -280,7 +282,9 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
         ? planFromPlanOnly(job.input.plan, title)
         : imported
           ? await importStickmanPlan(fit.script, job.input.plan, { repair: job.input.repairMissing, titleHint: title, notes })
-          : await planStickmanVideo(fit.script, title, notes);
+          : visualStyleFor(job.input.channelKey) === "story"
+            ? await planStoryboard(fit.script, title)
+            : await planStickmanVideo(fit.script, title, notes);
       if (isCancelled(job)) return;
       job.plan = plan;
       Object.assign(job, { title: plan.title, description: plan.description, tags: plan.tags, scenes: plan.scenes.length, aiVisuals: plan.aiVisuals });
@@ -337,6 +341,7 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
         description: plan.description,
         tags: plan.tags,
         scenes: plan.scenes,
+        cast: plan.cast,
         orientation: orientation ?? "horizontal",
         theme: "dark", // developers prefer a dark screen: code panels and the CodeOrCap brand are built for it
         runnerPublish: runnerPublishProvider && job.input.channelKey && !job.input.noRunnerPublish ? () => runnerPublishProvider!(job) : undefined,

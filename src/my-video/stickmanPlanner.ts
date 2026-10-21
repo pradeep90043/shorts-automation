@@ -619,6 +619,8 @@ export interface StickmanPlan {
   scenes: StickmanScene[];
   /** false when the LLM was unavailable and visuals were assigned by rule */
   aiVisuals: boolean;
+  /** storyboard videos: the people of the story (scenes place them with `visual.story`) */
+  cast?: unknown[];
 }
 
 /**
@@ -636,7 +638,7 @@ const nextDirectorModel = (): string | undefined => {
   return list.length ? list[directorTurn++ % list.length] : undefined;
 };
 
-async function askLlm(prompt: string): Promise<string> {
+export async function askLlm(prompt: string): Promise<string> {
   const providers: { name: string; ask: () => Promise<string> }[] = [];
   if (config.ai.provider === "freellmapi" || process.env.FREELLMAPI_KEY) {
     providers.push({ name: "FreeLLMAPI", ask: () => new FreeLlmApiClient().generateText(prompt, PLAN_CALL_TIMEOUT_MS, Number(process.env.DIRECTOR_MAX_TOKENS) || 12000, nextDirectorModel()) }); // room for a reasoning model to finish thinking and then answer
