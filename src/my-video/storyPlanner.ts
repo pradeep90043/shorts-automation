@@ -101,9 +101,13 @@ export interface Staged {
   run?: number;
   /** the place the words/AI asked for (before the forced change of scenery) */
   topic?: string;
+  /** counts the shots: a new place or time starts a new one */
+  shot?: number;
+  /** same place and time as the previous beat: the shot goes on (no transition, nobody re-enters) */
+  cont?: boolean;
   look: Look; headline?: string; stat?: { label: string; value: string }; place?: string;
   bg: string; time: string;
-  chars: { id: string; x: number; pose: string; mood: string; flip: boolean; scale: number; delay: number; speaking: boolean }[];
+  chars: { id: string; x: number; pose: string; mood: string; flip: boolean; scale: number; delay: number; speaking: boolean; fromX?: number }[];
 }
 
 /** One beat's scene from what the AI said (or nothing): everything is clamped to what my-video can draw. */
@@ -125,21 +129,29 @@ export function sanitizeStaging(raw: any, text: string, cast: StoryMember[], pre
     bg = prev.bg;
   }
   const time = pick(TIMES, raw?.time, firstMatch(TIME_WORDS, text) ?? prev?.time ?? "day");
+  const sameShot = !!prev && bg === prev.bg && time === prev.time;
+  const shot = !prev ? 0 : sameShot ? prev.shot ?? 0 : (prev.shot ?? 0) + 1;
   let chars = (Array.isArray(raw?.chars) ? raw.chars : []).filter((c: any) => ids.has(c?.id)).slice(0, 4);
   if (!chars.length) {
-    // rule staging: the previous scene's people stay, otherwise the first one or two of the cast
+    // rule staging. Inside a shot the same people stay exactly where they stand and only the speaker changes (a different layout on every
+    // beat made the picture jump); a new shot picks a new layout.
     const mood = firstMatch(MOOD_WORDS, text) ?? "neutral";
-    const ids = cast.map((c) => c.id);
-    const lead = ids[Math.floor(index / 2) % ids.length];
-    const other = ids[(Math.floor(index / 2) + 1) % ids.length];
-    const posePool = mood === "neutral" ? ["talk", "point", "think", "stand", "talk", "wave"] : mood === "sad" ? ["sad", "stand"] : mood === "scared" ? ["scared", "stand"] : mood === "angry" ? ["angry", "point"] : ["happy", "talk", "wave"];
+    const order = cast.map((c) => c.id);
+    const posePool = mood === "neutral" ? ["talk"] : mood === "sad" ? ["sad"] : mood === "scared" ? ["scared"] : mood === "angry" ? ["angry"] : ["happy", "talk"];
     const pose = posePool[index % posePool.length];
-    // four layouts in rotation: pair, close-up of the speaker, pair mirrored, speaker small beside the other
-    const layout = index % 4;
-    if (ids.length === 1 || layout === 1) chars = [{ id: lead, x: index % 8 < 4 ? 40 : 60, pose, mood, flip: index % 8 >= 4, scale: 1.15, speaking: true }];
-    else if (layout === 2) chars = [{ id: other, x: 28, pose: "stand", mood, flip: false, speaking: false }, { id: lead, x: 70, pose, mood, flip: true, speaking: true }];
-    else if (layout === 3) chars = [{ id: lead, x: 34, pose, mood, flip: false, speaking: true, scale: 1.1 }, { id: other, x: 80, pose: "think", mood: "neutral", flip: true, scale: 0.9 }];
-    else chars = [{ id: lead, x: 30, pose, mood, flip: false, speaking: true }, { id: other, x: 70, pose: "stand", mood, flip: true }];
+    if (sameShot && prev!.chars.length) {
+      const pids = prev!.chars.map((c) => c.id);
+      const lead = pids[Math.floor(index / 2) % pids.length];
+      chars = prev!.chars.map((c) => ({ id: c.id, x: c.x, pose: c.id === lead ? pose : "stand", mood, flip: c.flip, scale: c.scale, speaking: c.id === lead }));
+    } else {
+      const lead = order[shot % order.length];
+      const other = order[(shot + 1) % order.length];
+      const layout = shot % 4;
+      if (order.length === 1 || layout === 1) chars = [{ id: lead, x: shot % 8 < 4 ? 40 : 60, pose, mood, flip: shot % 8 >= 4, scale: 1.15, speaking: true }];
+      else if (layout === 2) chars = [{ id: other, x: 28, pose: "stand", mood, flip: false, speaking: false }, { id: lead, x: 70, pose, mood, flip: true, speaking: true }];
+      else if (layout === 3) chars = [{ id: lead, x: 34, pose, mood, flip: false, speaking: true, scale: 1.1 }, { id: other, x: 80, pose: "stand", mood: "neutral", flip: true, scale: 0.9 }];
+      else chars = [{ id: lead, x: 30, pose, mood, flip: false, speaking: true }, { id: other, x: 70, pose: "stand", mood, flip: true }];
+    }
   }
   const n = chars.length;
   const staged = chars.map((c: any, k: number) => ({
@@ -163,7 +175,7 @@ export function sanitizeStaging(raw: any, text: string, cast: StoryMember[], pre
     ? (raw?.stat && clean(raw.stat.value, 14) && clean(raw.stat.label, 30) ? { label: clean(raw.stat.label, 30)!, value: clean(raw.stat.value, 14)! } : figure ? { label: "आँकड़ा", value: figure[0].replace(/\s?प्रतिशत/, "%").trim().slice(0, 14) } : undefined)
     : undefined;
   const place = look === "news" ? clean(raw?.place, 24) ?? prev?.place : undefined;
-  return { look, headline, stat, place, run, topic: wanted, bg, time, chars: staged };
+  return { look, headline, stat, place, run, topic: wanted, shot, cont: sameShot, bg, time, chars: staged };
 }
 
 const BATCH = 14;
@@ -223,6 +235,8 @@ export async function planStoryboard(script: string, titleHint?: string, look: L
   let prev: Staged | undefined;
   const scenes = beats.map((text, i) => {
     const st = sanitizeStaging(raws.get(i), text, cast, prev, i, look);
+    // a continuing shot: whoever stood in the previous beat walks from there (nobody re-enters, nothing fades)
+    if (st.cont && prev) for (const c of st.chars) c.fromX = prev.chars.find((p) => p.id === c.id)?.x;
     prev = st;
     return {
       id: `s${String(i + 1).padStart(2, "0")}`,

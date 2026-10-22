@@ -52,4 +52,16 @@ assert.strictEqual(n.place, "दिल्ली");
   assert.ok(seen.layout.size >= 4, "layouts vary: " + seen.layout.size);
   assert.ok(seen.headlines > 0 && seen.headlines < 20, "headline strip only on some beats: " + seen.headlines);
 }
+// continuity: inside a shot the same people stay where they stand and only the speaker changes; a new place starts a new shot
+{
+  const c = sanitizeCast(undefined, "story");
+  const a = sanitizeStaging({ bg: "village", time: "day" }, "गाँव में सुबह थी", c, undefined, 0, "story");
+  const b = sanitizeStaging({ bg: "village", time: "day" }, "लोग खेत जा रहे थे", c, a, 1, "story");
+  const d = sanitizeStaging({ bg: "village", time: "day" }, "बच्चे खेल रहे थे", c, b, 2, "story");
+  assert.ok(b.cont && d.cont, "same place and time = the shot goes on");
+  assert.deepStrictEqual(b.chars.map((x) => [x.id, x.x]), a.chars.map((x) => [x.id, x.x]), "nobody moves between beats of a shot");
+  assert.notStrictEqual(b.chars.find((x) => x.speaking)?.id, d.chars.find((x) => x.speaking)?.id, "the speaker alternates");
+  const e = sanitizeStaging({ bg: "school", time: "day" }, "स्कूल में घंटी बजी", c, d, 3, "story");
+  assert.ok(!e.cont && e.shot === d.shot! + 1, "a new place is a new shot");
+}
 console.log("✓ storyboard planner");
