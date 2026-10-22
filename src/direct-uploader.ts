@@ -46,6 +46,8 @@ import { PexelsService } from "./video/pexelsService";
 import { MultiSceneGenerator } from "./video/multiSceneGenerator";
 import { renderShortCloud } from "./renderer/cloudShortRenderer";
 import { isGeneratedShortChannel, renderGeneratedShort } from "./my-video/generatedShort";
+import { cleanNarration, extractNarration } from "./longvideo-auto/scriptWriter";
+import { nextDirectorModel } from "./my-video/stickmanPlanner";
 
 // Metadata format rules (title/description/keywords/analysis) live on the channel
 // profile's ContentTheme (src/config/themes.ts) so every generation path (unified
@@ -3934,10 +3936,10 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
                   `If the material is only a short caption or a meme, make a small story from it with 2 or 3 named characters, a problem, a turn and an ending. ` +
                   `Name every character the first time ("राजू", "माँ", "टीचर"), say who does what ("राजू ने माँ को तोहफ़ा दिया"), mention the objects, animals, weather and places that matter, in short spoken sentences. Every sentence should be something that can be SHOWN. No headings, no emojis, no stage directions. ` +
                   `\n\nMATERIAL:\n${basis}\n\nOutput only the narration, between <<< and >>>.\n/no_think`,
-                undefined, 2500,
+                undefined, 2500, nextDirectorModel(),
               );
-              const m = [...(raw ?? "").matchAll(/<<<([\s\S]*?)>>>/g)].pop();
-              const written = (m ? m[1] : "").replace(/\s*\n\s*/g, " ").trim();
+              // the marked block, or else the Devanagari prose of the answer (a model that forgets the markers still wrote the story)
+              const written = cleanNarration(extractNarration(raw ?? "")).replace(/\s*\n\s*/g, " ").trim();
               const letters = written.replace(/[^\p{L}]/gu, ""), dev = (written.match(/[\u0900-\u097F]/g) || []).length;
               if (written.split(/\s+/).length >= 70 && written.length < 1500 && dev / Math.max(1, letters.length) > 0.5) {
                 script = written;
@@ -3946,6 +3948,14 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
               }
               pipelineLogger.warn(`Generated Short: story attempt ${attempt}/3 unusable (${written.split(/\s+/).length} words, ${Math.round((dev / Math.max(1, letters.length)) * 100)}% Devanagari)`, "DirectUploader");
             } catch (e) { pipelineLogger.warn(`Generated Short: story attempt ${attempt}/3 failed (${String((e as Error)?.message ?? e).slice(0, 100)})`, "DirectUploader"); }
+          }
+        }
+        // The story could not be written: use what the reel itself says (spoken words, caption, description), not the generic AI blurb
+        if (script.split(/\s+/).length < 40) {
+          const own = [context.transcript?.text, context.captionMetadata?.description, context.metadata?.description].map((t) => (t ?? "").replace(/#\S+/g, " ").replace(/\s+/g, " ").trim()).filter((t) => t.split(/\s+/).length >= 6);
+          if (own.length) {
+            script = own.join(" ").split(/\s+/).slice(0, 130).join(" ");
+            pipelineLogger.warn(`Generated Short: no story could be written, the reel's own words are narrated (${script.split(/\s+/).length} words)`, "DirectUploader");
           }
         }
         const out = await renderGeneratedShort({

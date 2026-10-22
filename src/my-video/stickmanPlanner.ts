@@ -633,7 +633,7 @@ const PLAN_CALL_TIMEOUT_MS = Number(process.env.PLAN_CALL_TIMEOUT_MS) || 150_000
 const HEDGE_MS = Number(process.env.PLAN_HEDGE_MS) || 25_000;
 /** DIRECTOR_MODELS (comma list): director calls take turns over models that answer directly, so no single free key hits its rate limit */
 let directorTurn = 0;
-const nextDirectorModel = (): string | undefined => {
+export const nextDirectorModel = (): string | undefined => {
   const list = (process.env.DIRECTOR_MODELS || "").split(",").map((m) => m.trim()).filter(Boolean);
   return list.length ? list[directorTurn++ % list.length] : undefined;
 };
