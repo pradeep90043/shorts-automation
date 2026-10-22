@@ -3916,19 +3916,29 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         if (!script) throw new Error("No narration to build the generated Short from");
         // A Short made from nothing but its narration needs a real one: the reel's own voiceover line can be a sentence or two (26 words
         // made a 28 s Short). Under ~80 words the model writes the full story from everything known about the reel.
-        if (script.split(/\s+/).length < 80) {
+        if (script.split(/\s+/).length < 80 || !/[\u0900-\u097F]/.test(script)) {
           const basis = [context.metadata?.title, context.metadata?.description, context.transcript?.text, context.metadata?.howItWorks, script].filter(Boolean).join("\n").slice(0, 2000);
-          try {
-            const raw = await this.freellmapi?.generateText(
-              `Write the narration of a 45-second vertical story video for the channel "${this.profile.brandName}": about 120 words in Hindi written in Devanagari script (English brand words may stay in Latin letters, but every sentence is Hindi). ` +
-                `A hook in the first sentence, then the story in short spoken sentences, and a closing line that makes the viewer follow. No headings, no emojis, no stage directions. ` +
-                `Base it only on this material:\n${basis}\n\nOutput only the narration, between <<< and >>>.\n/no_think`,
-              undefined, 2500,
-            );
-            const m = [...(raw ?? "").matchAll(/<<<([\s\S]*?)>>>/g)].pop();
-            const written = (m ? m[1] : "").replace(/\s*\n\s*/g, " ").trim();
-            if (written.split(/\s+/).length >= 70 && written.length < 1400) { script = written; pipelineLogger.info(`Generated Short: narration written in full (${written.split(/\s+/).length} words)`, "DirectUploader"); }
-          } catch { /* the short script is used as it is */ }
+          // up to 3 tries: the free models often answer with their "thinking process" or a few words instead of the story
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+              const raw = await this.freellmapi?.generateText(
+                `Write the narration of a 45-second vertical STORY video for the channel "${this.profile.brandName}": about 120 words in Hindi written in Devanagari script (English brand words may stay in Latin letters, but every sentence is Hindi). ` +
+                  `Tell it as a small story with 2 or 3 named characters (a boy, a mother, a teacher, a friend...): where it starts, a problem, a turn, and an ending that makes the viewer feel something and follow the channel. ` +
+                  `Short spoken sentences, say who is speaking ("राजू ने कहा..."), places that change as the story moves. No headings, no emojis, no stage directions. ` +
+                  `Base it only on this material:\n${basis}\n\nOutput only the narration, between <<< and >>>.\n/no_think`,
+                undefined, 2500,
+              );
+              const m = [...(raw ?? "").matchAll(/<<<([\s\S]*?)>>>/g)].pop();
+              const written = (m ? m[1] : "").replace(/\s*\n\s*/g, " ").trim();
+              const letters = written.replace(/[^\p{L}]/gu, ""), dev = (written.match(/[\u0900-\u097F]/g) || []).length;
+              if (written.split(/\s+/).length >= 70 && written.length < 1500 && dev / Math.max(1, letters.length) > 0.5) {
+                script = written;
+                pipelineLogger.info(`Generated Short: narration written in full (${written.split(/\s+/).length} words, attempt ${attempt})`, "DirectUploader");
+                break;
+              }
+              pipelineLogger.warn(`Generated Short: story attempt ${attempt}/3 unusable (${written.split(/\s+/).length} words, ${Math.round((dev / Math.max(1, letters.length)) * 100)}% Devanagari)`, "DirectUploader");
+            } catch (e) { pipelineLogger.warn(`Generated Short: story attempt ${attempt}/3 failed (${String((e as Error)?.message ?? e).slice(0, 100)})`, "DirectUploader"); }
+          }
         }
         const out = await renderGeneratedShort({
           script, title: context.metadata?.title ?? "", channelKey: this.profile.key.toLowerCase(), language: "hi",
