@@ -175,18 +175,23 @@ export async function planStoryboard(script: string, titleHint?: string, look: L
     });
   };
   let aiOk = false;
-  try {
-    const first = beats.slice(0, BATCH);
-    const parsed: any = parseAiJson(await askLlm(castPrompt(first, title, look)));
-    cast = sanitizeCast(parsed?.cast, look);
-    take(parsed, 0);
-    aiOk = Array.isArray(parsed?.cast) && parsed.cast.length > 0;
-  } catch (err: any) {
-    pipelineLogger.warn(`Storyboard cast/staging answer unusable (${String(err?.message ?? err).slice(0, 120)}): staging by rules`, "StoryPlanner");
+  // the cast decides how the whole story looks: ask up to 3 times (a malformed answer is common on the free models) before the default pair
+  const clean = (raw: string) => raw.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, " ");
+  for (let attempt = 1; attempt <= 3 && !aiOk; attempt++) {
+    try {
+      const first = beats.slice(0, BATCH);
+      const parsed: any = parseAiJson(clean(await askLlm(castPrompt(first, title, look))));
+      if (!Array.isArray(parsed?.cast) || !parsed.cast.length) throw new Error("no cast in the answer");
+      cast = sanitizeCast(parsed.cast, look);
+      take(parsed, 0);
+      aiOk = true;
+    } catch (err: any) {
+      pipelineLogger.warn(`Storyboard cast/staging answer unusable, attempt ${attempt}/3 (${String(err?.message ?? err).slice(0, 120)})`, "StoryPlanner");
+    }
   }
   if (!cast.length) cast = fallbackCast(look);
   for (let from = BATCH; from < beats.length; from += BATCH) {
-    try { take(parseAiJson(await askLlm(stagePrompt(beats.slice(from, from + BATCH), from, cast, look))), from); } catch { /* rules below */ }
+    try { take(parseAiJson(clean(await askLlm(stagePrompt(beats.slice(from, from + BATCH), from, cast, look)))), from); } catch { /* rules below */ }
   }
 
   let prev: Staged | undefined;
