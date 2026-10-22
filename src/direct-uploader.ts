@@ -3917,15 +3917,23 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         // A Short made from nothing but its narration needs a real one: the reel's own voiceover line can be a sentence or two (26 words
         // made a 28 s Short). Under ~80 words the model writes the full story from everything known about the reel.
         if (script.split(/\s+/).length < 80 || !/[\u0900-\u097F]/.test(script)) {
-          const basis = [context.metadata?.title, context.metadata?.description, context.transcript?.text, context.metadata?.howItWorks, script].filter(Boolean).join("\n").slice(0, 2000);
+          // the STORY comes from the reel: what is said in it (transcript), its caption and what the picture shows come first, in that order
+          const basis = [
+            context.transcript?.text && `SPOKEN IN THE REEL: ${context.transcript.text}`,
+            context.captionMetadata?.description && `CAPTION: ${context.captionMetadata.description}`,
+            context.metadata?.title && `TITLE: ${context.metadata.title}`,
+            context.metadata?.description && `WHAT IT SHOWS: ${context.metadata.description}`,
+            script && `SHORT VERSION: ${script}`,
+          ].filter(Boolean).join("\n").slice(0, 2600);
           // up to 3 tries: the free models often answer with their "thinking process" or a few words instead of the story
           for (let attempt = 1; attempt <= 3; attempt++) {
             try {
               const raw = await this.freellmapi?.generateText(
-                `Write the narration of a 45-second vertical STORY video for the channel "${this.profile.brandName}": about 120 words in Hindi written in Devanagari script (English brand words may stay in Latin letters, but every sentence is Hindi). ` +
-                  `Tell it as a small story with 2 or 3 named characters (a boy, a mother, a teacher, a friend...): where it starts, a problem, a turn, and an ending that makes the viewer feel something and follow the channel. ` +
-                  `Short spoken sentences, say who is speaking ("राजू ने कहा..."), places that change as the story moves. No headings, no emojis, no stage directions. ` +
-                  `Base it only on this material:\n${basis}\n\nOutput only the narration, between <<< and >>>.\n/no_think`,
+                `You are the narrator of the story channel "${this.profile.brandName}". RETELL THE STORY that the material below tells, as a 45-second vertical story video: about 120 words in Hindi written in Devanagari script (English brand words may stay in Latin letters, but every sentence is Hindi). ` +
+                  `Be faithful: keep the same characters, the same events in the same order, the same places and the same ending; do not invent a different story and do not turn it into advice or an essay. ` +
+                  `If the material is only a short caption or a meme, make a small story from it with 2 or 3 named characters, a problem, a turn and an ending. ` +
+                  `Name every character the first time ("राजू", "माँ", "टीचर"), say who does what ("राजू ने माँ को तोहफ़ा दिया"), mention the objects, animals, weather and places that matter, in short spoken sentences. Every sentence should be something that can be SHOWN. No headings, no emojis, no stage directions. ` +
+                  `\n\nMATERIAL:\n${basis}\n\nOutput only the narration, between <<< and >>>.\n/no_think`,
                 undefined, 2500,
               );
               const m = [...(raw ?? "").matchAll(/<<<([\s\S]*?)>>>/g)].pop();

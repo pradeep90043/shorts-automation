@@ -64,4 +64,20 @@ assert.strictEqual(n.place, "दिल्ली");
   const e = sanitizeStaging({ bg: "school", time: "day" }, "स्कूल में घंटी बजी", c, d, 3, "story");
   assert.ok(!e.cont && e.shot === d.shot! + 1, "a new place is a new shot");
 }
+// the picture shows what the narration says: objects, animals, weather and what people do
+{
+  const c = sanitizeCast(undefined, "story");
+  const gift = sanitizeStaging(undefined, "राजू ने माँ को तोहफ़ा दिया", c, undefined, 0, "story");
+  assert.ok(gift.chars.some((x) => x.pose === "give" && x.holds === "gift"), "giving a gift: the give pose with the gift in hand");
+  assert.ok(!gift.props!.some((p) => p.type === "gift"), "a held object does not also stand on the floor");
+  const rain = sanitizeStaging(undefined, "बारिश में कुत्ता उसके पीछे भागा", c, undefined, 0, "story");
+  assert.strictEqual(rain.fx, "rain");
+  assert.ok(rain.props!.some((p) => p.type === "dog"), "the dog is on screen");
+  assert.ok(rain.chars.some((x) => x.pose === "run"));
+  const hug = sanitizeStaging(undefined, "दादाजी रोने लगे और सबने उन्हें गले लगाया", c, undefined, 0, "story");
+  assert.ok(["hug", "cry"].includes(hug.chars[0].pose));
+  const ai = sanitizeStaging({ props: [{ type: "spaceship" }, { type: "bus", x: 70 }], fx: "snow" }, "वे बस से गए", c, undefined, 0, "story");
+  assert.deepStrictEqual(ai.props!.map((p) => p.type), ["bus"], "unknown objects are dropped");
+  assert.strictEqual(ai.fx, "snow");
+}
 console.log("✓ storyboard planner");

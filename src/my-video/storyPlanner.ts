@@ -17,7 +17,10 @@ const LOOK_BGS: Record<Look, string[]> = {
   news: ["newsroom", "govt", "street", "studio", "hospital", "school", "market", "road", "river", "village"],
 };
 const TIMES = ["day", "dusk", "night"];
-const POSES = ["stand", "talk", "point", "wave", "sad", "happy", "angry", "scared", "walk", "think", "bow"];
+const POSES = ["stand", "talk", "point", "wave", "sad", "happy", "angry", "scared", "walk", "think", "bow", "run", "cry", "pray", "hug", "give", "eat", "sleep", "dance", "fight", "carry"];
+const PROPS = ["ball", "book", "bag", "letter", "gift", "food", "tea", "money", "phone", "laptop", "flowers", "tree", "dog", "cat", "cow", "bird", "horse", "car", "bus", "bicycle", "boat", "bed", "chair", "table", "lamp", "fire", "crown", "key", "trophy", "cake", "umbrella", "heart", "star", "chest", "diya", "door", "basket", "medicine", "clock", "bell", "sword", "rope", "stone", "candle", "mic", "camera", "cricket"];
+const FXS = ["none", "rain", "snow", "hearts", "sparkle", "lightning", "leaves", "smoke", "stars"];
+const ANIMS = ["none", "bounce", "float", "shake", "spin", "pop"];
 const MOODS = ["neutral", "happy", "sad", "angry", "scared", "surprised", "laugh", "worried"];
 const HAIRS = ["short", "side", "long", "bun", "ponytail", "bald", "curly", "turban", "cap"];
 const OUTFITS = ["shirt", "kurta", "saree", "dress", "uniform", "suit", "hoodie", "dhoti"];
@@ -61,6 +64,28 @@ const MOOD_WORDS: [string, RegExp][] = [
   ["worried", /चिंता|परेशान|सोच|worried|tension|problem/i],
 ];
 const firstMatch = (list: [string, RegExp][], text: string): string | undefined => list.find(([, re]) => re.test(text))?.[0];
+
+/** Things the narration names that can be drawn (Hindi and English): what the story talks about must be on the screen. */
+const PROP_WORDS: [string, RegExp][] = [
+  ["gift", /तोहफ़ा|तोहफा|उपहार|गिफ्ट|gift|present/i], ["letter", /चिट्ठी|पत्र|खत\b|letter/i], ["money", /पैसे|रुपये|रुपए|नोट|धन\b|money|rupee/i], ["food", /खाना|रोटी|भोजन|मिठाई|खिचड़ी|food|meal|bread/i],
+  ["tea", /चाय|tea\b/i], ["cake", /केक|cake/i], ["book", /किताब|पुस्तक|कॉपी|book|notebook/i], ["bag", /बस्ता|बैग|थैला|bag\b/i], ["ball", /गेंद|ball\b/i], ["cricket", /बल्ला|क्रिकेट|cricket|bat\b/i],
+  ["dog", /कुत्ता|कुत्ते|पिल्ला|dog\b|puppy/i], ["cat", /बिल्ली|cat\b/i], ["cow", /गाय|बैल|cow\b|bull/i], ["horse", /घोड़ा|घोड़े|horse/i], ["bird", /चिड़िया|पक्षी|तोता|कबूतर|bird|parrot/i],
+  ["car", /कार\b|गाड़ी|car\b|taxi|जीप/i], ["bus", /बस\b|bus\b/i], ["bicycle", /साइकिल|cycle|bicycle/i], ["boat", /नाव|नौका|boat/i],
+  ["bed", /बिस्तर|पलंग|खाट|bed\b/i], ["chair", /कुर्सी|chair/i], ["table", /मेज़|मेज\b|table\b/i], ["door", /दरवाज़ा|दरवाजा|door\b/i], ["lamp", /लैंप|बल्ब|lamp/i], ["candle", /मोमबत्ती|candle/i], ["diya", /दीया|दीपक|diya/i],
+  ["fire", /आग\b|अलाव|fire\b|flame/i], ["crown", /ताज\b|मुकुट|crown/i], ["key", /चाबी|कुंजी|key\b/i], ["trophy", /ट्रॉफी|इनाम|पुरस्कार|कप\b|trophy|prize/i], ["umbrella", /छाता|छतरी|umbrella/i],
+  ["heart", /दिल\b|प्यार|मोहब्बत|heart|love/i], ["star", /सितारा|तारा\b|star\b/i], ["chest", /ख़ज़ाना|खज़ाना|खजाना|संदूक|treasure|chest/i], ["basket", /टोकरी|basket/i], ["medicine", /दवा\b|दवाई|medicine/i],
+  ["clock", /घड़ी|clock|watch/i], ["bell", /घंटी|घंटा|bell\b/i], ["sword", /तलवार|sword/i], ["rope", /रस्सी|rope/i], ["stone", /पत्थर|stone|rock\b/i], ["flowers", /फूल|गुलाब|flower|rose/i], ["tree", /पेड़|वृक्ष|tree\b/i],
+  ["phone", /फोन|मोबाइल|phone|mobile/i], ["laptop", /लैपटॉप|कंप्यूटर|laptop|computer/i], ["mic", /माइक|mic\b/i], ["camera", /कैमरा|कैमरे|camera/i],
+];
+const POSE_WORDS: [string, RegExp][] = [
+  ["hug", /गले लग|गले मिल|hug/i], ["cry", /रो\s|रोया|रोई|रोने|रोते|आँसू|आंसू|सिसक|cry|wept|tears/i], ["run", /भाग|दौड़|run\b|ran\b|rushed/i], ["pray", /प्रार्थना|पूजा|दुआ|नमस्ते|pray|worship/i],
+  ["sleep", /सो गया|सो गई|सोया|सोई|नींद|सो रहा|sleep|slept/i], ["eat", /खाया|खा रहा|खाने लगा|खिलाया|खा\s|eat\b|ate\b|fed\b/i], ["give", /दिया|दी\b|देते|सौंप|भेंट|give\b|gave\b/i],
+  ["dance", /नाच|नाचा|dance/i], ["fight", /लड़|झगड़|मारा|पीटा|fight|fought|hit\b/i], ["carry", /उठाया|उठा लिया|लेकर|ले गया|carry|carried/i], ["point", /दिखाया|इशारा|point/i],
+];
+const FX_WORDS: [string, RegExp][] = [
+  ["lightning", /बिजली|तूफ़ान|तूफान|आँधी|storm|thunder/i], ["rain", /बारिश|बरसात|भीग|rain/i], ["snow", /बर्फ|हिमपात|snow/i], ["hearts", /प्यार|प्रेम|शादी|मोहब्बत|love|wedding/i],
+  ["sparkle", /जादू|चमत्कार|चमक|magic|miracle|sparkl/i], ["smoke", /धुआँ|धुआं|smoke/i], ["leaves", /पतझड़|पत्ते|autumn|leaves/i],
+];
 
 /** A cast when the AI gave none: two people who look different from each other (and from the CodeOrCap stickman). */
 function fallbackCast(look: Look = "story"): StoryMember[] {
@@ -107,7 +132,9 @@ export interface Staged {
   cont?: boolean;
   look: Look; headline?: string; stat?: { label: string; value: string }; place?: string;
   bg: string; time: string;
-  chars: { id: string; x: number; pose: string; mood: string; flip: boolean; scale: number; delay: number; speaking: boolean; fromX?: number }[];
+  chars: { id: string; x: number; pose: string; mood: string; flip: boolean; scale: number; delay: number; speaking: boolean; fromX?: number; holds?: string }[];
+  props?: { type: string; x: number; air: number; scale: number; anim: string; delay: number }[];
+  fx?: string;
 }
 
 /** One beat's scene from what the AI said (or nothing): everything is clamped to what my-video can draw. */
@@ -138,7 +165,8 @@ export function sanitizeStaging(raw: any, text: string, cast: StoryMember[], pre
     const mood = firstMatch(MOOD_WORDS, text) ?? "neutral";
     const order = cast.map((c) => c.id);
     const posePool = mood === "neutral" ? ["talk"] : mood === "sad" ? ["sad"] : mood === "scared" ? ["scared"] : mood === "angry" ? ["angry"] : ["happy", "talk"];
-    const pose = posePool[index % posePool.length];
+    const verbPose = firstMatch(POSE_WORDS, text);
+    const pose = verbPose ?? posePool[index % posePool.length];
     if (sameShot && prev!.chars.length) {
       const pids = prev!.chars.map((c) => c.id);
       const lead = pids[Math.floor(index / 2) % pids.length];
@@ -163,8 +191,31 @@ export function sanitizeStaging(raw: any, text: string, cast: StoryMember[], pre
     scale: Math.max(0.6, Math.min(1.3, Number(c.scale) || 1)),
     delay: (k + (index === 0 ? 1 : 0)) * 4,
     speaking: !!c.speaking,
+    holds: PROPS.includes(c.holds) ? c.holds : undefined,
   }));
   if (!staged.some((c: { speaking: boolean }) => c.speaking)) staged[0].speaking = true;
+
+  // what the beat talks about is on the screen: objects and animals (AI first, otherwise the words), weather, and the thing in someone's hand
+  let props: NonNullable<Staged["props"]> = (Array.isArray(raw?.props) ? raw.props : [])
+    .filter((p: any) => PROPS.includes(p?.type)).slice(0, 4)
+    .map((p: any, k: number) => ({ type: p.type, x: Math.max(6, Math.min(94, Number.isFinite(Number(p.x)) ? Number(p.x) : 50)), air: Math.max(0, Math.min(1, Number(p.air) || 0)), scale: Math.max(0.5, Math.min(2.2, Number(p.scale) || 1)), anim: ANIMS.includes(p.anim) ? p.anim : "none", delay: 6 + k * 6 }));
+  if (!props.length) {
+    const found = PROP_WORDS.filter(([, re]) => re.test(text)).map(([n]) => n).slice(0, 2);
+    props = found.map((type, k) => ({
+      type, x: staged.length === 1 ? (staged[0].x < 50 ? 74 : 26) : 50 + (k ? 22 : 0), air: ["bird", "heart", "star", "bell"].includes(type) ? 0.5 : 0,
+      scale: ["car", "bus", "boat", "tree", "horse", "cow", "bed", "door"].includes(type) ? 1.2 : ["dog", "cat", "bird"].includes(type) ? 1.4 : 1.3, anim: ["ball", "dog", "bird"].includes(type) ? "bounce" : ["heart", "star"].includes(type) ? "float" : "pop", delay: 6 + k * 6,
+    }));
+  }
+  const fxRaw = typeof raw?.fx === "string" && FXS.includes(raw.fx) ? raw.fx : undefined;
+  const fx = fxRaw ?? firstMatch(FX_WORDS, text) ?? (time === "night" && look === "story" ? "stars" : "none");
+  // give / carry / eat: the object goes into the performer's hand instead of standing on the floor
+  const doer = staged.find((c: { pose: string }) => ["give", "carry", "eat"].includes(c.pose));
+  if (doer) {
+    const handy = props.find((p) => ["gift", "food", "tea", "cake", "book", "letter", "money", "flowers", "bag", "basket", "medicine", "key", "trophy", "crown", "phone", "ball"].includes(p.type));
+    if (handy) { doer.holds = handy.type; props = props.filter((p) => p !== handy); }
+    else if (doer.pose === "give") doer.holds = "gift";
+    else if (doer.pose === "eat") doer.holds = "food";
+  }
   // niche frame: a headline for news / finance, a big figure for finance, a place for news
   const clean = (v: unknown, max: number): string | undefined => (typeof v === "string" && v.trim() ? v.trim().slice(0, max) : undefined);
   const words = text.replace(/\s+/g, " ").trim().split(" ");
@@ -175,7 +226,7 @@ export function sanitizeStaging(raw: any, text: string, cast: StoryMember[], pre
     ? (raw?.stat && clean(raw.stat.value, 14) && clean(raw.stat.label, 30) ? { label: clean(raw.stat.label, 30)!, value: clean(raw.stat.value, 14)! } : figure ? { label: "आँकड़ा", value: figure[0].replace(/\s?प्रतिशत/, "%").trim().slice(0, 14) } : undefined)
     : undefined;
   const place = look === "news" ? clean(raw?.place, 24) ?? prev?.place : undefined;
-  return { look, headline, stat, place, run, topic: wanted, shot, cont: sameShot, bg, time, chars: staged };
+  return { look, headline, stat, place, run, topic: wanted, shot, cont: sameShot, bg, time, chars: staged, props, fx };
 }
 
 const BATCH = 14;
@@ -187,15 +238,16 @@ const LOOK_BRIEF: Record<Look, string> = {
 const castPrompt = (beats: string[], title: string, look: Look): string =>
   `You are the storyboard artist of ${LOOK_BRIEF[look]} "${title}". Read the narration beats and design the CAST and the staging of every beat.\n` +
   `Return ONLY raw JSON: {"cast":[{"id":"short_latin_id","name":"Hindi first name","age":"${AGES.join("|")}","skin":"#hex","hair":"${HAIRS.join("|")}","hairColor":"#hex","outfit":"${OUTFITS.join("|")}","color":"#hex","color2":"#hex","glasses":false,"beard":false,"bindi":false}],` +
-  `"scenes":[{"i":0,"bg":"${LOOK_BGS[look].join("|")}","time":"${TIMES.join("|")}","headline":"","place":"","chars":[{"id":"cast id","x":0-100,"pose":"${POSES.join("|")}","mood":"${MOODS.join("|")}","flip":false,"speaking":true}]}]}\n` +
+  `"scenes":[{"i":0,"bg":"${LOOK_BGS[look].join("|")}","time":"${TIMES.join("|")}","headline":"","place":"","fx":"${FXS.join("|")}","props":[{"type":"${PROPS.join("|")}","x":0-100,"air":0,"scale":1.3,"anim":"${ANIMS.join("|")}"}],"chars":[{"id":"cast id","x":0-100,"pose":"${POSES.join("|")}","mood":"${MOODS.join("|")}","flip":false,"speaking":true,"holds":"optional prop type in the hand"}]}]}\n` +
+  `SHOW WHAT HAPPENS: every concrete thing the beat mentions must be on screen: the objects, animals, vehicles and weather as "props"/"fx" (a dog, a gift, rain, a bus), and what a person DOES as the pose (running = run, crying = cry, hugging = hug, giving = give with holds, eating = eat with holds, sleeping = sleep, praying = pray, fighting = fight, carrying = carry). ` +
   `Rules: 2 to 4 cast members, each clearly different (age, clothes, colours) and matching the story (a grandfather is an elder with a dhoti or kurta, a mother wears a saree, a student a uniform). ` +
   `One scene per beat, in order. The background must fit WHERE the beat happens and the time of day WHEN; change it when the place changes. ` +
   `Put only the people who are in that beat on stage (1-3), x = where they stand left (10) to right (90), the speaker or main person speaking:true, moods and poses that show the emotion of the beat. ` +
   `Do not think out loud: the first character of your answer is "{".\n/no_think\n\nBeats:\n${beats.map((b, i) => `${i}. ${b}`).join("\n")}`;
 const stagePrompt = (beats: string[], from: number, cast: StoryMember[], look: Look): string =>
   `Stage these beats of ${LOOK_BRIEF[look]}. Cast: ${JSON.stringify(cast.map((c) => ({ id: c.id, name: c.name, age: c.age })))}.\n` +
-  `Return ONLY raw JSON: {"scenes":[{"i":${from},"bg":"${LOOK_BGS[look].join("|")}","time":"${TIMES.join("|")}","headline":"","place":"","chars":[{"id":"cast id","x":0-100,"pose":"${POSES.join("|")}","mood":"${MOODS.join("|")}","flip":false,"speaking":true}]}]}\n` +
-  `One scene per beat in order, i counts from ${from}. Background = where the beat happens; only people in the beat are on stage. No thinking out loud; start with "{".\n/no_think\n\n${beats.map((b, k) => `${from + k}. ${b}`).join("\n")}`;
+  `Return ONLY raw JSON: {"scenes":[{"i":${from},"bg":"${LOOK_BGS[look].join("|")}","time":"${TIMES.join("|")}","headline":"","place":"","fx":"${FXS.join("|")}","props":[{"type":"${PROPS.join("|")}","x":0-100,"air":0,"scale":1.3,"anim":"${ANIMS.join("|")}"}],"chars":[{"id":"cast id","x":0-100,"pose":"${POSES.join("|")}","mood":"${MOODS.join("|")}","flip":false,"speaking":true,"holds":"optional prop type in the hand"}]}]}\n` +
+  `Show what the beat says happens: its objects, animals, vehicles and weather as props/fx, and each person's action as the pose (run, cry, hug, give, eat, sleep, pray, fight, carry; give/eat/carry with holds). One scene per beat in order, i counts from ${from}. Background = where the beat happens; only people in the beat are on stage. No thinking out loud; start with "{".\n/no_think\n\n${beats.map((b, k) => `${from + k}. ${b}`).join("\n")}`;
 
 /** The plan of a story video: scenes carry `visual.story`, the cast travels with the plan. */
 export async function planStoryboard(script: string, titleHint?: string, look: Look = "story"): Promise<StickmanPlan & { cast: StoryMember[] }> {
