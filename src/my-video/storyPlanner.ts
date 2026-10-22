@@ -97,6 +97,10 @@ export function sanitizeCast(raw: unknown, look: Look = "story"): StoryMember[] 
 }
 
 export interface Staged {
+  /** how many beats in a row this place has been shown (finance / news change place after a few) */
+  run?: number;
+  /** the place the words/AI asked for (before the forced change of scenery) */
+  topic?: string;
   look: Look; headline?: string; stat?: { label: string; value: string }; place?: string;
   bg: string; time: string;
   chars: { id: string; x: number; pose: string; mood: string; flip: boolean; scale: number; delay: number; speaking: boolean }[];
@@ -107,14 +111,35 @@ export function sanitizeStaging(raw: any, text: string, cast: StoryMember[], pre
   const ids = new Set(cast.map((c) => c.id));
   const allowed = LOOK_BGS[look];
   const byWords = firstMatch(BG_WORDS, text);
-  const bg = pick(allowed, raw?.bg, byWords && allowed.includes(byWords) ? byWords : prev?.bg ?? allowed[0]);
+  // nothing says where we are: finance and news change place every few beats (a bank for 70 scenes in a row is not a video)
+  const rotation = look === "finance" ? ["bank", "office", "home", "market", "stock", "street"] : look === "news" ? ["newsroom", "street", "govt", "studio", "market", "road"] : [];
+  const byRotation = rotation.length ? rotation[Math.floor(index / 5) % rotation.length] : undefined;
+  const wanted = pick(allowed, raw?.bg, byWords && allowed.includes(byWords) ? byWords : byRotation ?? prev?.topic ?? allowed[0]);
+  let bg = wanted;
+  let run = prev && wanted === prev.topic ? (prev.run ?? 1) + 1 : 1;
+  // a video about banks asks for "bank" on every beat: after a few beats in one place the scene moves on anyway, and keeps moving
+  if (rotation.length && prev && wanted === prev.topic && run > 4) {
+    bg = rotation[(Math.max(0, rotation.indexOf(prev.bg)) + 1) % rotation.length];
+    run = 1;
+  } else if (prev && wanted === prev.topic) {
+    bg = prev.bg;
+  }
   const time = pick(TIMES, raw?.time, firstMatch(TIME_WORDS, text) ?? prev?.time ?? "day");
   let chars = (Array.isArray(raw?.chars) ? raw.chars : []).filter((c: any) => ids.has(c?.id)).slice(0, 4);
   if (!chars.length) {
     // rule staging: the previous scene's people stay, otherwise the first one or two of the cast
     const mood = firstMatch(MOOD_WORDS, text) ?? "neutral";
-    const who = prev?.chars.map((c) => c.id) ?? cast.slice(0, 2).map((c) => c.id);
-    chars = who.map((id, k) => ({ id, x: who.length === 1 ? 50 : k === 0 ? 30 : 70, pose: k === 0 ? "talk" : "stand", mood, flip: k === 1, speaking: k === 0 }));
+    const ids = cast.map((c) => c.id);
+    const lead = ids[Math.floor(index / 2) % ids.length];
+    const other = ids[(Math.floor(index / 2) + 1) % ids.length];
+    const posePool = mood === "neutral" ? ["talk", "point", "think", "stand", "talk", "wave"] : mood === "sad" ? ["sad", "stand"] : mood === "scared" ? ["scared", "stand"] : mood === "angry" ? ["angry", "point"] : ["happy", "talk", "wave"];
+    const pose = posePool[index % posePool.length];
+    // four layouts in rotation: pair, close-up of the speaker, pair mirrored, speaker small beside the other
+    const layout = index % 4;
+    if (ids.length === 1 || layout === 1) chars = [{ id: lead, x: index % 8 < 4 ? 40 : 60, pose, mood, flip: index % 8 >= 4, scale: 1.15, speaking: true }];
+    else if (layout === 2) chars = [{ id: other, x: 28, pose: "stand", mood, flip: false, speaking: false }, { id: lead, x: 70, pose, mood, flip: true, speaking: true }];
+    else if (layout === 3) chars = [{ id: lead, x: 34, pose, mood, flip: false, speaking: true, scale: 1.1 }, { id: other, x: 80, pose: "think", mood: "neutral", flip: true, scale: 0.9 }];
+    else chars = [{ id: lead, x: 30, pose, mood, flip: false, speaking: true }, { id: other, x: 70, pose: "stand", mood, flip: true }];
   }
   const n = chars.length;
   const staged = chars.map((c: any, k: number) => ({
@@ -131,13 +156,14 @@ export function sanitizeStaging(raw: any, text: string, cast: StoryMember[], pre
   // niche frame: a headline for news / finance, a big figure for finance, a place for news
   const clean = (v: unknown, max: number): string | undefined => (typeof v === "string" && v.trim() ? v.trim().slice(0, max) : undefined);
   const words = text.replace(/\s+/g, " ").trim().split(" ");
-  const headline = look === "story" ? undefined : clean(raw?.headline, 70) ?? words.slice(0, 7).join(" ");
+  const hasFigure = /[₹$]\s?[\d,.]+|[\d,.]+\s?(?:%|प्रतिशत|अंक|रुपये|रुपए)/.test(text);
+  const headline = look === "story" ? undefined : clean(raw?.headline, 70) ?? (index % 5 === 0 || hasFigure ? words.slice(0, 7).join(" ") : undefined);
   const figure = text.match(/[₹$]\s?[\d,.]+(?:\s?(?:करोड़|लाख|हज़ार|अरब))?|[\d,.]+\s?(?:%|प्रतिशत|अंक|रुपये|रुपए)/);
   const stat = look === "finance"
     ? (raw?.stat && clean(raw.stat.value, 14) && clean(raw.stat.label, 30) ? { label: clean(raw.stat.label, 30)!, value: clean(raw.stat.value, 14)! } : figure ? { label: "आँकड़ा", value: figure[0].replace(/\s?प्रतिशत/, "%").trim().slice(0, 14) } : undefined)
     : undefined;
   const place = look === "news" ? clean(raw?.place, 24) ?? prev?.place : undefined;
-  return { look, headline, stat, place, bg, time, chars: staged };
+  return { look, headline, stat, place, run, topic: wanted, bg, time, chars: staged };
 }
 
 const BATCH = 14;

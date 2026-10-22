@@ -37,4 +37,19 @@ assert.ok(f.headline && f.headline.split(" ").length <= 7);
 const n = sanitizeStaging({ bg: "palace", place: "दिल्ली", headline: "संसद में हंगामा" }, "संसद में हंगामा हुआ", sanitizeCast(undefined, "news"), undefined, 0, "news");
 assert.strictEqual(n.bg, "govt", "a bad background becomes the one the words point to");
 assert.strictEqual(n.place, "दिल्ली");
+// no AI at all: places, layouts and speakers keep changing instead of one bank for 70 scenes
+{
+  const c = sanitizeCast(undefined, "finance");
+  let prev: ReturnType<typeof sanitizeStaging> | undefined;
+  const seen = { bg: new Set<string>(), layout: new Set<string>(), headlines: 0 };
+  for (let i = 0; i < 40; i++) {
+    const st = sanitizeStaging(undefined, "बैंक की बात चल रही है", c, prev, i, "finance");
+    seen.bg.add(st.bg); seen.layout.add(st.chars.map((x) => `${x.id}@${x.x}`).join("|"));
+    if (st.headline) seen.headlines++;
+    prev = st;
+  }
+  assert.ok(seen.bg.size >= 3, "backgrounds rotate: " + [...seen.bg]);
+  assert.ok(seen.layout.size >= 4, "layouts vary: " + seen.layout.size);
+  assert.ok(seen.headlines > 0 && seen.headlines < 20, "headline strip only on some beats: " + seen.headlines);
+}
 console.log("✓ storyboard planner");
