@@ -100,6 +100,9 @@ export function extractNarration(raw: string): string {
 /** Removes what a narrator must not read: markdown, bullets, headings, emojis, "Chapter 3:" labels, quotes around the text. */
 export function cleanNarration(raw: string): string {
   return raw
+    // the model's own working notes leak into a chapter ("Full Outline: 1.", "Word count: 180", "Draft:"): never narrated
+    .replace(/(^|[.!?।]\s+|\n)\s*(?:full\s+)?(?:outline|draft|word\s*count|note|notes|step|task|constraint|check)\s*[:\d][^.!?।\n]*[.!?।]?/gi, "$1 ")
+    .replace(/\b(?:full\s+)?outline\s*:\s*\d*\.?/gi, " ")
     .replace(/```[\s\S]*?```/g, " ")
     .replace(/<<<|>>>/g, " ")
     .replace(/^\s*#{1,6}\s.*$/gm, " ")

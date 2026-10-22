@@ -9,4 +9,6 @@ assert.strictEqual(extractNarration(`<<<${deva}`), deva, "an unclosed block");
 assert.strictEqual(extractNarration("only english"), "only english");
 import { cleanNarration } from "../src/longvideo-auto/scriptWriter";
 assert.ok(!/<<<|>>>/.test(cleanNarration(`<<<${deva}>>> और <<<बाकी`)), "no marker is ever narrated");
+assert.ok(!/outline|word count|draft/i.test(cleanNarration("पहली बार फ़रवरी 2023 के Full Outline: 1. बाद ब्याज बढ़ा। Word count: 180. आगे भी बढ़ेगा।")), "working notes are never narrated");
+assert.ok(cleanNarration("ब्याज बढ़ा। आगे भी बढ़ेगा।").includes("आगे भी बढ़ेगा"), "normal sentences are kept");
 console.log("✓ extractNarration");
