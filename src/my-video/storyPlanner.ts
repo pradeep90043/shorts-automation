@@ -23,7 +23,15 @@ const FXS = ["none", "rain", "snow", "hearts", "sparkle", "lightning", "leaves",
 const ANIMS = ["none", "bounce", "float", "shake", "spin", "pop"];
 const MOODS = ["neutral", "happy", "sad", "angry", "scared", "surprised", "laugh", "worried"];
 const HAIRS = ["short", "side", "long", "bun", "ponytail", "bald", "curly", "turban", "cap"];
-const OUTFITS = ["shirt", "kurta", "saree", "dress", "uniform", "suit", "hoodie", "dhoti"];
+const OUTFITS = ["shirt", "kurta", "saree", "dress", "uniform", "suit", "hoodie", "dhoti", "fur"];
+const SPECIES = ["wolf", "fox", "lion", "tiger", "dog", "cat", "monkey", "rabbit", "bear", "elephant", "deer", "goat"];
+const FUR: Record<string, string> = { wolf: "#8E9AA6", fox: "#E67E22", lion: "#E0A33A", tiger: "#E88B2E", dog: "#C68642", cat: "#9B9B9B", monkey: "#A0693A", rabbit: "#F2F2F2", bear: "#7B5230", elephant: "#9AA5B1", deer: "#B9814A", goat: "#E5DCCB" };
+/** animals the story names (Hindi and English), in the order they appear: a story about a wolf and a buffalo needs a wolf on screen, not a man */
+const ANIMAL_WORDS: [string, string, RegExp][] = [
+  ["wolf", "भेड़िया", /भेड़िया|भेड़िये|भेडिया|wolf/i], ["fox", "लोमड़ी", /लोमड़ी|सियार|fox|jackal/i], ["lion", "शेर", /शेर\b|शेरनी|सिंह|lion/i], ["tiger", "बाघ", /बाघ|चीता|tiger|leopard/i],
+  ["dog", "कुत्ता", /कुत्ता|कुत्ते|पिल्ला|dog\b/i], ["cat", "बिल्ली", /बिल्ली|billi|cat\b/i], ["monkey", "बंदर", /बंदर|monkey/i], ["rabbit", "खरगोश", /खरगोश|rabbit/i],
+  ["bear", "भालू", /भालू|bear\b/i], ["elephant", "हाथी", /हाथी|elephant/i], ["deer", "हिरण", /हिरण|deer/i], ["goat", "बकरी", /बकरी|बकरा|goat/i],
+];
 const AGES = ["child", "teen", "adult", "elder"];
 const SKINS = ["#F3C9A0", "#E7B07F", "#D39A68", "#B9794A", "#8D5A3B"];
 const COLORS = ["#2E86DE", "#E84393", "#F39C12", "#16A085", "#8E44AD", "#C0392B", "#27AE60", "#2C3E50"];
@@ -31,6 +39,8 @@ const COLORS = ["#2E86DE", "#E84393", "#F39C12", "#16A085", "#8E44AD", "#C0392B"
 export interface StoryMember {
   id: string; name?: string; age: string; skin: string; hair: string; hairColor: string; outfit: string; color: string; color2?: string;
   glasses?: boolean; beard?: boolean; bindi?: boolean;
+  /** an animal character (see ANIMAL_WORDS); `skin` is then its fur */
+  species?: string;
 }
 const pick = (list: readonly string[], v: unknown, fallback: string): string => (typeof v === "string" && list.includes(v) ? v : fallback);
 const hex = (v: unknown, fallback: string): string => (typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v) ? v : fallback);
@@ -111,10 +121,12 @@ export function sanitizeCast(raw: unknown, look: Look = "story"): StoryMember[] 
     const id = String(r?.id ?? `c${i + 1}`).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 20) || `c${i + 1}`;
     if (seen.has(id)) return;
     seen.add(id);
-    const outfit = pick(OUTFITS, r?.outfit, "shirt");
+    const species = typeof r?.species === "string" && SPECIES.includes(r.species) ? r.species : undefined;
+    const outfit = pick(OUTFITS, r?.outfit, species ? "fur" : "shirt");
     out.push({
-      id, name: typeof r?.name === "string" ? r.name.slice(0, 14) : "", age: pick(AGES, r?.age, "adult"), skin: hex(r?.skin, SKINS[i % SKINS.length]),
-      hair: pick(HAIRS, r?.hair, "short"), hairColor: hex(r?.hairColor, "#1B1B1B"), outfit, color: hex(r?.color, COLORS[i % COLORS.length]),
+      ...(species ? { species } : {}),
+      id, name: typeof r?.name === "string" ? r.name.slice(0, 14) : "", age: species ? "adult" : pick(AGES, r?.age, "adult"), skin: species ? hex(r?.skin, FUR[species]) : hex(r?.skin, SKINS[i % SKINS.length]),
+      hair: species ? "bald" : pick(HAIRS, r?.hair, "short"), hairColor: hex(r?.hairColor, "#1B1B1B"), outfit, color: hex(r?.color, COLORS[i % COLORS.length]),
       color2: hex(r?.color2, outfit === "saree" ? "#F1C40F" : "#2D3436"), glasses: !!r?.glasses, beard: !!r?.beard, bindi: !!r?.bindi,
     });
   });
@@ -237,10 +249,10 @@ const LOOK_BRIEF: Record<Look, string> = {
 };
 const castPrompt = (beats: string[], title: string, look: Look): string =>
   `You are the storyboard artist of ${LOOK_BRIEF[look]} "${title}". Read the narration beats and design the CAST and the staging of every beat.\n` +
-  `Return ONLY raw JSON: {"cast":[{"id":"short_latin_id","name":"Hindi first name","age":"${AGES.join("|")}","skin":"#hex","hair":"${HAIRS.join("|")}","hairColor":"#hex","outfit":"${OUTFITS.join("|")}","color":"#hex","color2":"#hex","glasses":false,"beard":false,"bindi":false}],` +
+  `Return ONLY raw JSON: {"cast":[{"id":"short_latin_id","name":"Hindi first name","age":"${AGES.join("|")}","skin":"#hex","hair":"${HAIRS.join("|")}","hairColor":"#hex","outfit":"${OUTFITS.join("|")}","color":"#hex","color2":"#hex","glasses":false,"beard":false,"bindi":false,"species":"only for animal characters: ${SPECIES.join("|")}"}],` +
   `"scenes":[{"i":0,"bg":"${LOOK_BGS[look].join("|")}","time":"${TIMES.join("|")}","headline":"","place":"","fx":"${FXS.join("|")}","props":[{"type":"${PROPS.join("|")}","x":0-100,"air":0,"scale":1.3,"anim":"${ANIMS.join("|")}"}],"chars":[{"id":"cast id","x":0-100,"pose":"${POSES.join("|")}","mood":"${MOODS.join("|")}","flip":false,"speaking":true,"holds":"optional prop type in the hand"}]}]}\n` +
   `SHOW WHAT HAPPENS: every concrete thing the beat mentions must be on screen: the objects, animals, vehicles and weather as "props"/"fx" (a dog, a gift, rain, a bus), and what a person DOES as the pose (running = run, crying = cry, hugging = hug, giving = give with holds, eating = eat with holds, sleeping = sleep, praying = pray, fighting = fight, carrying = carry). ` +
-  `Rules: 2 to 4 cast members, each clearly different (age, clothes, colours) and matching the story (a grandfather is an elder with a dhoti or kurta, a mother wears a saree, a student a uniform). ` +
+  `If a character in the story is an ANIMAL (a wolf, a lion, a fox...), make it an animal cast member: species set, outfit "fur", skin = its fur colour, hair "bald", age "adult". Rules: 2 to 4 cast members, each clearly different (age, clothes, colours) and matching the story (a grandfather is an elder with a dhoti or kurta, a mother wears a saree, a student a uniform). ` +
   `One scene per beat, in order. The background must fit WHERE the beat happens and the time of day WHEN; change it when the place changes. ` +
   `Put only the people who are in that beat on stage (1-3), x = where they stand left (10) to right (90), the speaker or main person speaking:true, moods and poses that show the emotion of the beat. ` +
   `Do not think out loud: the first character of your answer is "{".\n/no_think\n\nBeats:\n${beats.map((b, i) => `${i}. ${b}`).join("\n")}`;
@@ -279,7 +291,15 @@ export async function planStoryboard(script: string, titleHint?: string, look: L
       pipelineLogger.warn(`Storyboard cast/staging answer unusable, attempt ${attempt}/3 (${String(err?.message ?? err).slice(0, 120)})`, "StoryPlanner");
     }
   }
-  if (!cast.length) cast = fallbackCast(look);
+  // no cast from the AI: a story about animals gets those animals (up to 3), not two people
+  if (!cast.length || (!aiOk && look === "story")) {
+    const text = beats.join(" ");
+    const seen = ANIMAL_WORDS.filter(([, , re]) => re.test(text)).slice(0, 3);
+    if (seen.length >= 1 && look === "story") {
+      cast = seen.map(([species, hindi]) => ({ id: species, name: hindi, age: "adult", skin: FUR[species], hair: "bald", hairColor: "#1B1B1B", outfit: "fur", color: FUR[species], species }));
+      if (cast.length === 1) cast.push({ id: "narrator", name: "", age: "adult", skin: SKINS[2], hair: "short", hairColor: "#1B1B1B", outfit: "kurta", color: COLORS[2], color2: "#2D3436" });
+    } else if (!cast.length) cast = fallbackCast(look);
+  }
   for (let from = BATCH; from < beats.length; from += BATCH) {
     try { take(parseAiJson(clean(await askLlm(stagePrompt(beats.slice(from, from + BATCH), from, cast, look)))), from); } catch { /* rules below */ }
   }

@@ -80,4 +80,13 @@ assert.strictEqual(n.place, "दिल्ली");
   assert.deepStrictEqual(ai.props!.map((p) => p.type), ["bus"], "unknown objects are dropped");
   assert.strictEqual(ai.fx, "snow");
 }
+// animals: the AI's animal characters stay animals (fur, no hair, species checked); unknown species are dropped
+{
+  const c = sanitizeCast([{ id: "wolf", name: "भेड़िया", species: "wolf", outfit: "kurta", age: "child" }, { id: "x", species: "dragon", outfit: "suit" }], "story");
+  assert.strictEqual(c[0].species, "wolf");
+  assert.strictEqual(c[0].age, "adult");
+  assert.strictEqual(c[0].hair, "bald");
+  assert.ok(/^#[0-9a-f]{6}$/i.test(c[0].skin), "an animal has a fur colour");
+  assert.strictEqual(c[1].species, undefined, "an unknown species is a person");
+}
 console.log("✓ storyboard planner");
