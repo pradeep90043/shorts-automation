@@ -107,4 +107,15 @@ assert.strictEqual(n.place, "दिल्ली");
   const ai = sanitizeStaging({ bg: "belly", chars: [{ id: c[0].id, x: 50, pose: "stand" }] }, "वह जोर-जोर से चिल्लाने लगा और छटपटाया", c, undefined, 0, "story");
   assert.ok(["shout", "struggle"].includes(ai.chars[0].pose), "the words beat the AI's bland pose: " + ai.chars[0].pose);
 }
+// reactions and bubbles: a "no" is a head shake, dialogue is a short bubble
+{
+  const c = sanitizeCast(undefined, "story");
+  const d = sanitizeStaging(undefined, "बकरी ने कहा, \"नहीं, मैं नहीं आऊँगा\"", c, undefined, 0, "story");
+  const sp = d.chars.find((x) => x.speaking);
+  assert.ok(sp && sp.says && sp.says.startsWith("नहीं"), "the quoted words are the bubble: " + sp?.says);
+  assert.ok(d.chars.some((x) => x.react === "no"), "someone shakes their head");
+  const y = sanitizeStaging(undefined, "भेड़िए ने हाँ में सिर हिलाया", c, undefined, 0, "story");
+  assert.ok(y.chars.some((x) => x.react === "yes"), "a nod");
+  assert.ok(y.chars.every((x) => !x.says), "no quoted words: no bubble");
+}
 console.log("✓ storyboard planner");

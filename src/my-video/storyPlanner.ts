@@ -77,6 +77,18 @@ const MOOD_WORDS: [string, RegExp][] = [
 ];
 /** a beat where someone actually SAYS something (quotes or a speech verb): only then does a character talk; narration is not spoken by the characters */
 const DIALOGUE = /["“”‘’\u0027]|कहा|बोला|बोली|बोले|चिल्लाया|चिल्लाई|पूछा|पूछी|पुकारा|कहने लगा|कहने लगी|said|asked|replied|shouted/i;
+/** the words a character says in a beat: the quoted part ("नहीं, मैं नहीं आऊँगा") cut to what fits a speech bubble */
+function quotedLine(text: string): string | undefined {
+  const m = text.match(/["“”«]([^"“”»]{2,80})["“”»]/) ?? text.match(/(?:कहा|बोला|बोली|बोले|पूछा|चिल्लाया|said|asked)[,:]?\s*[\u201C"']?([^।.!?"”']{2,60})/);
+  if (!m) return undefined;
+  const words = m[1].trim().replace(/[,;:]+$/, "").split(/\s+/);
+  const line = words.slice(0, 5).join(" ");
+  return line.length >= 2 ? line + (words.length > 5 ? "…" : /[!?]$/.test(m[1].trim()) ? "" : "") : undefined;
+}
+const REACT_WORDS: [string, RegExp][] = [
+  ["no", /नहीं|ना\s|मना कर|इनकार|इंकार|कभी नहीं|\bno\b|refus/i], ["yes", /हाँ|हां|जी हाँ|ठीक है|मान गया|मान गई|राज़ी|सहमत|सिर हिलाया|\byes\b|agreed|nodded/i],
+  ["surprise", /हैरान|चौंक|अचानक|दंग|surpris|shock/i], ["laugh", /हँस|ठहाक|खिलखिला|laugh/i], ["shrug", /पता नहीं|क्या पता|shrug/i],
+];
 const firstMatch = (list: [string, RegExp][], text: string): string | undefined => list.find(([, re]) => re.test(text))?.[0];
 
 /** Things the narration names that can be drawn (Hindi and English): what the story talks about must be on the screen. */
@@ -150,7 +162,7 @@ export interface Staged {
   cont?: boolean;
   look: Look; headline?: string; stat?: { label: string; value: string }; place?: string;
   bg: string; time: string;
-  chars: { id: string; x: number; pose: string; mood: string; flip: boolean; scale: number; delay: number; speaking: boolean; fromX?: number; holds?: string }[];
+  chars: { id: string; x: number; pose: string; mood: string; flip: boolean; scale: number; delay: number; speaking: boolean; fromX?: number; holds?: string; says?: string; react?: string }[];
   props?: { type: string; x: number; air: number; scale: number; anim: string; delay: number }[];
   fx?: string;
 }
@@ -211,8 +223,22 @@ export function sanitizeStaging(raw: any, text: string, cast: StoryMember[], pre
     delay: (k + (index === 0 ? 1 : 0)) * 4,
     speaking: !!c.speaking,
     holds: PROPS.includes(c.holds) ? c.holds : undefined,
+    says: typeof c.says === "string" && c.says.trim() ? c.says.trim().slice(0, 30) : undefined,
+    react: ["no", "yes", "shrug", "surprise", "laugh"].includes(c.react) ? c.react : undefined,
   }));
   if (look !== "story" && !staged.some((c: { speaking: boolean }) => c.speaking)) staged[0].speaking = true;
+  // dialogue: the speaker shows the quoted words in a bubble; whoever answers no / yes shakes their head or nods (rules fill what the AI left out)
+  if (look === "story") {
+    const speaker = staged.find((c: { speaking: boolean }) => c.speaking);
+    const line = quotedLine(text);
+    if (speaker && line && !speaker.says) speaker.says = line;
+    const reaction = firstMatch(REACT_WORDS, text);
+    if (reaction) {
+      const target = staged.find((c: { react?: string; speaking: boolean }) => !c.react && (staged.length === 1 || !c.speaking)) ?? speaker;
+      if (target && !target.react) target.react = reaction;
+      if (reaction === "no" && speaker && !speaker.react && staged.length > 1) speaker.react = "no";
+    }
+  }
   // the AI often leaves a person standing in a beat whose words say what they DO: the words win for the first idle person
   const doing = firstMatch(POSE_WORDS, text);
   if (look === "story" && doing && ["struggle", "shout", "run", "cry", "hug", "pray", "eat", "sleep", "give", "carry", "fight", "dance", "push", "tired", "jump"].includes(doing)) {
