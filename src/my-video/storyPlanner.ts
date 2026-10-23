@@ -213,6 +213,12 @@ export function sanitizeStaging(raw: any, text: string, cast: StoryMember[], pre
     holds: PROPS.includes(c.holds) ? c.holds : undefined,
   }));
   if (look !== "story" && !staged.some((c: { speaking: boolean }) => c.speaking)) staged[0].speaking = true;
+  // the AI often leaves a person standing in a beat whose words say what they DO: the words win for the first idle person
+  const doing = firstMatch(POSE_WORDS, text);
+  if (look === "story" && doing && ["struggle", "shout", "run", "cry", "hug", "pray", "eat", "sleep", "give", "carry", "fight", "dance", "push", "tired", "jump"].includes(doing)) {
+    const idle = staged.find((c: { pose: string }) => ["stand", "talk", "think", "point", "wave", "walk", "sad"].includes(c.pose));
+    if (idle && !staged.some((c: { pose: string }) => c.pose === doing)) idle.pose = doing;
+  }
 
   // what the beat talks about is on the screen: objects and animals (AI first, otherwise the words), weather, and the thing in someone's hand
   let props: NonNullable<Staged["props"]> = (Array.isArray(raw?.props) ? raw.props : [])

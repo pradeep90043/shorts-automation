@@ -102,4 +102,9 @@ assert.strictEqual(n.place, "दिल्ली");
   const news = sanitizeStaging(undefined, "संसद में हंगामा हुआ", sanitizeCast(undefined, "news"), undefined, 0, "news");
   assert.ok(news.chars.some((x) => x.speaking), "an anchor always speaks");
 }
+{
+  const c = sanitizeCast(undefined, "story");
+  const ai = sanitizeStaging({ bg: "belly", chars: [{ id: c[0].id, x: 50, pose: "stand" }] }, "वह जोर-जोर से चिल्लाने लगा और छटपटाया", c, undefined, 0, "story");
+  assert.ok(["shout", "struggle"].includes(ai.chars[0].pose), "the words beat the AI's bland pose: " + ai.chars[0].pose);
+}
 console.log("✓ storyboard planner");
