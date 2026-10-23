@@ -24,13 +24,13 @@ const ANIMS = ["none", "bounce", "float", "shake", "spin", "pop"];
 const MOODS = ["neutral", "happy", "sad", "angry", "scared", "surprised", "laugh", "worried"];
 const HAIRS = ["short", "side", "long", "bun", "ponytail", "bald", "curly", "turban", "cap"];
 const OUTFITS = ["shirt", "kurta", "saree", "dress", "uniform", "suit", "hoodie", "dhoti", "fur"];
-const SPECIES = ["wolf", "fox", "lion", "tiger", "dog", "cat", "monkey", "rabbit", "bear", "elephant", "deer", "goat"];
-const FUR: Record<string, string> = { wolf: "#8E9AA6", fox: "#E67E22", lion: "#E0A33A", tiger: "#E88B2E", dog: "#C68642", cat: "#9B9B9B", monkey: "#A0693A", rabbit: "#F2F2F2", bear: "#7B5230", elephant: "#9AA5B1", deer: "#B9814A", goat: "#E5DCCB" };
+const SPECIES = ["wolf", "fox", "lion", "tiger", "dog", "cat", "monkey", "rabbit", "bear", "elephant", "deer", "goat", "buffalo", "cow"];
+const FUR: Record<string, string> = { wolf: "#8E9AA6", fox: "#E67E22", lion: "#E0A33A", tiger: "#E88B2E", dog: "#C68642", cat: "#9B9B9B", monkey: "#A0693A", rabbit: "#F2F2F2", bear: "#7B5230", elephant: "#9AA5B1", deer: "#B9814A", goat: "#E5DCCB", buffalo: "#4A4A52", cow: "#EFE6D2" };
 /** animals the story names (Hindi and English), in the order they appear: a story about a wolf and a buffalo needs a wolf on screen, not a man */
 const ANIMAL_WORDS: [string, string, RegExp][] = [
   ["wolf", "भेड़िया", /भेड़िया|भेड़िये|भेडिया|wolf/i], ["fox", "लोमड़ी", /लोमड़ी|सियार|fox|jackal/i], ["lion", "शेर", /शेर\b|शेरनी|सिंह|lion/i], ["tiger", "बाघ", /बाघ|चीता|tiger|leopard/i],
   ["dog", "कुत्ता", /कुत्ता|कुत्ते|पिल्ला|dog\b/i], ["cat", "बिल्ली", /बिल्ली|billi|cat\b/i], ["monkey", "बंदर", /बंदर|monkey/i], ["rabbit", "खरगोश", /खरगोश|rabbit/i],
-  ["bear", "भालू", /भालू|bear\b/i], ["elephant", "हाथी", /हाथी|elephant/i], ["deer", "हिरण", /हिरण|deer/i], ["goat", "बकरी", /बकरी|बकरा|goat/i],
+  ["bear", "भालू", /भालू|bear\b/i], ["elephant", "हाथी", /हाथी|elephant/i], ["deer", "हिरण", /हिरण|deer/i], ["goat", "बकरी", /बकरी|बकरा|goat/i], ["buffalo", "भैंस", /भैंस|भैंसा|सांड|साँड|बैल|buffalo|bull/i], ["cow", "गाय", /गाय|cow\b/i],
 ];
 const AGES = ["child", "teen", "adult", "elder"];
 const SKINS = ["#F3C9A0", "#E7B07F", "#D39A68", "#B9794A", "#8D5A3B"];

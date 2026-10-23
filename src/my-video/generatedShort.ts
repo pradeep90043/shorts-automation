@@ -53,7 +53,7 @@ export async function renderGeneratedShort(input: GeneratedShortInput): Promise<
   }
   const job = startStickmanJob({
     script, title: input.title, voice: "voicebox", language: input.language ?? "hi",
-    channelKey: input.channelKey, orientation: "vertical", targetSec, resolution: 1080, noRunnerPublish: true,
+    channelKey: input.channelKey, orientation: "vertical", targetSec, resolution: 1080, noRunnerPublish: true, keepScript: true,
   });
   pipelineLogger.info(`Generated Short: job ${job.id}, ${words} words, ~${targetSec}s`, "GeneratedShort");
 

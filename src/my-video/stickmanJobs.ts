@@ -65,6 +65,8 @@ export interface StickmanJobInput {
   language?: string;
   resolution?: 720 | 1080;
   channelKey?: string;
+  /** the narration is final: it is never rewritten to fit the target length (the voice speed adjusts instead) */
+  keepScript?: boolean;
   /** the finished file is only handed back: the runner must not upload it to YouTube itself (a Short is published by its own pipeline) */
   noRunnerPublish?: boolean;
 }
@@ -263,8 +265,8 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
       // an imported plan lines up with the script's own beats, so the script is never rewritten to fit a length
       const fit = planOnly
         ? { script, note: "Plan-only import: narration taken from the pasted plan, no AI used" }
-        : imported
-          ? { script: cleanScript(script), note: "Imported plan: script kept exactly as written (no length rewrite)" }
+        : imported || job.input.keepScript
+          ? { script: cleanScript(script), note: imported ? "Imported plan: script kept exactly as written (no length rewrite)" : "Script kept exactly as written (the voice speed adjusts to the length)" }
           : await fitScriptToDuration(cleanScript(script), job.input.targetSec);
       if (isCancelled(job)) return;
       job.finalScript = fit.script;
