@@ -138,12 +138,18 @@ async function bootstrap() {
   // Daily recycle: swap on the 951 MB VM grows through the day (374 -> 958 MB seen). At 04:30 IST, when nothing is processing,
   // exit so docker's restart policy brings a fresh process. DAILY_RECYCLE=off disables it (dev sessions have no restart policy).
   if (process.env.DAILY_RECYCLE !== "off" && process.env.BOT_ENV !== "dev") {
-    let recycledOn = "";
+    // "recycled today" must survive the restart it causes: kept in memory only, every fresh process recycled again for the whole
+    // 04:30-05:30 window (about 60 restarts in an hour, seen on 2026-10-23). A file remembers the day; a young process never recycles.
+    const marker = require("path").join(require("os").homedir(), ".shorts-automation", "last-recycle.txt");
+    const fsx = require("fs") as typeof import("fs");
+    const readDay = (): string => { try { return fsx.readFileSync(marker, "utf8").trim(); } catch { return ""; } };
     setInterval(() => {
       const ist = new Date(Date.now() + 5.5 * 3600_000).toISOString();
-      if (ist.slice(11, 16) < "04:30" || ist.slice(11, 16) > "05:30" || recycledOn === ist.slice(0, 10)) return;
+      const day = ist.slice(0, 10), hm = ist.slice(11, 16);
+      if (hm < "04:30" || hm > "05:30" || readDay() === day) return;
+      if (process.uptime() < 3 * 3600) return; // the process must be old for a recycle to help
       if (!JobQueue.isIdle() || isStickmanBusy()) return;
-      recycledOn = ist.slice(0, 10);
+      try { fsx.mkdirSync(require("path").dirname(marker), { recursive: true }); fsx.writeFileSync(marker, day); } catch { /* the uptime guard still stops a loop */ }
       pipelineLogger.info("[Recycle] idle at 04:30 IST: restarting the process to release memory", "Bootstrap");
       setTimeout(() => process.exit(0), 2000);
     }, 60_000);
