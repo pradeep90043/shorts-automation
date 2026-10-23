@@ -8,6 +8,26 @@ export type Ask = (prompt: string, opts?: { maxTokens?: number; model?: string }
 
 let geminiDownUntil = 0;
 
+let healthCache: { at: number; reason: string | null } | null = null;
+/**
+ * Readiness probe: one tiny prompt through the same hedged providers. Returns why the LLMs are unusable right now, or null when
+ * one answered. A video started while every provider is down burns 15+ minutes and a retry attempt before failing (2026-10-16),
+ * so the worker waits instead. Cached: 5 min when healthy, 2 min when down.
+ */
+export async function llmDownReason(): Promise<string | null> {
+  const ttl = healthCache?.reason ? 2 * 60_000 : 5 * 60_000;
+  if (healthCache && Date.now() - healthCache.at < ttl) return healthCache.reason;
+  let reason: string | null = null;
+  try {
+    const text = await makeAsk({ timeoutMs: 45_000, hedgeMs: 10_000 })("Reply with the single word OK.", { maxTokens: 16 });
+    if (!text.trim()) reason = "no LLM provider answered a health probe";
+  } catch (err) {
+    reason = `LLM health probe failed: ${err instanceof Error ? err.message : err}`;
+  }
+  healthCache = { at: Date.now(), reason };
+  return reason;
+}
+
 /**
  * Plain-text LLM call, hedged like the stickman planner's: FreeLLMAPI first; if it has not answered within `hedgeMs` (or
  * fails) Gemini is asked too and the first non-empty text wins. Text mode: chapters are prose, not JSON.

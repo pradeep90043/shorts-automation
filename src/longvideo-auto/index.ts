@@ -4,7 +4,7 @@ import { CHANNEL_ORDER, DEFAULT_GRID, gridFromEnv, hhmm, longReleaseSlots, short
 import { insightChannels } from "../my-video/insightClip";
 import { autoLongChannels, dailyLongEnabled } from "./config";
 import { checkScript, cleanScriptMarkers } from "./guardrails";
-import type { Ask } from "./llm";
+import { llmDownReason, type Ask } from "./llm";
 import { LongQueue, planDay, runNext } from "./queue";
 import { assignRelease } from "./release";
 import { FetchText, researchTopic } from "./research";
@@ -230,6 +230,7 @@ export function startAutoLong(deps: AutoLongDeps, tickMs = 60_000): { stop(): vo
           now: deps.now,
           isShortActive: deps.isShortActive,
           isLongBusy: deps.isStickmanBusy,
+          llmDownReason,
           produce: (req, useFallback) => produceLongVideo(req, useFallback, deps),
           onResult: (r, req, error) => alertFailure(r, req, error),
         },

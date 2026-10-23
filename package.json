@@ -21,6 +21,7 @@
     "test:youtube": "ts-node tests/youtube.test.ts",
     "test:pipeline": "ts-node tests/pipeline.test.ts",
     "test:plan-import": "ts-node tests/plan-import.test.ts",
+    "test:planner-resume": "ts-node tests/planner-resume.test.ts",
     "test:howitworks-clip": "ts-node tests/howitworks-clip.test.ts",
     "test:scene-composer": "ts-node tests/scene-composer.test.ts",
     "test:code-tutorial": "ts-node tests/code-tutorial.test.ts",

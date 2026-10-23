@@ -1,3 +1,6 @@
+import crypto from "crypto";
+import fs from "fs";
+import path from "path";
 import { FreeLlmApiClient } from "../ai/freellmapi";
 import { GeminiClient } from "../ai/gemini";
 import { config } from "../config";
@@ -889,6 +892,32 @@ async function pool<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]>
   return out;
 }
 
+
+// ── resumable planning ───────────────────────────────────────────────────────────────────────────────────────────
+// Directing a long script takes many LLM calls; when the providers fail for minutes the plan used to be thrown away
+// (a 97-beat video lost 17 min of work on 2026-10-16). Directed beats are checkpointed per script, so the next attempt
+// only asks for the ones still missing.
+const CHECKPOINT_TTL_MS = 24 * 3600_000;
+const checkpointFile = (beats: string[]) =>
+  path.join(config.paths.dataDir, "plan-checkpoints", `${crypto.createHash("sha1").update(beats.join("\n")).digest("hex")}.json`);
+
+function loadCheckpoint(file: string, count: number): { visuals: Record<string, any>; meta: any } | null {
+  try {
+    const cp = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (Date.now() - cp.savedAt > CHECKPOINT_TTL_MS || cp.count !== count) return null;
+    return { visuals: cp.visuals ?? {}, meta: cp.meta ?? null };
+  } catch { return null; }
+}
+
+function saveCheckpoint(file: string, count: number, visuals: any[], meta: any): void {
+  try {
+    const kept: Record<string, any> = {};
+    visuals.forEach((v, i) => { if (v && !isThin(v)) kept[i] = v; });
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ savedAt: Date.now(), count, meta, visuals: kept }));
+  } catch { /* a checkpoint is an optimisation, never a failure */ }
+}
+
 /**
  * Turns the user's script into stickman scenes. The narration is split
  * deterministically (the script is never rewritten); the LLM directs the
@@ -910,6 +939,14 @@ export async function planStickmanVideo(
   const locked = new Set<number>();
   let meta: any = prefilled && Object.keys(prefilled.meta ?? {}).length ? prefilled.meta : null;
   if (prefilled) for (const [i, sc] of prefilled.byIndex) if (i >= 0 && i < beats.length) { visuals[i] = sc; locked.add(i); }
+  const cpFile = checkpointFile(beats);
+  const cp = prefilled ? null : loadCheckpoint(cpFile, beats.length);
+  if (cp) {
+    let restored = 0;
+    for (const [k, sc] of Object.entries(cp.visuals)) { const i = Number(k); if (i >= 0 && i < beats.length && !visuals[i]) { visuals[i] = sc; locked.add(i); restored++; } }
+    if (!meta && cp.meta && Object.keys(cp.meta).length) meta = cp.meta;
+    if (restored) pipelineLogger.info(`Stickman director: resumed ${restored}/${beats.length} beats from an earlier attempt`, "StickmanPlanner");
+  }
   const merge = (res: { meta: any; byIndex: Map<number, any> } | null) => {
     if (!res) return;
     if (!meta && res.byIndex.has(0)) meta = res.meta;
@@ -930,6 +967,7 @@ export async function planStickmanVideo(
     if (!todo.length) break;
     const results = await pool(groups(todo, ROUNDS[r]).map((g) => () => directBeats(beats, g, beats.length, notes)), 4);
     results.forEach(merge);
+    if (!prefilled) saveCheckpoint(cpFile, beats.length, visuals, meta);
     const left = open.filter((i) => isThin(visuals[i])).length;
     pipelineLogger.info(`Stickman director round ${r + 1}/${ROUNDS.length}: ${beats.length - left}/${beats.length} beats directed`, "StickmanPlanner");
   }
@@ -958,6 +996,7 @@ export async function planStickmanVideo(
         "This is usually a temporary LLM problem - start the video again.",
     );
   }
+  try { fs.unlinkSync(cpFile); } catch { /* none */ }
   const plan = finalizePlan(beats, visuals, meta, script, titleHint);
   const named = addNamedPhotoRequests(plan.scenes);
   if (named) pipelineLogger.info(`Requested ${named} real photo(s) for beats that name a known place or institution`, "StickmanPlanner");

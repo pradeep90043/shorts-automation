@@ -156,6 +156,8 @@ export interface WorkerDeps {
   isLongBusy(): boolean;
   /** research -> script -> render -> private upload with a release time. Throws on failure. */
   produce(req: LongRequest, useFallbackSeed: boolean): Promise<{ videoUrl?: string; jobId?: string; releaseAt?: string }>;
+  /** why the LLM providers are unusable right now (null = fine); while set, nothing starts and no attempt is used */
+  llmDownReason?(): Promise<string | null>;
   maxAttempts?: number;
   backoffMs?: number;
   /** told about every result that is not "idle"/"blocked", with the request and the error when there is one (alerts hook here) */
@@ -172,6 +174,12 @@ export async function runNext(queue: LongQueue, deps: WorkerDeps, channelOrder?:
   }
   const req = queue.next(deps.now(), channelOrder);
   if (!req) return "idle";
+  const down = await deps.llmDownReason?.();
+  if (down) {
+    autoLongStatus.counters.blocked++;
+    autoLongStatus.log("warn", "run", `waiting, not starting ${req.id}: ${down}`, req.id);
+    return "blocked";
+  }
   const maxAttempts = deps.maxAttempts ?? 2;
   const attempt = req.attempts + 1;
   queue.update(req.id, { status: "running", attempts: attempt, startedAt: new Date(deps.now()).toISOString() });
