@@ -79,7 +79,7 @@ const firstMatch = (list: [string, RegExp][], text: string): string | undefined 
 const PROP_WORDS: [string, RegExp][] = [
   ["gift", /तोहफ़ा|तोहफा|उपहार|गिफ्ट|gift|present/i], ["letter", /चिट्ठी|पत्र|खत\b|letter/i], ["money", /पैसे|रुपये|रुपए|नोट|धन\b|money|rupee/i], ["food", /खाना|रोटी|भोजन|मिठाई|खिचड़ी|food|meal|bread/i],
   ["tea", /चाय|tea\b/i], ["cake", /केक|cake/i], ["book", /किताब|पुस्तक|कॉपी|book|notebook/i], ["bag", /बस्ता|बैग|थैला|bag\b/i], ["ball", /गेंद|ball\b/i], ["cricket", /बल्ला|क्रिकेट|cricket|bat\b/i],
-  ["dog", /कुत्ता|कुत्ते|पिल्ला|dog\b|puppy/i], ["cat", /बिल्ली|cat\b/i], ["cow", /गाय|बैल|cow\b|bull/i], ["horse", /घोड़ा|घोड़े|horse/i], ["bird", /चिड़िया|पक्षी|तोता|कबूतर|bird|parrot/i],
+  ["dog", /कुत्ता|कुत्ते|पिल्ला|dog\b|puppy/i], ["cat", /बिल्ली|cat\b/i], ["cow", /गाय|भैंस|भैंसा|बैल|cow\b|buffalo|bull/i], ["horse", /घोड़ा|घोड़े|horse/i], ["bird", /चिड़िया|पक्षी|तोता|कबूतर|bird|parrot/i],
   ["car", /कार\b|गाड़ी|car\b|taxi|जीप/i], ["bus", /बस\b|bus\b/i], ["bicycle", /साइकिल|cycle|bicycle/i], ["boat", /नाव|नौका|boat/i],
   ["bed", /बिस्तर|पलंग|खाट|bed\b/i], ["chair", /कुर्सी|chair/i], ["table", /मेज़|मेज\b|table\b/i], ["door", /दरवाज़ा|दरवाजा|door\b/i], ["lamp", /लैंप|बल्ब|lamp/i], ["candle", /मोमबत्ती|candle/i], ["diya", /दीया|दीपक|diya/i],
   ["fire", /आग\b|अलाव|fire\b|flame/i], ["crown", /ताज\b|मुकुट|crown/i], ["key", /चाबी|कुंजी|key\b/i], ["trophy", /ट्रॉफी|इनाम|पुरस्कार|कप\b|trophy|prize/i], ["umbrella", /छाता|छतरी|umbrella/i],
