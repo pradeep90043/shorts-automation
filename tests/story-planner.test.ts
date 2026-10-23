@@ -12,7 +12,7 @@ assert.ok(/^#[0-9a-f]{6}$/i.test(cast[0].skin));
 // a beat with no AI staging still gets a background from its words and the people of the previous scene
 const first = sanitizeStaging({ bg: "school", time: "day", chars: [{ id: "raju", x: 30, pose: "scared", mood: "scared" }, { id: "ghost", x: 70 }] }, "टीचर ने सवाल पूछा", cast, undefined, 0);
 assert.deepStrictEqual(first.chars.map((c) => c.id), ["raju"], "unknown characters are dropped");
-assert.ok(first.chars[0].speaking, "someone always speaks");
+assert.ok(!first.chars[0].speaking, "a narrated story beat: the character acts, the narrator is off screen");
 const next = sanitizeStaging(undefined, "रात को राजू अपने घर में रो रहा था", cast, first, 1);
 assert.strictEqual(next.bg, "room_night");
 assert.strictEqual(next.time, "night");
@@ -56,8 +56,8 @@ assert.strictEqual(n.place, "दिल्ली");
 {
   const c = sanitizeCast(undefined, "story");
   const a = sanitizeStaging({ bg: "village", time: "day" }, "गाँव में सुबह थी", c, undefined, 0, "story");
-  const b = sanitizeStaging({ bg: "village", time: "day" }, "लोग खेत जा रहे थे", c, a, 1, "story");
-  const d = sanitizeStaging({ bg: "village", time: "day" }, "बच्चे खेल रहे थे", c, b, 2, "story");
+  const b = sanitizeStaging({ bg: "village", time: "day" }, "लोग बोले कि खेत चलो", c, a, 1, "story");
+  const d = sanitizeStaging({ bg: "village", time: "day" }, "बच्चों ने कहा कि अब खेलो", c, b, 2, "story");
   assert.ok(b.cont && d.cont, "same place and time = the shot goes on");
   assert.deepStrictEqual(b.chars.map((x) => [x.id, x.x]), a.chars.map((x) => [x.id, x.x]), "nobody moves between beats of a shot");
   assert.notStrictEqual(b.chars.find((x) => x.speaking)?.id, d.chars.find((x) => x.speaking)?.id, "the speaker alternates");
@@ -88,5 +88,18 @@ assert.strictEqual(n.place, "दिल्ली");
   assert.strictEqual(c[0].hair, "bald");
   assert.ok(/^#[0-9a-f]{6}$/i.test(c[0].skin), "an animal has a fur colour");
   assert.strictEqual(c[1].species, undefined, "an unknown species is a person");
+}
+// narration is not spoken by the characters: they act the event; dialogue is the only time they talk
+{
+  const c = sanitizeCast(undefined, "story");
+  const inside = sanitizeStaging(undefined, "भेड़िया बैल के पेट के अंदर छटपटाने लगा", c, undefined, 0, "story");
+  assert.strictEqual(inside.bg, "belly", "inside the animal's belly");
+  assert.ok(inside.chars.some((x) => x.pose === "struggle"), "struggling, not talking");
+  assert.ok(inside.chars.every((x) => !x.speaking), "narration beat: nobody talks");
+  const said = sanitizeStaging(undefined, "भेड़िया चिल्लाया, \"बचाओ मुझे!\"", c, undefined, 0, "story");
+  assert.ok(said.chars.some((x) => x.speaking), "dialogue: the character talks");
+  assert.ok(said.chars.some((x) => x.pose === "shout"));
+  const news = sanitizeStaging(undefined, "संसद में हंगामा हुआ", sanitizeCast(undefined, "news"), undefined, 0, "news");
+  assert.ok(news.chars.some((x) => x.speaking), "an anchor always speaks");
 }
 console.log("✓ storyboard planner");
