@@ -143,7 +143,7 @@ export function sanitizeCast(raw: unknown, look: Look = "story"): StoryMember[] 
     const outfit = pick(OUTFITS, r?.outfit, species ? "fur" : "shirt");
     out.push({
       ...(species ? { species } : {}),
-      id, name: typeof r?.name === "string" ? r.name.slice(0, 14) : "", age: species ? "adult" : pick(AGES, r?.age, "adult"), skin: species ? hex(r?.skin, FUR[species]) : hex(r?.skin, SKINS[i % SKINS.length]),
+      id, name: typeof r?.name === "string" ? r.name.slice(0, 14) : "", age: species ? "adult" : pick(AGES, r?.age, "adult"), skin: species ? FUR[species] : hex(r?.skin, SKINS[i % SKINS.length]), // an animal has the colour of its species (the AI painted a wolf orange)
       hair: species ? "bald" : pick(HAIRS, r?.hair, "short"), hairColor: hex(r?.hairColor, "#1B1B1B"), outfit, color: hex(r?.color, COLORS[i % COLORS.length]),
       color2: hex(r?.color2, outfit === "saree" ? "#F1C40F" : "#2D3436"), glasses: !!r?.glasses, beard: !!r?.beard, bindi: !!r?.bindi,
     });
