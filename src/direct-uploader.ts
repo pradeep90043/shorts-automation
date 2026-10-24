@@ -45,7 +45,8 @@ import { TranscriptionService } from "./audio/transcription";
 import { PexelsService } from "./video/pexelsService";
 import { MultiSceneGenerator } from "./video/multiSceneGenerator";
 import { renderShortCloud } from "./renderer/cloudShortRenderer";
-import { isGeneratedShortChannel, renderGeneratedShort } from "./my-video/generatedShort";
+import { renderGeneratedShort } from "./my-video/generatedShort";
+import { usesGeneratedShort } from "./my-video/generatedChannels";
 import { cleanNarration, extractNarration } from "./longvideo-auto/scriptWriter";
 import { nextDirectorModel } from "./my-video/stickmanPlanner";
 
@@ -2974,7 +2975,7 @@ ${this.theme.analysisRules}`;
       }
       context.useVoiceover = !!(
         context.reviewSettings?.voiceover && context.metadata?.voiceoverScript
-      ) && !(context.isVideo && isGeneratedShortChannel(this.profile.key));
+      ) && !(context.isVideo && usesGeneratedShort(this.profile.key, context.sourceMeta?.fileId));
 
       // Kick off TTS in parallel with the video render (the image branch
       // generates it synchronously because it needs the duration up front).
@@ -3911,7 +3912,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
 
       // ── GENERATED SHORT (Storiyum): the whole Short is made by my-video from the reel's context; no source footage ──
       let cloudDone = false;
-      const generatedShort = !!context.isVideo && isGeneratedShortChannel(this.profile.key);
+      const generatedShort = !!context.isVideo && usesGeneratedShort(this.profile.key, context.sourceMeta?.fileId);
       if (generatedShort) {
         this.db.updateJob(id, { currentStep: "Generating the Short with my-video" });
         let script = (context.metadata?.voiceoverScript || context.metadata?.description || context.metadata?.title || "").trim();
@@ -4148,7 +4149,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         path.join(tempDir, "video_final.mp4"),
         rawVideoPath,
       ];
-      const playable = isGeneratedShortChannel(this.profile.key) && context.isVideo ? undefined : fallbackCandidates.find((p) => fs.existsSync(p));
+      const playable = usesGeneratedShort(this.profile.key, context.sourceMeta?.fileId) && context.isVideo ? undefined : fallbackCandidates.find((p) => fs.existsSync(p));
       if (playable) {
         try {
           await this.sendForManualReview(
