@@ -162,7 +162,7 @@ export interface Staged {
   cont?: boolean;
   look: Look; headline?: string; stat?: { label: string; value: string }; place?: string;
   bg: string; time: string;
-  chars: { id: string; x: number; pose: string; mood: string; flip: boolean; scale: number; delay: number; speaking: boolean; fromX?: number; holds?: string; says?: string; react?: string }[];
+  chars: { id: string; x: number; pose: string; mood: string; flip: boolean; scale: number; delay: number; speaking: boolean; fromX?: number; holds?: string; says?: string; react?: string; acts?: { at: number; pose: string }[]; fromPose?: string }[];
   props?: { type: string; x: number; air: number; scale: number; anim: string; delay: number }[];
   fx?: string;
 }
@@ -225,6 +225,7 @@ export function sanitizeStaging(raw: any, text: string, cast: StoryMember[], pre
     holds: PROPS.includes(c.holds) ? c.holds : undefined,
     says: typeof c.says === "string" && c.says.trim() ? c.says.trim().slice(0, 30) : undefined,
     react: ["no", "yes", "shrug", "surprise", "laugh"].includes(c.react) ? c.react : undefined,
+    acts: Array.isArray(c.acts) ? c.acts.filter((a: any) => POSES.includes(a?.pose)).slice(0, 4).map((a: any, k: number, arr: any[]) => ({ at: Math.max(0, Math.min(0.95, Number(a.at) || k / arr.length)), pose: a.pose })) : undefined,
   }));
   if (look !== "story" && !staged.some((c: { speaking: boolean }) => c.speaking)) staged[0].speaking = true;
   // dialogue: the speaker shows the quoted words in a bubble; whoever answers no / yes shakes their head or nods (rules fill what the AI left out)
@@ -237,6 +238,15 @@ export function sanitizeStaging(raw: any, text: string, cast: StoryMember[], pre
       const target = staged.find((c: { react?: string; speaking: boolean }) => !c.react && (staged.length === 1 || !c.speaking)) ?? speaker;
       if (target && !target.react) target.react = reaction;
       if (reaction === "no" && speaker && !speaker.react && staged.length > 1) speaker.react = "no";
+    }
+  }
+  // several things happen in one sentence ("भागा और रोने लगा"): the doer performs them in the order the words give
+  if (look === "story") {
+    const found = POSE_WORDS.map(([pose, re]) => ({ pose, idx: text.search(re) })).filter((x) => x.idx >= 0).sort((a, b) => a.idx - b.idx);
+    const seq = found.filter((x, k) => found.findIndex((y) => y.pose === x.pose) === k).slice(0, 3);
+    if (seq.length >= 2) {
+      const doer = staged.find((c: { acts?: unknown; pose: string }) => !c.acts) ?? staged[0];
+      if (doer && !doer.acts) { doer.acts = seq.map((x, k) => ({ at: k / seq.length, pose: x.pose })); doer.pose = seq[0].pose; }
     }
   }
   // the AI often leaves a person standing in a beat whose words say what they DO: the words win for the first idle person
@@ -347,7 +357,11 @@ export async function planStoryboard(script: string, titleHint?: string, look: L
   const scenes = beats.map((text, i) => {
     const st = sanitizeStaging(raws.get(i), text, cast, prev, i, look);
     // a continuing shot: whoever stood in the previous beat walks from there (nobody re-enters, nothing fades)
-    if (st.cont && prev) for (const c of st.chars) c.fromX = prev.chars.find((p) => p.id === c.id)?.x;
+    if (st.cont && prev) for (const c of st.chars) {
+      const before = prev.chars.find((p) => p.id === c.id);
+      c.fromX = before?.x;
+      if (before) c.fromPose = (before.acts?.length ? before.acts[before.acts.length - 1].pose : before.pose);
+    }
     prev = st;
     return {
       id: `s${String(i + 1).padStart(2, "0")}`,

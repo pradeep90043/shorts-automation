@@ -118,4 +118,12 @@ assert.strictEqual(n.place, "दिल्ली");
   assert.ok(y.chars.some((x) => x.react === "yes"), "a nod");
   assert.ok(y.chars.every((x) => !x.says), "no quoted words: no bubble");
 }
+// several actions in one sentence run in the order of the words; the next beat's first action eases out of the last one
+{
+  const c = sanitizeCast(undefined, "story");
+  const a = sanitizeStaging(undefined, "राजू डरकर भागा और रोने लगा", c, undefined, 0, "story");
+  const doer = a.chars.find((x) => x.acts);
+  assert.ok(doer && doer.acts!.map((x) => x.pose).join() === "run,cry", "run, then cry: " + JSON.stringify(doer?.acts));
+  assert.ok(doer!.acts![1].at > doer!.acts![0].at);
+}
 console.log("✓ storyboard planner");
