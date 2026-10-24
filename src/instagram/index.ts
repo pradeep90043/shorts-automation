@@ -218,12 +218,16 @@ export async function downloadReelFrame(
       pipelineLogger.info("Attempting download via TikWM API...", "TikTok");
       sourceCaption = await downloadTikTokViaTikwm(url, destDir);
     } else {
+      // YouTube: the default player client gets 403 on the HD streams, the web client serves the combined format
+      // without a login; the Instagram cookie jar has nothing to do with YouTube.
+      const isYouTube = /(?:youtube\.com|youtu\.be)\//i.test(url);
       await runCommand(
         YTDLP,
         [
           "--no-playlist",
-          "--cookies",
-          COOKIES_FILE,
+          ...(isYouTube
+            ? ["--extractor-args", "youtube:player_client=web,mweb", "-f", "bv*[height<=1080]+ba/b"]
+            : ["--cookies", COOKIES_FILE]),
           "--playlist-items",
           "1",
           "-o",
