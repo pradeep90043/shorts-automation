@@ -2115,7 +2115,7 @@ export function startLogServer(): void {
         const watcher = activeWatchers.get(pKey);
         let jobId = "";
         if (watcher) {
-          jobId = await watcher.injectAndRunReel(reelUrl);
+          jobId = await watcher.injectAndRunReel(reelUrl, typeof body.format === "string" ? body.format : undefined);
         } else {
           const newItem = {
             shortcode,

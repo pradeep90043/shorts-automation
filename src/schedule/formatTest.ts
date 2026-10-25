@@ -20,8 +20,15 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /** Whole IST days since the epoch: the same value for every slot of one IST day. */
 export const istDayIndex = (nowMs: number): number => Math.floor((nowMs + IST_OFFSET_MS) / DAY_MS);
 
-/** Off by default: until the generators for the image formats are in place nothing may change how Shorts are made. */
-export const formatTestActive = (env: NodeJS.ProcessEnv = process.env): boolean => switchOn("FORMAT_TEST", env, false);
+/** On by default, for the channels in FORMAT_TEST_CHANNELS only (CodeOrCap). FORMAT_TEST=off is the kill switch: slots go back to the normal Short. */
+export const formatTestActive = (env: NodeJS.ProcessEnv = process.env): boolean => switchOn("FORMAT_TEST", env, true);
+
+/** Channels in the experiment (FORMAT_TEST_CHANNELS, default codeorcap: the one with an audience to measure). */
+export function formatTestChannels(env: NodeJS.ProcessEnv = process.env): string[] {
+  return (env.FORMAT_TEST_CHANNELS ?? "codeorcap").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+}
+export const formatTestFor = (channelKey: string, env: NodeJS.ProcessEnv = process.env): boolean =>
+  formatTestActive(env) && formatTestChannels(env).includes(channelKey.toLowerCase());
 
 export function leaderFormat(env: NodeJS.ProcessEnv = process.env): ShortFormat {
   const raw = (env.FORMAT_TEST_LEADER ?? "").trim().toLowerCase();

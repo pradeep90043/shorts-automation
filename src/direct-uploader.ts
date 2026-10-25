@@ -46,6 +46,7 @@ import { PexelsService } from "./video/pexelsService";
 import { MultiSceneGenerator } from "./video/multiSceneGenerator";
 import { renderShortCloud } from "./renderer/cloudShortRenderer";
 import { renderGeneratedShort } from "./my-video/generatedShort";
+import { buildFormatShort } from "./formats/runFormat";
 import { usesGeneratedShort } from "./my-video/generatedChannels";
 import { cleanNarration, extractNarration } from "./longvideo-auto/scriptWriter";
 import { nextDirectorModel } from "./my-video/stickmanPlanner";
@@ -2957,6 +2958,8 @@ ${this.theme.analysisRules}`;
         return;
       }
       context.settingsReviewDone = true;
+      // Format experiment: a slot may ask for a format other than the channel's normal Short (see schedule/formatTest.ts).
+      if (await this.tryFormatShort(context)) return;
       // The voiceover is wanted but the AI left its script empty (seen 2026-10-21: a Prompt Gag Short was rendered muted). Write one from
       // the title, description and transcript instead of publishing a silent Short.
       if (context.reviewSettings?.voiceover && context.metadata && !context.metadata.voiceoverScript?.trim() && context.isVideo) {
@@ -3809,6 +3812,71 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
    * automatically. On any compile/mix error, fall back to the manual review
    * flow (existing Publish/Cancel/Regenerate buttons) if a playable video exists.
    */
+  /**
+   * Format experiment: builds the Short in the format its slot was given (static list card + music, several images + voice, or a card
+   * prepared for a manual post in the YouTube app) from the source reel's WORDS only, then hands it to the normal review/publish.
+   * true = handled here; false = anything went wrong or no format was asked for, so the channel's normal Short is made (a slot is never lost).
+   */
+  private async tryFormatShort(context: PipelineContext): Promise<boolean> {
+    const format = context.shortFormat;
+    if (format !== "image_music" && format !== "image_voice" && format !== "manual") return false;
+    const id = context.id;
+    const key = this.profile.key.toLowerCase();
+    try {
+      this.db.updateJob(id, { currentStep: `Making the ${format} Short` });
+      const material = [
+        context.transcript?.text && `SPOKEN: ${context.transcript.text}`,
+        context.captionMetadata?.description && `CAPTION: ${context.captionMetadata.description}`,
+        context.ocr?.text && `ON SCREEN: ${context.ocr.text}`,
+        context.metadata?.title && `TITLE: ${context.metadata.title}`,
+        context.metadata?.description && `ABOUT: ${context.metadata.description}`,
+      ].filter(Boolean).join("\n").replace(/#\S+/g, " ").slice(0, 2400);
+      const hindi = key !== "codeorcap";
+      const built = await buildFormatShort({
+        format,
+        brandKey: key,
+        seed: context.shortcode || id,
+        material,
+        ocrText: context.ocr?.text,
+        title: context.metadata?.title,
+        hindi,
+        footer: key === "prompt_gag" ? "शैक्षिक जानकारी, निवेश सलाह नहीं" : undefined,
+        llm: async (prompt) => {
+          if (!this.freellmapi) throw new Error("no LLM configured");
+          return this.freellmapi.generateText(prompt, undefined, 2500, nextDirectorModel());
+        },
+        tts: (text, file) => this.tts.generateVoiceover(text, file, this.profile.key),
+        tempDir: path.join(context.tempDir, "format"),
+      });
+      if (format === "manual") {
+        const dir = path.join(config.paths.outputDir, "manual-candidates", id);
+        fs.mkdirSync(dir, { recursive: true });
+        fs.copyFileSync(built.videoPath, path.join(dir, "short.mp4"));
+        if (built.cardPng) fs.copyFileSync(built.cardPng, path.join(dir, "card.png"));
+        fs.writeFileSync(
+          path.join(dir, "post.json"),
+          JSON.stringify({ channel: key, format, title: context.metadata?.title, description: context.metadata?.description, cardTitle: built.title, source: context.sourceMeta.fileId }, null, 2),
+        );
+        this.db.updateJob(id, { status: "completed", currentStep: `Ready for a manual post in the YouTube app: ${dir}` });
+        pipelineLogger.checkpoint(`✓ Manual-post candidate prepared (${dir})`, true, id);
+        return true;
+      }
+      let finalVideoPath = built.videoPath;
+      // the 5-8 s card stays a card; the longer image+voice Short gets the channel's end sequence like any other Short
+      if (format === "image_voice" && (key === "codeorcap" || key === "storiyum" || key === "prompt_gag")) {
+        const withVerdict = path.join(context.tempDir, "video_with_verdict.mp4");
+        if (await this.appendVerdictSequence(context, finalVideoPath, withVerdict)) finalVideoPath = withVerdict;
+      }
+      pipelineLogger.checkpoint(`✓ ${format} Short built from the source text (no source footage)`, true, id);
+      await this.sendForManualReview(context, finalVideoPath, "");
+      return true;
+    } catch (err) {
+      pipelineLogger.warn(`Format ${format} failed (${err instanceof Error ? err.message : err}): making the normal Short instead`, "DirectUploader");
+      context.shortFormat = undefined;
+      return false;
+    }
+  }
+
   /** Clips being built in the background while the Short renders, by job id (see compileAndPublish). */
   private hiwEarly = new Map<string, Promise<{ done: boolean; clonedHiwFiles?: string[] }>>();
 

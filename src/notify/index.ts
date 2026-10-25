@@ -105,6 +105,7 @@ export class NotifyService implements INotifyService {
     // watched account this reel came from) — takes priority over whatever
     // we can scrape off the page ourselves.
     knownCreatorUsername?: string,
+    shortFormat?: string,
   ): Promise<void> {
     let framePath: string;
     let instagramSourceType: "image" | "image_with_music" | "video";
@@ -173,6 +174,7 @@ export class NotifyService implements INotifyService {
       shortcode,
       channelPinned: true,
       channelProfileKey: this.profile.key,
+      shortFormat,
     };
 
     if (presetSettings) {
@@ -251,6 +253,7 @@ export class NotifyService implements INotifyService {
     announce: (id: string) => string,
     failLabel: string,
     preset?: ReviewSettings,
+    shortFormat?: string,
   ): string {
     const id = `gen-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
     const tempGenDir = path.join(config.paths.tempDir, id);
@@ -258,7 +261,7 @@ export class NotifyService implements INotifyService {
 
     this.sendMessage(chatId, announce(id), anchorMessageId).catch(() => {});
 
-    this.processInstagramReel(reelUrl, tempGenDir, id, chatId, anchorMessageId, from, preset, knownCreatorUsername).catch((err) => {
+    this.processInstagramReel(reelUrl, tempGenDir, id, chatId, anchorMessageId, from, preset, knownCreatorUsername, shortFormat).catch((err) => {
       pipelineLogger.error(`${failLabel} pipeline failed for ${id}`, err, "Notify");
       try {
         this.db.updateJob(id, { status: "failed", currentStep: failLabel + " failed", error: err instanceof Error ? err.message : String(err) });
@@ -275,8 +278,9 @@ export class NotifyService implements INotifyService {
     anchorMessageId: number,
     from: { id: number; username?: string; first_name?: string } = { id: 0 },
     knownCreatorUsername?: string,
+    shortFormat?: string,
   ): string {
-    return this.startReel(reelUrl, chatId, anchorMessageId, from, knownCreatorUsername, () => "Reel received, downloading...", "Reel", this.presetSettings());
+    return this.startReel(reelUrl, chatId, anchorMessageId, from, knownCreatorUsername, () => "Reel received, downloading...", "Reel", this.presetSettings(), shortFormat);
   }
 
   /** A dashboard inject: the AI-recommended settings (plus the channel overrides), and the run stops at final_review for the dashboard publish. */
@@ -286,8 +290,9 @@ export class NotifyService implements INotifyService {
     anchorMessageId: number,
     from: { id: number; username?: string; first_name?: string } = { id: 0 },
     knownCreatorUsername?: string,
+    shortFormat?: string,
   ): string {
-    return this.startReel(reelUrl, chatId, anchorMessageId, from, knownCreatorUsername, (id) => `Injected reel, downloading... (${id})`, "Ingest");  // no preset: the AI-recommended settings apply
+    return this.startReel(reelUrl, chatId, anchorMessageId, from, knownCreatorUsername, (id) => `Injected reel, downloading... (${id})`, "Ingest", undefined, shortFormat);  // no preset: the AI-recommended settings apply
   }
 
   private parseCaptionMetadata(

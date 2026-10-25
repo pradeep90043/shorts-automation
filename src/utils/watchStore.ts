@@ -23,6 +23,8 @@ export interface QueuedReel {
   playCount?: number;
   likeCount?: number;
   commentCount?: number;
+  /** format of this Short in the format experiment (schedule/formatTest.ts) */
+  format?: string;
 }
 
 interface WatchStateRow {

@@ -1,5 +1,5 @@
 import assert from "assert";
-import { SHORT_FORMATS, formatForSlot, formatTestActive, istDayIndex, leaderFormat } from "../src/schedule/formatTest";
+import { SHORT_FORMATS, formatForSlot, formatTestActive, formatTestFor, istDayIndex, leaderFormat } from "../src/schedule/formatTest";
 
 // Latin square: over 4 consecutive days each format appears exactly once in every one of the first 4 slots, and once per day
 for (let slot = 0; slot < 4; slot++) {
@@ -20,9 +20,14 @@ assert.strictEqual(formatForSlot(4, 9, { FORMAT_TEST_LEADER: "image_voice" }), "
 assert.strictEqual(leaderFormat({ FORMAT_TEST_LEADER: "nonsense" }), "image_music");
 assert.throws(() => formatForSlot(-1, 0, {}));
 
-// off unless switched on
-assert.strictEqual(formatTestActive({}), false);
-assert.strictEqual(formatTestActive({ FORMAT_TEST: "on" }), true);
+// on by default for CodeOrCap only, with FORMAT_TEST=off as the kill switch and FORMAT_TEST_CHANNELS to widen it
+assert.strictEqual(formatTestActive({}), true);
+assert.strictEqual(formatTestActive({ FORMAT_TEST: "off" }), false);
+assert.strictEqual(formatTestFor("codeorcap", {}), true);
+assert.strictEqual(formatTestFor("CodeOrCap", {}), true);
+assert.strictEqual(formatTestFor("prompt_gag", {}), false);
+assert.strictEqual(formatTestFor("prompt_gag", { FORMAT_TEST_CHANNELS: "codeorcap, prompt_gag" }), true);
+assert.strictEqual(formatTestFor("codeorcap", { FORMAT_TEST: "off" }), false);
 
 // the IST day changes at 18:30 UTC, not at UTC midnight
 const base = Date.UTC(2026, 9, 25, 18, 29, 0);

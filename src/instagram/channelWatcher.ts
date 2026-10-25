@@ -3,6 +3,7 @@ import { JobQueue } from "../utils/queue";
 import { isOffValue } from "../utils/switches";
 import { NotifyService } from "../notify";
 import { WatchStore, QueuedReel } from "../utils/watchStore";
+import { formatForSlot, formatTestFor, istDayIndex, type ShortFormat } from "../schedule/formatTest";
 import { CHANNEL_ORDER, channelSlotIndex, gridFromEnv, hhmm, pickMinute, shortSlots, shortsGridActive } from "../schedule/shortsGrid";
 import { candidateStore } from "../longvideo-auto/config";
 import { istDateOf } from "../longvideo-auto/candidateStore";
@@ -765,9 +766,15 @@ export class ChannelWatcher {
         "ChannelWatcher",
       );
     }
+    const formatOn = formatTestFor(this.profile.key);
+    const daySlots = shortSlots(this.gridIndex(), CHANNEL_ORDER.length, gridFromEnv()).map((m) => this.istTodayAtMinuteUtcMs(m));
     const queue: QueuedReel[] = slotted.map((p, i) => {
       const stats = this.hashtagReelPool.find((r) => r.shortcode === p.shortcode);
+      // the Short's place in the whole day (a late start only fills the slots still ahead), so each format meets each slot equally
+      const dayPos = daySlots.findIndex((ms) => Math.abs(ms - slotTimes[i]) < 60_000);
+      const format: ShortFormat | undefined = formatOn ? formatForSlot(dayPos >= 0 ? dayPos : i, istDayIndex(Date.now())) : undefined;
       return {
+        format,
         shortcode: p.shortcode,
         url: p.url,
         channel: p.channel,
@@ -906,8 +913,13 @@ export class ChannelWatcher {
               0,
               undefined,
               readyToFire.channel,
+              readyToFire.format,
             );
         await this.store.markFired(readyToFire.shortcode, jobId);
+        if (readyToFire.format) {
+          await this.history.setFormat(readyToFire.shortcode, readyToFire.format).catch(() => {});
+          pipelineLogger.info(`[${this.profile.brandName}] Format test: ${readyToFire.shortcode} -> ${readyToFire.format}`, "ChannelWatcher");
+        }
         pipelineLogger.info(
           isManual
             ? `[${this.profile.brandName}] Interactive manual ingest triggered for reel @${readyToFire.channel}/${readyToFire.shortcode} (jobId: ${jobId})`
@@ -1096,7 +1108,7 @@ export class ChannelWatcher {
    * Injects a reel from the dashboard / API and immediately fires it,
    * bypassing the scheduler and updating the store + logging live.
    */
-  public async injectAndRunReel(reelUrl: string): Promise<string> {
+  public async injectAndRunReel(reelUrl: string, shortFormat?: string): Promise<string> {
     const shortcode =
       reelUrl.split("/reel/")[1]?.split("/")[0] ||
       reelUrl.split("/p/")[1]?.split("/")[0] ||
@@ -1108,6 +1120,7 @@ export class ChannelWatcher {
       0,
       undefined,
       "manual_inject",
+      shortFormat,
     );
 
     const newItem: QueuedReel = {

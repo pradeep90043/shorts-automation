@@ -16,7 +16,7 @@ import { config } from "../config";
  */
 export type CoverAspect = "landscape" | "portrait";
 
-interface Brand {
+export interface Brand {
   name: string;
   bg: string;
   accent: string;
@@ -170,6 +170,31 @@ function overlaySvg(brand: Brand, lines: string[], w: number, h: number, aspect:
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">
 <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#000" stop-opacity="0.45"/><stop offset="0.35" stop-color="#000" stop-opacity="0.05"/><stop offset="0.6" stop-color="#000" stop-opacity="0.55"/><stop offset="1" stop-color="#000" stop-opacity="0.9"/></linearGradient></defs>
 <rect width="${w}" height="${h}" fill="url(#g)"/>${tag}${text}</svg>`;
+}
+
+/** The channel's look (colours + picture style), for other image features that must match the covers. */
+export const brandFor = (key?: string): Brand => BRANDS[(key || "").toLowerCase()] ?? DEFAULT_BRAND;
+
+/**
+ * A picture for `prompt` from the same provider chain as the covers (worker, Gemini, free Pollinations), already cropped to w x h.
+ * Never throws: null = every provider failed (the caller draws a branded background instead).
+ */
+export async function generateBackgroundImage(prompt: string, w: number, h: number): Promise<Buffer | null> {
+  const aspect: CoverAspect = h >= w ? "portrait" : "landscape";
+  let ai = (await workerBackground(prompt)) ?? (await geminiBackground(prompt, aspect));
+  let logoCut = false;
+  if (!ai) {
+    ai = await aiBackground(prompt, w, h);
+    logoCut = !!ai;
+  }
+  if (!ai) return null;
+  try {
+    const meta = await sharp(ai).metadata();
+    const keep = Math.round((meta.height || h) * (logoCut ? 0.91 : 1)); // the free service stamps a logo in the bottom corner
+    return await sharp(await sharp(ai).extract({ left: 0, top: 0, width: meta.width || w, height: keep }).toBuffer()).resize(w, h, { fit: "cover" }).png().toBuffer();
+  } catch {
+    return null;
+  }
 }
 
 const cache = new Map<string, Promise<string | null>>();
