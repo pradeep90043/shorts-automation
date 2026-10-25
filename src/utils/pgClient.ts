@@ -118,6 +118,7 @@ export async function initSchema(): Promise<void> {
         ALTER TABLE reel_history ADD COLUMN IF NOT EXISTS youtube_video_id TEXT;
         ALTER TABLE reel_history ADD COLUMN IF NOT EXISTS instagram_media_id TEXT;
         ALTER TABLE reel_history ADD COLUMN IF NOT EXISTS facebook_video_id TEXT;
+        ALTER TABLE reel_history ADD COLUMN IF NOT EXISTS format TEXT;
       `);
       await pool.query(`
         CREATE TABLE IF NOT EXISTS channel_credentials (

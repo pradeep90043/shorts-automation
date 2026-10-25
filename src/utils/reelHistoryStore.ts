@@ -13,6 +13,8 @@ export interface ReelRecord {
   facebookVideoId?: string;
   failed?: boolean;
   failedReason?: string;
+  /** Short format the reel was made in (see schedule/formatTest.ts); lets results be compared per format */
+  format?: string;
 }
 
 /**
@@ -35,7 +37,7 @@ export class ReelHistoryStore {
     const pool = await getPool();
     const { rows } = await pool.query(
       `SELECT shortcode, channel, picked_at, published_at, youtube_url,
-              instagram_url, facebook_url, youtube_video_id, instagram_media_id, facebook_video_id, failed, failed_reason
+              instagram_url, facebook_url, youtube_video_id, instagram_media_id, facebook_video_id, failed, failed_reason, format
        FROM reel_history WHERE profile_key = $1`,
       [this.profileKey],
     );
@@ -52,6 +54,7 @@ export class ReelHistoryStore {
         facebookVideoId: row.facebook_video_id ?? undefined,
         failed: row.failed ?? undefined,
         failedReason: row.failed_reason ?? undefined,
+        format: row.format ?? undefined,
       });
     }
     pipelineLogger.info(
@@ -148,6 +151,15 @@ export class ReelHistoryStore {
         this.profileKey,
       ],
     );
+  }
+
+  /** Remember which Short format a reel was made in, so views can be grouped per format later. */
+  public async setFormat(shortcode: string, format: string): Promise<void> {
+    const rec = this.records.get(shortcode);
+    if (!rec) return;
+    rec.format = format;
+    const pool = await getPool();
+    await pool.query(`UPDATE reel_history SET format = $1 WHERE shortcode = $2 AND profile_key = $3`, [format, shortcode, this.profileKey]);
   }
 
   public async markFailed(shortcode: string, reason?: string): Promise<void> {
