@@ -24,7 +24,7 @@ const clip = (s: unknown, max: number): string => String(s ?? "").replace(/\s+/g
 export function listCardPrompt(material: string, hindi: boolean): string {
   return (
     `From the MATERIAL below (the text of a short video) make a LIST CARD in ${hindi ? "Hindi written in Devanagari script (numbers as digits)" : "English"}. ` +
-    `Use the facts and numbers of the material but write your own wording; NEVER invent a number, price or claim that is not in the material. ` +
+    `Use the facts and numbers of the material but write your own wording; NEVER invent a number, price or claim that is not in the material. Ignore calls to action in the material (follow, subscribe, comment, DM, link in bio, join a list): they are not facts. ` +
     `Answer with JSON only: {"title": hook of at most 55 characters that contains the main number or promise, ` +
     `"rows": 4 to 7 objects {"label": at most 24 characters, "value": at most 20 characters, the number or short fact}, ` +
     `"closing": one short sentence of at most 90 characters (a caveat or takeaway), ` +
@@ -62,6 +62,8 @@ export const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;")
 export const FONT = "Noto Sans, Noto Sans Devanagari, DejaVu Sans, Arial, Helvetica, sans-serif";
 /** average glyph width as a share of the font size (Devanagari and bold Latin are wide; the font differs per machine) */
 export const GLYPH = 0.62;
+/** a light mood for every picture: the SCENE decides what is shown (the channel cover style would put a developer desk in every scene) */
+export const PICTURE_MOOD = "photorealistic, cinematic dramatic lighting, dark moody tones with warm golden highlights, shallow depth of field";
 export const CARD_W = 1080;
 export const CARD_H = 1920;
 
@@ -117,7 +119,7 @@ export interface RenderCardOptions {
 /** The card as a 1080x1920 PNG. A failed AI picture only means a branded gradient behind the same layout. */
 export async function renderListCardPng(c: ListCardContent, brandKey: string, outPng: string, opts: RenderCardOptions = {}): Promise<string> {
   const brand = brandFor(brandKey);
-  const prompt = `${brand.style}, ${c.image}. No text, no letters, no words, no logos, no watermark. vertical composition`;
+  const prompt = `${c.image}. ${PICTURE_MOOD}. No text, no letters, no words, no logos, no watermark. vertical composition`;
   const bg = opts.background !== undefined ? opts.background : await generateBackgroundImage(prompt, CARD_W, CARD_H, c.image);
   const base = bg
     ? sharp(bg).resize(CARD_W, CARD_H, { fit: "cover" })

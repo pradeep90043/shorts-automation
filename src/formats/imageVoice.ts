@@ -5,7 +5,7 @@ import sharp from "sharp";
 import { brandFor, generateBackgroundImage, wrapHeadline } from "../cover/coverImage";
 import { config } from "../config";
 import { pipelineLogger } from "../utils/logger";
-import { CARD_H, CARD_W, FONT, GLYPH, esc } from "./listCard";
+import { CARD_H, CARD_W, FONT, GLYPH, PICTURE_MOOD, esc } from "./listCard";
 
 /**
  * Format "image_voice": 4-6 scenes, each our own AI picture with a caption (and a big figure when the scene has one), spoken by the
@@ -28,7 +28,7 @@ const clip = (s: unknown, max: number): string => String(s ?? "").replace(/\s+/g
 export function imageVoicePrompt(material: string, hindi: boolean): string {
   return (
     `From the MATERIAL below (the text of a short video) write a 30-second vertical video as 4 to 6 scenes in ${hindi ? "Hindi written in Devanagari script (numbers as words in the narration, as digits in captions)" : "English"}. ` +
-    `Use the facts and numbers of the material in your own wording; NEVER invent a number, price or claim that is not in the material. ` +
+    `Use the facts and numbers of the material in your own wording; NEVER invent a number, price or claim that is not in the material. Ignore calls to action in the material (follow, subscribe, comment, DM, link in bio, join a list): they are not facts. ` +
     `Answer with JSON only: {"title": hook of at most 55 characters, "scenes": [{"narration": one spoken sentence of at most 18 words, ` +
     `"caption": the same idea in at most 60 characters, "image": a photo scene in English, no text, no people's faces, ` +
     `"stat": optional, the number or short fact of this scene in at most 14 characters}]}. The first scene is the hook, the last is the takeaway.\n\nMATERIAL:\n${material.slice(0, 1800)}\n/no_think`
@@ -73,7 +73,7 @@ export function sceneSvg(scene: VoiceScene, accent: string, footer?: string): st
 /** A 1080x1920 PNG for the scene: the AI picture (or the brand gradient when every provider failed) with caption and figure. */
 export async function renderSceneFrame(scene: VoiceScene, brandKey: string, outPng: string, opts: { footer?: string; background?: Buffer | null } = {}): Promise<string> {
   const brand = brandFor(brandKey);
-  const prompt = `${brand.style}, ${scene.image}. No text, no letters, no words, no logos, no watermark. vertical composition`;
+  const prompt = `${scene.image}. ${PICTURE_MOOD}. No text, no letters, no words, no logos, no watermark. vertical composition`;
   const bg = opts.background !== undefined ? opts.background : await generateBackgroundImage(prompt, CARD_W, CARD_H, scene.image);
   const base = bg
     ? sharp(bg).resize(CARD_W, CARD_H, { fit: "cover" })
