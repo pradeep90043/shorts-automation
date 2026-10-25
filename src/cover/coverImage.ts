@@ -130,13 +130,18 @@ async function workerBackground(prompt: string): Promise<Buffer | null> {
   return null;
 }
 
+/** Pollinations answered 402 (it wants payment now): stop asking it for the rest of this process instead of waiting ~10 s per picture. */
+let pollinationsPaywalled = false;
+
 async function aiBackground(prompt: string, w: number, h: number): Promise<Buffer | null> {
+  if (pollinationsPaywalled) return null;
   for (let attempt = 1; attempt <= 2; attempt++) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 75_000);
     try {
       const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${w}&height=${h}&model=flux&nologo=true&enhance=false&seed=${Math.floor(Math.random() * 1e6)}`;
       const res = await fetch(url, { signal: controller.signal });
+      if (res.status === 402) pollinationsPaywalled = true;
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const buf = Buffer.from(await res.arrayBuffer());
       await sharp(buf).metadata(); // really an image?
@@ -146,6 +151,7 @@ async function aiBackground(prompt: string, w: number, h: number): Promise<Buffe
     } finally {
       clearTimeout(timer);
     }
+    if (pollinationsPaywalled) return null;
     if (attempt < 2) await new Promise((r) => setTimeout(r, 4000));
   }
   return null;
@@ -172,6 +178,39 @@ function overlaySvg(brand: Brand, lines: string[], w: number, h: number, aspect:
 <rect width="${w}" height="${h}" fill="url(#g)"/>${tag}${text}</svg>`;
 }
 
+/** The best photo URL of a Pexels search answer (portrait crop first), or null. Pure, so it can be tested without the network. */
+export function pexelsPhotoUrl(json: any, aspect: CoverAspect): string | null {
+  const photo = (json?.photos ?? []).find((p: any) => p?.src);
+  if (!photo) return null;
+  const s = photo.src;
+  return (aspect === "portrait" ? s.portrait || s.large2x : s.landscape || s.large2x) || s.large || s.original || null;
+}
+
+/** Pexels stock photo (Pexels License: free for commercial use, no credit needed). Needs PEXELS_API_KEY; null on any failure. */
+async function pexelsPhoto(query: string, aspect: CoverAspect): Promise<Buffer | null> {
+  const key = (process.env.PEXELS_API_KEY || process.env.PIXELS_API_KEY || process.env.PEXEL_API_KEY || "").trim();
+  const q = query.replace(/[^\p{L}\p{N} ]/gu, " ").replace(/\s+/g, " ").trim().split(" ").slice(0, 6).join(" ");
+  if (!key || !q) return null;
+  try {
+    const res = await fetch(`https://api.pexels.com/v1/search?query=${encodeURIComponent(q)}&orientation=${aspect}&size=large&per_page=5`, {
+      headers: { Authorization: key },
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const url = pexelsPhotoUrl(await res.json(), aspect);
+    if (!url) throw new Error("no photo for the query");
+    const img = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+    if (!img.ok) throw new Error(`photo HTTP ${img.status}`);
+    const buf = Buffer.from(await img.arrayBuffer());
+    await sharp(buf).metadata();
+    pipelineLogger.info(`Background: Pexels stock photo for "${q}"`, "Cover");
+    return buf;
+  } catch (err) {
+    pipelineLogger.warn(`Background: Pexels failed (${err instanceof Error ? err.message : err})`, "Cover");
+    return null;
+  }
+}
+
 /** The channel's look (colours + picture style), for other image features that must match the covers. */
 export const brandFor = (key?: string): Brand => BRANDS[(key || "").toLowerCase()] ?? DEFAULT_BRAND;
 
@@ -179,7 +218,7 @@ export const brandFor = (key?: string): Brand => BRANDS[(key || "").toLowerCase(
  * A picture for `prompt` from the same provider chain as the covers (worker, Gemini, free Pollinations), already cropped to w x h.
  * Never throws: null = every provider failed (the caller draws a branded background instead).
  */
-export async function generateBackgroundImage(prompt: string, w: number, h: number): Promise<Buffer | null> {
+export async function generateBackgroundImage(prompt: string, w: number, h: number, photoQuery?: string): Promise<Buffer | null> {
   const aspect: CoverAspect = h >= w ? "portrait" : "landscape";
   let ai = (await workerBackground(prompt)) ?? (await geminiBackground(prompt, aspect));
   let logoCut = false;
@@ -187,6 +226,8 @@ export async function generateBackgroundImage(prompt: string, w: number, h: numb
     ai = await aiBackground(prompt, w, h);
     logoCut = !!ai;
   }
+  // every AI provider failed: a licensed stock photo of the scene is better than a plain colour
+  if (!ai && photoQuery) ai = await pexelsPhoto(photoQuery, aspect);
   if (!ai) return null;
   try {
     const meta = await sharp(ai).metadata();

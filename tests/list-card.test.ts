@@ -41,3 +41,10 @@ assert.ok(fs.existsSync(pickMusicBed("zzz")));
   assert.ok(probe.streams.some((s: any) => s.codec_type === "audio"));
   console.log("list-card: ok", mp4);
 })().catch((e) => { console.error(e); process.exit(1); });
+
+// Pexels answer -> the portrait crop first, nothing when there is no photo
+import { pexelsPhotoUrl } from "../src/cover/coverImage";
+assert.strictEqual(pexelsPhotoUrl({ photos: [{ src: { portrait: "p.jpg", large2x: "l.jpg", landscape: "w.jpg" } }] }, "portrait"), "p.jpg");
+assert.strictEqual(pexelsPhotoUrl({ photos: [{ src: { portrait: "p.jpg", landscape: "w.jpg" } }] }, "landscape"), "w.jpg");
+assert.strictEqual(pexelsPhotoUrl({ photos: [] }, "portrait"), null);
+assert.strictEqual(pexelsPhotoUrl(null, "portrait"), null);

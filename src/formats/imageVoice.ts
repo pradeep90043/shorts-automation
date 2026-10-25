@@ -74,7 +74,7 @@ export function sceneSvg(scene: VoiceScene, accent: string, footer?: string): st
 export async function renderSceneFrame(scene: VoiceScene, brandKey: string, outPng: string, opts: { footer?: string; background?: Buffer | null } = {}): Promise<string> {
   const brand = brandFor(brandKey);
   const prompt = `${brand.style}, ${scene.image}. No text, no letters, no words, no logos, no watermark. vertical composition`;
-  const bg = opts.background !== undefined ? opts.background : await generateBackgroundImage(prompt, CARD_W, CARD_H);
+  const bg = opts.background !== undefined ? opts.background : await generateBackgroundImage(prompt, CARD_W, CARD_H, scene.image);
   const base = bg
     ? sharp(bg).resize(CARD_W, CARD_H, { fit: "cover" })
     : sharp(await sharp({ create: { width: CARD_W, height: CARD_H, channels: 3, background: brand.bg } })
