@@ -583,6 +583,15 @@ export class ChannelWatcher {
   /** Logs this channel's planned grid, so it can be checked before SHORTS_GRID=on is set. */
   private logPlannedGrid(): void {
     const cfg = gridFromEnv();
+    if (formatTestFor(this.profile.key)) {
+      const day = istDayIndex(Date.now());
+      pipelineLogger.info(
+        `[${this.profile.brandName}] Format test ACTIVE: today's slots -> ` +
+          shortSlots(this.gridIndex(), CHANNEL_ORDER.length, cfg).map((m, i) => `${hhmm(m)} ${formatForSlot(i, day)}`).join(", ") +
+          " (FORMAT_TEST=off turns it off)",
+        "ChannelWatcher",
+      );
+    }
     pipelineLogger.info(
       `[${this.profile.brandName}] Shorts grid ${this.gridOn() ? "ACTIVE" : "OFF (SHORTS_GRID=off: legacy scheduleTime/gapHours in use; the grid would be)"}: ` +
         `selects reels ${hhmm(pickMinute(this.gridIndex(), cfg))} IST, publishes at ` +

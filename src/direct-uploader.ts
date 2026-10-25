@@ -148,6 +148,8 @@ export function isManualInjectContext(context: { channel?: string; id?: string }
 export class DirectUploader {
   public static instances: DirectUploader[] = [];
   private freellmapi: FreeLlmApiClient | null = null;
+  /** the format experiment's own LLM client, for when AI_PROVIDER is not freellmapi (created on first use) */
+  private formatLlm: FreeLlmApiClient | null = null;
   private gemini: GeminiClient = new GeminiClient();
   private renderer: VideoRenderer;
   private music: MusicService;
@@ -3842,8 +3844,8 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         hindi,
         footer: key === "prompt_gag" ? "शैक्षिक जानकारी, निवेश सलाह नहीं" : undefined,
         llm: async (prompt) => {
-          if (!this.freellmapi) throw new Error("no LLM configured");
-          return this.freellmapi.generateText(prompt, undefined, 2500, nextDirectorModel());
+          const client = this.freellmapi ?? (this.formatLlm ??= new FreeLlmApiClient());
+          return client.generateText(prompt, undefined, 2500, nextDirectorModel());
         },
         tts: (text, file) => this.tts.generateVoiceover(text, file, this.profile.key),
         tempDir: path.join(context.tempDir, "format"),

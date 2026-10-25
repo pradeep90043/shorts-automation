@@ -149,7 +149,7 @@ export function stillReelArgs(png: string, bed: string, out: string, seconds: nu
   return [
     "-y", "-loop", "1", "-framerate", "30", "-i", png, "-i", bed,
     "-filter_complex",
-    `[0:v]scale=1620:2880:flags=lanczos,zoompan=z='1+0.05*on/${frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=1080x1920:fps=30,fade=t=in:st=0:d=0.3,fade=t=out:st=${fo}:d=0.3,format=yuv420p[v];` +
+    `[0:v]scale=1296:2304:flags=lanczos,zoompan=z='1+0.05*on/${frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=1080x1920:fps=30,fade=t=in:st=0:d=0.3,fade=t=out:st=${fo}:d=0.3,format=yuv420p[v];` +
       `[1:a]atrim=0:${seconds},asetpts=PTS-STARTPTS,afade=t=in:d=0.4,afade=t=out:st=${af}:d=0.8,loudnorm=I=-16:TP=-1.5:LRA=7,aformat=sample_rates=44100:channel_layouts=stereo[a]`,
     "-map", "[v]", "-map", "[a]", "-t", String(seconds), "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", out,
   ];

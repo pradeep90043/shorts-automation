@@ -91,7 +91,7 @@ export function sceneClipArgs(png: string, seconds: number, index: number, out: 
   const z = index % 2 ? `1.06-0.06*on/${frames}` : `1+0.06*on/${frames}`;
   return [
     "-y", "-loop", "1", "-framerate", "30", "-i", png,
-    "-vf", `scale=1620:2880:flags=lanczos,zoompan=z='${z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=1080x1920:fps=30,format=yuv420p`,
+    "-vf", `scale=1296:2304:flags=lanczos,zoompan=z='${z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=1080x1920:fps=30,format=yuv420p`,
     "-frames:v", String(frames), "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-an", out,
   ];
 }
