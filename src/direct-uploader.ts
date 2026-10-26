@@ -3853,7 +3853,8 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         ocrText: context.ocr?.text,
         title: context.metadata?.title,
         hindi,
-        footer: key === "prompt_gag" ? "शैक्षिक जानकारी, निवेश सलाह नहीं" : undefined,
+        // CodeOrCap's cards carry its handle; Prompt Gag's carry the "not investment advice" line
+        footer: key === "prompt_gag" ? "शैक्षिक जानकारी, निवेश सलाह नहीं" : key === "codeorcap" ? `${this.profile.handle || "@codeorcap"} · figures are estimates` : undefined,
         llm: async (prompt) => {
           const client = this.freellmapi ?? (this.formatLlm ??= new FreeLlmApiClient());
           return client.generateText(prompt, undefined, 2500, nextDirectorModel());
@@ -3875,9 +3876,8 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         return true;
       }
       let finalVideoPath = built.videoPath;
-      // the 5-8 s card stays a card; the longer image+voice Short gets the channel's end sequence like any other Short
-      // a rebuilt still reel keeps the channel's V2 clip (with the verdict) like any normal Short
-      if ((format === "image_voice" || context.stillSourceCard) && (key === "codeorcap" || key === "storiyum" || key === "prompt_gag")) {
+      // the 5-8 s card stays a card (a rebuilt still reel too: our template + background music, nothing after it)
+      if (format === "image_voice" && (key === "codeorcap" || key === "storiyum" || key === "prompt_gag")) {
         const withVerdict = path.join(context.tempDir, "video_with_verdict.mp4");
         if (await this.appendVerdictSequence(context, finalVideoPath, withVerdict)) finalVideoPath = withVerdict;
       }
