@@ -120,6 +120,16 @@ export function sanitizeShot(raw: unknown, cast: Map<string, Dict>, secs: number
     // narration carries the words: characters do not get speech captions in a narrated video
     if (a.do === "say" || a.do === "think") continue;
     const act: Dict = { at: Math.max(0, Math.min(secs - 0.3, Number(a.at) || 0)), who: String(a.who).toLowerCase(), do: a.do };
+    // slips seen from real models: a mood or a direction written as the target, a surface the room does not have, a door to leave by
+    if (typeof a.target === "string" && !ids.has(a.target) && !inShot.has(a.target.toLowerCase()) && a.target.toLowerCase() !== "camera") {
+      const t = a.target.toLowerCase();
+      if (has(catalog.moods, t)) { a.mood = a.mood ?? t; delete a.target; if (a.do === "look" || a.do === "face") act.do = a.do = "mood"; }
+      else if (t === "left" || t === "right") { a.to = t; delete a.target; }
+      else if (["desk", "table", "counter", "nightstand", "shelf"].includes(t)) {
+        const table = TABLES.map((x) => [...ids].find((id) => id === x || shot.props.find((p: Dict) => p.id === id)?.kind === x)).find(Boolean);
+        if (table) { problems.push(`no ${t} here -> ${table}`); a.target = table; }
+      } else if (t === "door" && (a.do === "exit" || a.do === "walk")) { act.do = a.do = "exit"; delete a.target; }
+    }
     // "put the book on the phone": things go down on a surface - the nearest table-like one in the shot
     if (a.do === "put" && typeof a.target === "string" && !isSurface(a.target, shot)) {
       const table = TABLES.map((t) => [...ids].find((id) => id === t || shot.props.find((p: Dict) => p.id === id)?.kind === t)).find(Boolean);

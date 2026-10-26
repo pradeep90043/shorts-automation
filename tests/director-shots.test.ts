@@ -68,6 +68,13 @@ import type { StickmanPlan } from "../src/my-video/stickmanPlanner";
   const putOn = sanitizeShot({ place: "study", props: [{ id: "phone", kind: "phone", on: "desk" }, { id: "book", kind: "book", on: "desk" }], cast: [{ id: "raju", sitOn: "chair", holds: "book" }], actions: [{ at: 1, who: "raju", do: "put", target: "phone" }] }, cast, 3).shot!;
   assert.strictEqual(putOn.actions[0].target, "desk");
 
+  // 3e) slips from real models: mood as target, direction as target, a desk in a bedroom, leaving by a door that is not there
+  const slips = sanitizeShot({ place: "bedroom", props: [{ id: "cup", kind: "mug", on: "nightstand" }], cast: [{ id: "maa", at: 0.6, holds: "cup" }, { id: "raju", at: 0.3 }], actions: [
+    { at: 0.2, who: "raju", do: "look", target: "worried" }, { at: 0.4, who: "raju", do: "walk", target: "left" },
+    { at: 0.6, who: "maa", do: "put", target: "desk" }, { at: 1, who: "maa", do: "walk", target: "door" },
+  ] }, cast, 4).shot!;
+  assert.deepStrictEqual(slips.actions.map((a: any) => [a.do, a.target, a.to, a.mood]), [["mood", undefined, undefined, "worried"], ["walk", undefined, "left", undefined], ["put", "nightstand", undefined, undefined], ["exit", undefined, undefined, undefined]]);
+
   // 4) the whole step with a fake AI: cast once, shots in batches, an unusable answer leaves the beat's visual alone
   const plan: StickmanPlan = {
     title: "t", description: "d", tags: [], aiVisuals: true,
