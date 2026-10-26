@@ -678,8 +678,8 @@
     <div id="tab-viral" class="tab-pane">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px;">
         <div>
-          <div style="font-size:18px;font-weight:800;color:#fff;">🔥 Viral Analytics & Channel Performance</div>
-          <div style="font-size:12px;color:var(--text-muted);">Performance, publishing cadence, and engagement rate metrics</div>
+          <div style="font-size:18px;font-weight:800;color:#fff;">🔥 Viral Analytics & Channel Performance <span style="font-size:12px;font-weight:600;background:rgba(255,0,0,.15);color:#ff4444;border:1px solid rgba(255,0,0,.3);padding:2px 7px;border-radius:10px;vertical-align:middle;">▶ YouTube</span></div>
+          <div style="font-size:12px;color:var(--text-muted);">Real YouTube Analytics — performance, publishing cadence, and engagement metrics <span id="yt-data-through" style="margin-left:8px;font-size:11px;color:var(--text-dim);"></span></div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
           <div id="viral-channel-pills" style="display:flex;gap:6px;"></div>
@@ -690,6 +690,7 @@
             <button class="pill-btn active" data-range="30d" onclick="filterAnalyticsRange('30d',this)">30d</button>
             <button class="pill-btn" data-range="90d" onclick="filterAnalyticsRange('90d',this)">90d</button>
           </div>
+          <button class="btn-icon" onclick="refreshYTAnalytics()">🔄 Refresh YT</button>
           <button class="btn-icon" onclick="exportViralCsv()">📥 Export CSV</button>
         </div>
       </div>
@@ -776,14 +777,14 @@
       <div class="table-card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
           <div>
-            <div style="font-size:15px;font-weight:700;color:#fff;">🏆 Top Performing Reels Leaderboard</div>
-            <div style="font-size:11px;color:var(--text-muted);">Ranked by views and viral score in selected period</div>
+            <div style="font-size:15px;font-weight:700;color:#fff;">🏆 Top Performing Videos Leaderboard</div>
+            <div style="font-size:11px;color:var(--text-muted);">Ranked by real YouTube views and engagement in selected period</div>
           </div>
-          <input class="input-field" style="width:220px;padding:6px 12px;" id="viral-search-input" placeholder="Search reels..." oninput="applyViralSearch()">
+          <input class="input-field" style="width:220px;padding:6px 12px;" id="viral-search-input" placeholder="Search videos..." oninput="applyViralSearch()">
         </div>
         <div class="table-responsive">
           <table>
-            <thead><tr><th>Rank</th><th>Source Reel</th><th>Channel</th><th>Views</th><th>Eng. Rate</th><th>Shares</th><th>Trend</th><th>Actions</th></tr></thead>
+            <thead id="viral-leaderboard-thead"><tr><th>Rank</th><th>Video</th><th>Channel</th><th>Views</th><th>Avg View %</th><th>Real Shares</th><th>Format</th><th>Watch</th></tr></thead>
             <tbody id="viral-leaderboard-body"></tbody>
           </table>
         </div>
@@ -1068,8 +1069,14 @@
     if (sideItem) sideItem.classList.add('active');
     const pane = document.getElementById('tab-' + tab);
     if (pane) pane.classList.add('active');
-    if (tab === 'viral' && globalDashboardData && globalDashboardData.viralAnalytics) {
-      setTimeout(() => renderViralCharts(globalDashboardData.viralAnalytics), 60);
+    if (tab === 'viral') {
+      if (globalDashboardData && globalDashboardData.ytAnalytics) {
+        setTimeout(() => renderYTAnalytics(globalDashboardData.ytAnalytics), 60);
+      } else if (globalDashboardData && globalDashboardData.viralAnalytics) {
+        setTimeout(() => renderViralCharts(globalDashboardData.viralAnalytics), 60);
+      } else {
+        loadYTAnalyticsTab();
+      }
     }
     if (tab === 'longvideo') lvOnOpen();
     if (tab === 'config') {
@@ -1750,7 +1757,9 @@
       // never on the polling tick (it would wipe half-typed inputs + refire the
       // per-channel credential / Meta-token checks every few seconds).
       if (activeTab === 'config') renderConfigTab(data.channels);
-      if (data.viralAnalytics) renderViralSection(data.viralAnalytics);
+      if (data.ytAnalytics) renderYTAnalytics(data.ytAnalytics);
+      else if (data.viralAnalytics) renderViralSection(data.viralAnalytics);
+      else loadYTAnalyticsTab();
     } catch(e) { console.error('renderDashboard error:', e); }
   }
 
@@ -3253,17 +3262,18 @@
     }
   }
 
-  /* ─── VIRAL ANALYTICS ─── */
+  /* ─── VIRAL ANALYTICS (Rendered from real YouTube numbers) ─── */
   function renderViralSection(viralData) {
     if (!viralData) return;
+    if (globalDashboardData && globalDashboardData.ytAnalytics) return;
     const k = viralData.kpis || {};
-    setElText('kpi-total-views',  fmtNum(k.totalViews  || 584000));
-    setElText('kpi-total-reels',  String(k.totalReels  || 42));
-    setElText('kpi-avg-er',       (k.avgER             || 6.5) + '%');
-    setElText('kpi-total-shares', fmtNum(k.totalShares || 34200));
-    setElText('kpi-views-delta',  '↑ ' + (k.viewsDelta  || '23') + '% vs prev period');
-    setElText('kpi-shares-delta', '↑ ' + (k.sharesDelta || '18') + '% vs prev period');
-    setElText('kpi-reels-rate',   '↑ ' + ((k.totalReels || 42) / 30).toFixed(1) + ' avg/day');
+    setElText('kpi-total-views',  fmtNum(k.totalViews  || 0));
+    setElText('kpi-total-reels',  String(k.totalReels  || 0));
+    setElText('kpi-avg-er',       (k.avgER             || 0) + '%');
+    setElText('kpi-total-shares', fmtNum(k.totalShares || 0));
+    setElText('kpi-views-delta',  (k.viewsDelta  != null ? (k.viewsDelta >= 0 ? '↑ +' : '↓ ') + k.viewsDelta  + '% vs prev period' : '— vs prev period'));
+    setElText('kpi-shares-delta', (k.sharesDelta != null ? (k.sharesDelta >= 0 ? '↑ +' : '↓ ') + k.sharesDelta + '% vs prev period' : '— vs prev period'));
+    setElText('kpi-reels-rate',   k.totalReels ? ((k.totalReels / 30).toFixed(1) + ' avg/day') : '— avg/day');
     setElText('viral-patterns-content', viralData.patternsText || 'No patterns logged yet.');
     renderViralLeaderboard(viralData.leaderboard);
     if (activeTab === 'viral') renderViralCharts(viralData);
@@ -3271,26 +3281,36 @@
 
   function renderViralLeaderboard(leaderboard) {
     const body = document.getElementById('viral-leaderboard-body');
+    const thead = document.getElementById('viral-leaderboard-thead');
     if (!body) return;
+    if (thead) {
+      thead.innerHTML = '<tr><th>Rank</th><th>Video</th><th>Channel</th><th>Views</th><th>Avg View %</th><th>Real Shares</th><th>Format</th><th>Watch</th></tr>';
+    }
     if (!leaderboard || !leaderboard.length) {
-      body.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:20px;">No leaderboard data.</td></tr>';
+      body.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:20px;">No video analytics data available.</td></tr>';
       return;
     }
-    const filtered = selectedAnalyticsChannel === 'all' ? leaderboard : leaderboard.filter(r => (r.profileKey||'').toLowerCase() === selectedAnalyticsChannel.toLowerCase());
+    const filtered = selectedAnalyticsChannel === 'all'
+      ? leaderboard
+      : leaderboard.filter(r => (r.profileKey||r.channel||'').toLowerCase() === selectedAnalyticsChannel.toLowerCase());
     body.innerHTML = '';
     filtered.forEach((r, idx) => {
       const rank = idx===0?'🥇 #1':idx===1?'🥈 #2':idx===2?'🥉 #3':'#'+(idx+1);
-      const trendColor = r.trend==='↓'?'var(--danger)':r.trend==='→'?'var(--text-muted)':'var(--success)';
-      const srcUrl = r.sourceUrl || ('https://www.instagram.com/reel/' + r.shortcode + '/');
+      const isYt = (r.youtubeUrl || r.sourceUrl || '').includes('youtu');
+      const title = esc(r.title || ('Video #' + r.shortcode));
+      const srcUrl = r.youtubeUrl || r.sourceUrl || ('https://youtu.be/' + r.shortcode);
+      const erColor = (r.er || 0) > 50 ? 'var(--success)' : (r.er || 0) > 20 ? 'var(--warning)' : 'var(--text-muted)';
+      const fmt = esc(r.format || 'Short');
+      const watchIcon = isYt ? '▶' : '📷';
       const tr = document.createElement('tr');
       tr.innerHTML = '<td style="font-weight:800;color:var(--text-muted);">' + rank + '</td>' +
-        '<td><a href="' + srcUrl + '" target="_blank" style="color:var(--primary);font-weight:600;font-size:12px;text-decoration:none;">📷 Source Reel</a></td>' +
-        '<td><span style="font-weight:600;color:#fff;">' + esc(r.profileKey || '—') + '</span></td>' +
-        '<td style="font-family:var(--font-mono);font-weight:700;color:#fff;">' + fmtNum(r.playCount||0) + '</td>' +
-        '<td><span style="font-weight:700;color:' + (r.er>6?'var(--success)':r.er>4?'var(--warning)':'var(--text-muted)') + ';">' + r.er + '%</span></td>' +
-        '<td style="font-family:var(--font-mono);color:var(--text-muted);">' + fmtNum(r.shares||0) + '</td>' +
-        '<td><span style="font-weight:800;font-size:14px;color:' + trendColor + ';">' + (r.trend||'↑') + '</span></td>' +
-        '<td><a href="' + srcUrl + '" target="_blank" class="btn-icon" style="font-size:11px;">📷 Watch</a></td>';
+        '<td><a href="' + srcUrl + '" target="_blank" style="color:var(--primary);font-weight:600;font-size:12px;text-decoration:none;" title="' + title + '">' + watchIcon + ' ' + (title.length > 45 ? title.slice(0,45)+'…' : title) + '</a></td>' +
+        '<td><span style="font-weight:600;color:#fff;">' + esc(r.channel || r.profileKey || '—') + '</span></td>' +
+        '<td style="font-family:var(--font-mono);font-weight:700;color:#fff;">' + fmtNum(r.views || r.playCount || 0) + '</td>' +
+        '<td><span style="font-weight:700;color:' + erColor + ';">' + (r.er != null ? r.er + '%' : '—') + '</span></td>' +
+        '<td style="font-family:var(--font-mono);color:var(--text-muted);">' + fmtNum(r.shares || 0) + '</td>' +
+        '<td><span style="font-size:11px;background:var(--card);border:1px solid var(--card-border);padding:2px 6px;border-radius:4px;">' + fmt + '</span></td>' +
+        '<td><a href="' + srcUrl + '" target="_blank" class="btn-icon" style="font-size:11px;">' + watchIcon + ' Watch</a></td>';
       body.appendChild(tr);
     });
   }
@@ -3299,7 +3319,10 @@
     selectedAnalyticsChannel = key;
     document.querySelectorAll('#viral-channel-pills .pill-btn').forEach(b => b.classList.remove('active'));
     if (btnEl) btnEl.classList.add('active');
-    if (globalDashboardData && globalDashboardData.viralAnalytics) {
+    if (globalDashboardData && globalDashboardData.ytAnalytics) {
+      renderYouTubeLeaderboard(globalDashboardData.ytAnalytics);
+      renderYouTubeCharts(globalDashboardData.ytAnalytics);
+    } else if (globalDashboardData && globalDashboardData.viralAnalytics) {
       renderViralLeaderboard(globalDashboardData.viralAnalytics.leaderboard);
       renderViralCharts(globalDashboardData.viralAnalytics);
     }
@@ -3309,7 +3332,8 @@
     selectedAnalyticsRange = rangeKey;
     document.querySelectorAll('#viral-range-pills .pill-btn').forEach(b => b.classList.remove('active'));
     if (btnEl) btnEl.classList.add('active');
-    if (globalDashboardData && globalDashboardData.viralAnalytics) renderViralCharts(globalDashboardData.viralAnalytics);
+    if (globalDashboardData && globalDashboardData.ytAnalytics) renderYouTubeCharts(globalDashboardData.ytAnalytics);
+    else if (globalDashboardData && globalDashboardData.viralAnalytics) renderViralCharts(globalDashboardData.viralAnalytics);
   }
 
   function switchAnalyticsMetric(metricKey, btnEl) {
@@ -3318,7 +3342,202 @@
     if (btnEl) btnEl.classList.add('active');
     const labels = { views:'Views over time', reels:'Reels published over time', er:'Engagement rate (%) over time', shares:'Shares over time' };
     setElText('main-chart-title', labels[metricKey] || 'Metric over time');
-    if (globalDashboardData && globalDashboardData.viralAnalytics) renderViralCharts(globalDashboardData.viralAnalytics);
+    if (globalDashboardData && globalDashboardData.ytAnalytics) renderYouTubeCharts(globalDashboardData.ytAnalytics);
+    else if (globalDashboardData && globalDashboardData.viralAnalytics) renderViralCharts(globalDashboardData.viralAnalytics);
+  }
+
+  /* ─── YOUTUBE ANALYTICS ─── */
+  function renderYTAnalytics(ytData) {
+    if (!ytData || !ytData.channels) return;
+    if (globalDashboardData) globalDashboardData.ytAnalytics = ytData;
+
+    const goodChannels = ytData.channels.filter(c => !c.error);
+
+    let totalViews = 0, totalShares = 0, totalLikes = 0, totalComments = 0, totalVideos = 0;
+    let prevViews = 0, prevShares = 0;
+    goodChannels.forEach(c => {
+      const cur = c.current || {};
+      const prev = c.previous || {};
+      totalViews   += cur.views    || 0;
+      totalShares  += cur.shares   || 0; // REAL SHARES
+      totalLikes   += cur.likes    || 0;
+      totalComments+= cur.comments || 0;
+      totalVideos  += (c.uploads || []).length || c.videoCount || 0;
+      prevViews    += prev.views   || 0;
+      prevShares   += prev.shares  || 0;
+    });
+
+    const allUploads = goodChannels.flatMap(c => (c.uploads || c.topVideos || []).map(v => ({ ...v, _channelName: c.name })));
+    const erVids = allUploads.filter(v => v.views > 0);
+    const avgER = erVids.length > 0
+      ? (erVids.reduce((s, v) => s + ((v.likes || 0) + (v.comments || 0) + (v.shares || 0)) / v.views * 100, 0) / erVids.length)
+      : 0;
+
+    const viewsDelta = prevViews > 0 ? Math.round((totalViews - prevViews) / prevViews * 100) : 0;
+    const sharesDelta = prevShares > 0 ? Math.round((totalShares - prevShares) / prevShares * 100) : 0;
+
+    setElText('kpi-total-views',  fmtNum(totalViews));
+    setElText('kpi-total-reels',  String(totalVideos));
+    setElText('kpi-avg-er',       avgER.toFixed(1) + '%');
+    setElText('kpi-total-shares', fmtNum(totalShares));
+    const viewsDeltaStr = (viewsDelta >= 0 ? '↑ +' : '↓ ') + viewsDelta + '% vs prev period';
+    const sharesDeltaStr = (sharesDelta >= 0 ? '↑ +' : '↓ ') + sharesDelta + '% vs prev period';
+    setElText('kpi-views-delta',  viewsDeltaStr);
+    setElText('kpi-shares-delta', sharesDeltaStr);
+    setElText('kpi-reels-rate',   (totalVideos / (ytData.rangeDays || 30)).toFixed(1) + ' avg/day');
+
+    const dtEl = document.getElementById('yt-data-through');
+    if (dtEl && ytData.dataThrough) dtEl.textContent = '📅 Data through ' + ytData.dataThrough;
+
+    const allInsights = goodChannels.flatMap(c => c.insights || []);
+    setElText('viral-patterns-content', allInsights.length ? allInsights.join('\n') : 'No YouTube insights available yet.');
+
+    const errored = ytData.channels.filter(c => c.error);
+    if (errored.length) {
+      const errText = errored.map(c => `⚠ ${c.name}: ${c.error}`).join('\n');
+      const patternsEl = document.getElementById('viral-patterns-content');
+      if (patternsEl) patternsEl.textContent += '\n\n' + errText;
+    }
+
+    renderYouTubeLeaderboard(ytData);
+    if (activeTab === 'viral') renderYouTubeCharts(ytData);
+  }
+
+  function renderYouTubeLeaderboard(ytData) {
+    const body = document.getElementById('viral-leaderboard-body');
+    const thead = document.getElementById('viral-leaderboard-thead');
+    if (!body) return;
+
+    if (thead) {
+      thead.innerHTML = '<tr><th>Rank</th><th>Video</th><th>Channel</th><th>Views</th><th>Avg View %</th><th>Real Shares</th><th>Format</th><th>Watch</th></tr>';
+    }
+
+    const goodChannels = (ytData.channels || []).filter(c => !c.error);
+    const channelsToShow = selectedAnalyticsChannel === 'all'
+      ? goodChannels
+      : goodChannels.filter(c => (c.key || '').toLowerCase() === selectedAnalyticsChannel.toLowerCase());
+
+    const vMap = new Map();
+    channelsToShow.forEach(c => {
+      [...(c.topVideos || []), ...(c.uploads || [])].forEach(v => {
+        if (!vMap.has(v.id)) {
+          vMap.set(v.id, { ...v, _channelName: c.name || c.key, _channelKey: c.key });
+        }
+      });
+    });
+
+    let allVideos = Array.from(vMap.values());
+    allVideos.sort((a, b) => (b.views || 0) - (a.views || 0));
+    allVideos = allVideos.slice(0, 30);
+
+    if (!allVideos.length) {
+      body.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:20px;">No YouTube video data available.</td></tr>';
+      return;
+    }
+
+    body.innerHTML = '';
+    allVideos.forEach((v, idx) => {
+      const rank = idx===0?'🥇 #1':idx===1?'🥈 #2':idx===2?'🥉 #3':'#'+(idx+1);
+      const ytUrl = 'https://youtu.be/' + (v.id || '');
+      const title = esc(v.title || v.id || '—');
+      const avgPct = v.avgViewPct != null ? v.avgViewPct.toFixed(1) + '%' : '—';
+      const fmt = esc(v.format || (v.isShort ? 'Short' : 'Long') || '—');
+      const erColor = v.avgViewPct > 50 ? 'var(--success)' : v.avgViewPct > 30 ? 'var(--warning)' : 'var(--text-muted)';
+      const tr = document.createElement('tr');
+      tr.innerHTML =
+        '<td style="font-weight:800;color:var(--text-muted);">' + rank + '</td>' +
+        '<td><a href="' + ytUrl + '" target="_blank" style="color:var(--primary);font-weight:600;font-size:12px;text-decoration:none;" title="' + title + '">▶ ' + (title.length > 45 ? title.slice(0,45)+'…' : title) + '</a></td>' +
+        '<td><span style="font-weight:600;color:#fff;">' + esc(v._channelName || '—') + '</span></td>' +
+        '<td style="font-family:var(--font-mono);font-weight:700;color:#fff;">' + fmtNum(v.views || 0) + '</td>' +
+        '<td><span style="font-weight:700;color:' + erColor + ';">' + avgPct + '</span></td>' +
+        '<td style="font-family:var(--font-mono);color:var(--text-muted);">' + fmtNum(v.shares || 0) + '</td>' +
+        '<td><span style="font-size:11px;background:var(--card);border:1px solid var(--card-border);padding:2px 6px;border-radius:4px;">' + fmt + '</span></td>' +
+        '<td><a href="' + ytUrl + '" target="_blank" class="btn-icon" style="font-size:11px;">▶ Watch</a></td>';
+      body.appendChild(tr);
+    });
+  }
+
+  function renderYouTubeCharts(ytData) {
+    if (typeof Chart === 'undefined' || !ytData) return;
+    const goodChannels = (ytData.channels || []).filter(c => !c.error && c.daily && c.daily.length);
+    if (!goodChannels.length) return;
+
+    const allDays = [...new Set(goodChannels.flatMap(c => (c.daily || []).map(d => d.day)))].sort();
+
+    const seriesByChannel = {};
+    goodChannels.forEach(c => {
+      const dayMap = {};
+      (c.daily || []).forEach(d => { dayMap[d.day] = d; });
+      seriesByChannel[c.key] = {
+        views:  allDays.map(d => (dayMap[d] || {}).views  || 0),
+        shares: allDays.map(d => (dayMap[d] || {}).shares || 0),
+        er:     allDays.map(d => {
+          const pt = dayMap[d] || {};
+          const v = pt.views || 0;
+          return v > 0 ? +((((pt.likes||0)+(pt.comments||0)+(pt.shares||0))/v)*100).toFixed(2) : 0;
+        }),
+        reels:  allDays.map(d => (dayMap[d] || {}).views ? 1 : 0),
+      };
+    });
+
+    const fakeViralData = {
+      timeSeriesRanges: {
+        '30d': { labels: allDays, series: seriesByChannel },
+        '7d':  { labels: allDays.slice(-7), series: Object.fromEntries(Object.entries(seriesByChannel).map(([k, v]) => [k, { views: v.views.slice(-7), shares: v.shares.slice(-7), er: v.er.slice(-7), reels: v.reels.slice(-7) }])) },
+        '14d': { labels: allDays.slice(-14), series: Object.fromEntries(Object.entries(seriesByChannel).map(([k, v]) => [k, { views: v.views.slice(-14), shares: v.shares.slice(-14), er: v.er.slice(-14), reels: v.reels.slice(-14) }])) },
+        '90d': { labels: allDays, series: seriesByChannel },
+      }
+    };
+    renderViralCharts(fakeViralData);
+  }
+
+  async function refreshYTAnalytics() {
+    showToast('Refreshing YouTube Analytics...', 'info');
+    const body = document.getElementById('viral-leaderboard-body');
+    if (body) body.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:30px;">⏳ Loading real YouTube data…</td></tr>';
+    try {
+      const r = await fetch(BASE_URL + '/api/analytics/youtube?refresh=true');
+      const d = await r.json();
+      if (d.channels) {
+        if (globalDashboardData) globalDashboardData.ytAnalytics = d;
+        renderYTAnalytics(d);
+        showToast('YouTube Analytics refreshed!');
+      } else {
+        showToast(d.error || 'No data returned', 'err');
+        if (body) body.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--danger);padding:20px;">⚠ ' + esc(d.error || 'No YouTube data available') + '</td></tr>';
+      }
+    } catch (e) {
+      showToast('Refresh failed: ' + e.message, 'err');
+      if (body) body.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--danger);padding:20px;">⚠ ' + esc(e.message) + '</td></tr>';
+    }
+  }
+
+  let ytAnalyticsLoading = false;
+  async function loadYTAnalyticsTab() {
+    if (ytAnalyticsLoading) return;
+    if (globalDashboardData && globalDashboardData.ytAnalytics) {
+      renderYTAnalytics(globalDashboardData.ytAnalytics);
+      return;
+    }
+    ytAnalyticsLoading = true;
+    const body = document.getElementById('viral-leaderboard-body');
+    const thead = document.getElementById('viral-leaderboard-thead');
+    if (thead) thead.innerHTML = '<tr><th>Rank</th><th>Video</th><th>Channel</th><th>Views</th><th>Avg View %</th><th>Real Shares</th><th>Format</th><th>Watch</th></tr>';
+    if (body) body.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:30px;">⏳ Loading real YouTube Analytics…</td></tr>';
+    try {
+      const r = await fetch(BASE_URL + '/api/analytics/youtube?days=30');
+      const d = await r.json();
+      ytAnalyticsLoading = false;
+      if (d.channels) {
+        if (globalDashboardData) globalDashboardData.ytAnalytics = d;
+        renderYTAnalytics(d);
+      } else {
+        if (body) body.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--danger);padding:20px;">⚠ ' + esc(d.error || 'YouTube Analytics unavailable — check channel OAuth tokens') + '</td></tr>';
+      }
+    } catch (e) {
+      ytAnalyticsLoading = false;
+      if (body) body.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--danger);padding:20px;">⚠ Failed to load YouTube Analytics: ' + esc(e.message) + '</td></tr>';
+    }
   }
 
   function applyViralSearch() {
@@ -3329,13 +3548,24 @@
   }
 
   function exportViralCsv() {
-    if (!globalDashboardData || !globalDashboardData.viralAnalytics) { showToast('No data to export','warn'); return; }
-    const items = globalDashboardData.viralAnalytics.leaderboard || [];
-    let csv = 'Rank,Shortcode,Channel,Views,EngRate,Shares,Trend,Url\n';
-    items.forEach((r, i) => { csv += [i+1,r.shortcode,r.profileKey,r.playCount,r.er+'%',r.shares,r.trend,r.sourceUrl].map(v=>'"'+v+'"').join(',') + '\n'; });
+    const items = (globalDashboardData && globalDashboardData.viralAnalytics && globalDashboardData.viralAnalytics.leaderboard) || [];
+    if (!items.length) { showToast('No data to export','warn'); return; }
+    let csv = 'Rank,Video Title,Channel,Views,AvgViewPct,RealShares,Format,Url\n';
+    items.forEach((r, i) => {
+      csv += [
+        i + 1,
+        (r.title || r.shortcode || '').replace(/"/g, '""'),
+        r.channel || r.profileKey || '',
+        r.views || r.playCount || 0,
+        (r.er != null ? r.er + '%' : ''),
+        r.shares || 0,
+        r.format || 'Short',
+        r.youtubeUrl || r.sourceUrl || ('https://youtu.be/' + r.shortcode)
+      ].map(v => '"' + v + '"').join(',') + '\n';
+    });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
-    a.download = 'viral_analytics.csv';
+    a.download = 'youtube_analytics.csv';
     a.click();
   }
 

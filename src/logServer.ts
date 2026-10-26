@@ -21,9 +21,7 @@ import { longQueue } from "./longvideo-auto/queue";
 import { handleMediaRequest } from "./instagram/mediaLinks";
 import { activeWatchers } from "./instagram/channelWatcher";
 import { DirectUploader } from "./direct-uploader";
-import { ViralAnalyzer } from "./utils/viral-analyzer";
 import { buildHashtagsForNiche } from "./instagram/nicheSearcher";
-import { computeViralScore } from "./utils/viralScore";
 import { MultiSceneGenerator } from "./video/multiSceneGenerator";
 import { YouTubeService } from "./youtube";
 import { estimateStickman } from "./my-video/stickmanEstimate";
@@ -33,6 +31,7 @@ import { handleRunnerPublish, recordCloudProgress, resolveMyVideoDir } from "./m
 import { pipelineLogger } from "./utils/logger";
 import { buildActivityFeed, mergeLiveJobs, loadJobSummaries, jobsFileFor } from "./utils/activityFeed";
 import { dmStore, dmKnowledgeBase, inboundDmManager, outboundDmManager, aiDmBrain, getPersona } from "./instagram/dm";
+import { youtubeAnalyticsReport, AnalyticsReport } from "./analytics/youtubeAnalytics";
 
 function escapeHtml(s: string): string {
   return (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -430,6 +429,21 @@ function buildRecentActivity(reelHistory: any[], watchStates: any[]) {
 }
 
 let dashCache: { at: number; p: Promise<any> } | null = null;
+
+/** Rolling YouTube Analytics cache – refreshed lazily every 30 min. */
+let ytAnalyticsCache: { at: number; report: AnalyticsReport } | null = null;
+const YT_ANALYTICS_TTL = 30 * 60_000;
+
+function getCachedYTAnalytics(rangeDays = 28): Promise<AnalyticsReport> {
+  const now = Date.now();
+  if (ytAnalyticsCache && now - ytAnalyticsCache.at < YT_ANALYTICS_TTL) {
+    return Promise.resolve(ytAnalyticsCache.report);
+  }
+  return youtubeAnalyticsReport(rangeDays, false).then((r) => {
+    ytAnalyticsCache = { at: Date.now(), report: r };
+    return r;
+  });
+}
 /** Coalesce concurrent/rapid dashboard polls: one DB+log pass per 8s no matter how many tabs. */
 function getDashboardData(): Promise<any> {
   const now = Date.now();
@@ -828,136 +842,151 @@ async function getDashboardDataUncached() {
     "90d": generateTimeSeriesData(90, channelKeys, reelHistory, reelInsights),
   };
 
-  // Collect & compile viral analytics data
-  const viralAnalyzer = new ViralAnalyzer();
-  const analyticsRecords = viralAnalyzer.getRecords();
-  const viralPatternsText = viralAnalyzer.getViralPatterns();
+  // Fetch real YouTube Analytics (30-min cache; errors are non-fatal)
+  let ytAnalytics: AnalyticsReport | null = null;
+  try {
+    ytAnalytics = await getCachedYTAnalytics(30);
+  } catch (e) {
+    pipelineLogger.warn(`[YTAnalytics] dashboard fetch failed: ${(e as Error).message}`, "Dashboard");
+  }
 
-  const allReelsMap = new Map<string, any>();
-  compiledQueue.forEach((q) => {
-    allReelsMap.set(q.shortcode, {
-      ...q,
-      title: q.title || `Short clip #${q.shortcode}`,
-      sourceChannel: q.channel || "creator",
-      profileKey: q.channel,
+  // Populate viralAnalytics using real YouTube Analytics (no mocked data)
+  const goodYTChannels = (ytAnalytics?.channels || []).filter((c) => !c.error);
+  let viralAnalytics: any;
+
+  if (goodYTChannels.length > 0) {
+    let ytTotalViews = 0;
+    let ytTotalShares = 0;
+    let ytTotalVideos = 0;
+    let ytPrevViews = 0;
+    let ytPrevShares = 0;
+    let weightedViewPctSum = 0;
+    let totalViewsWithPct = 0;
+
+    goodYTChannels.forEach((c) => {
+      const cur = c.current || ({} as any);
+      const prev = c.previous || ({} as any);
+      ytTotalViews += cur.views || 0;
+      ytTotalShares += cur.shares || 0; // REAL SHARES FROM YOUTUBE API
+      ytTotalVideos += (c.uploads || []).length || c.videoCount || 0;
+      ytPrevViews += prev.views || 0;
+      ytPrevShares += prev.shares || 0;
+      if (cur.views && cur.avgViewPct) {
+        weightedViewPctSum += cur.avgViewPct * cur.views;
+        totalViewsWithPct += cur.views;
+      }
     });
-  });
 
-  analyticsRecords.forEach((rec) => {
-    const existing = allReelsMap.get(rec.id) || {};
-    allReelsMap.set(rec.id, {
-      ...existing,
-      shortcode: rec.id,
-      title: rec.title,
-      profileKey: existing.profileKey || "codeorcap",
-      sourceChannel: existing.sourceChannel || "analytics",
-      playCount: Math.max(rec.metrics?.views || 0, existing.playCount || 0),
-      likeCount: Math.max(rec.metrics?.likes || 0, existing.likeCount || 0),
-      commentCount: Math.max(
-        rec.metrics?.comments || 0,
-        existing.commentCount || 0,
-      ),
-      youtubeUrl: rec.youtubeUrl || existing.youtubeUrl,
-      sourceUrl:
-        existing.sourceUrl ||
-        rec.youtubeUrl ||
-        `https://www.instagram.com/reel/${rec.id}/`,
-      status: "published",
+    const ytViewsDelta = ytPrevViews > 0 ? Math.round(((ytTotalViews - ytPrevViews) / ytPrevViews) * 100) : 0;
+    const ytSharesDelta = ytPrevShares > 0 ? Math.round(((ytTotalShares - ytPrevShares) / ytPrevShares) * 100) : 0;
+    const ytAvgER = totalViewsWithPct > 0 ? +(weightedViewPctSum / totalViewsWithPct).toFixed(1) : 0;
+
+    // Leaderboard of real YouTube videos (deduplicating topVideos and uploads)
+    const ytVideoMap = new Map<string, any>();
+    goodYTChannels.forEach((c) => {
+      [...(c.topVideos || []), ...(c.uploads || [])].forEach((v) => {
+        if (!ytVideoMap.has(v.id)) {
+          const vViews = v.views || 0;
+          ytVideoMap.set(v.id, {
+            id: v.id,
+            shortcode: v.id,
+            title: v.title || v.id,
+            profileKey: c.key,
+            channel: c.name || c.key,
+            playCount: vViews,
+            views: vViews,
+            likeCount: v.likes || 0,
+            commentCount: v.comments || 0,
+            shares: v.shares || 0, // REAL SHARES FROM YOUTUBE ANALYTICS
+            er: v.avgViewPct != null ? Math.round(v.avgViewPct * 10) / 10 : 0,
+            avgViewPct: v.avgViewPct,
+            viralScore: Math.min(100, Math.round(vViews / 100)),
+            sourceUrl: `https://youtu.be/${v.id}`,
+            youtubeUrl: `https://youtu.be/${v.id}`,
+            trend: vViews > 1000 ? "↑" : vViews > 50 ? "→" : "↓",
+            format: v.format || (v.isShort ? "Short" : "Long"),
+            status: "published",
+          });
+        }
+      });
     });
-  });
 
-  const reelsList = Array.from(allReelsMap.values());
-  const maxPlays = Math.max(1, ...reelsList.map((r) => r.playCount || 0));
-  const maxLikes = Math.max(1, ...reelsList.map((r) => r.likeCount || 0));
-  const maxComments = Math.max(1, ...reelsList.map((r) => r.commentCount || 0));
+    const ytLeaderboard = Array.from(ytVideoMap.values())
+      .sort((a, b) => (b.playCount || 0) - (a.playCount || 0))
+      .slice(0, 30);
 
-  const scoredReels = reelsList
-    .map((r) => {
-      const playC = r.playCount || 0;
-      const likeC = r.likeCount || 0;
-      const commC = r.commentCount || 0;
-      const calculatedScore = computeViralScore(
-        { playCount: playC, likeCount: likeC, commentCount: commC },
-        { playCount: maxPlays, likeCount: maxLikes, commentCount: maxComments },
-      );
-      const er = playC > 0 ? +(((likeC + commC) / playC) * 100).toFixed(1) : 0;
-      const shares = Math.round(playC * 0.045);
-      let trend = "→";
-      if (calculatedScore >= 80) trend = "↑";
-      else if (calculatedScore < 50) trend = "↓";
-
-      return {
-        ...r,
-        viralScore: r.viralScore || calculatedScore,
-        er,
-        shares,
-        trend,
+    // Build real time-series from daily data
+    const allDays = [...new Set(goodYTChannels.flatMap((c) => (c.daily || []).map((d) => d.day)))].sort();
+    const seriesByChannel: Record<string, any> = {};
+    goodYTChannels.forEach((c) => {
+      const dayMap: Record<string, any> = {};
+      (c.daily || []).forEach((d) => { dayMap[d.day] = d; });
+      seriesByChannel[c.key] = {
+        views: allDays.map((d) => (dayMap[d] || {}).views || 0),
+        shares: allDays.map((d) => (dayMap[d] || {}).shares || 0),
+        er: allDays.map((d) => {
+          const pt = dayMap[d] || {};
+          const v = pt.views || 0;
+          return v > 0 ? +((((pt.likes || 0) + (pt.comments || 0) + (pt.shares || 0)) / v) * 100).toFixed(2) : 0;
+        }),
+        reels: allDays.map((d) => (dayMap[d] || {}).views ? 1 : 0),
       };
-    })
-    .sort((a, b) => b.viralScore - a.viralScore);
+    });
 
-  const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
-  const nowMs = Date.now();
-  const recent7Views = reelHistory
-    .filter(
-      (r) =>
-        nowMs - new Date(r.published_at || r.picked_at || 0).getTime() <=
-        sevenDaysMs,
-    )
-    .reduce((s, r) => s + (Number(r.views) || 0), 0);
-  const prev7Views = reelHistory
-    .filter((r) => {
-      const age =
-        nowMs - new Date(r.published_at || r.picked_at || 0).getTime();
-      return age > sevenDaysMs && age <= 14 * 24 * 60 * 60 * 1000;
-    })
-    .reduce((s, r) => s + (Number(r.views) || 0), 0);
-  const viewsDelta =
-    prev7Views > 0
-      ? Math.round(((recent7Views - prev7Views) / prev7Views) * 100)
-      : recent7Views > 0
-        ? 100
-        : 0;
+    const ytTimeSeriesRanges = {
+      "30d": { labels: allDays, series: seriesByChannel },
+      "7d": {
+        labels: allDays.slice(-7),
+        series: Object.fromEntries(
+          Object.entries(seriesByChannel).map(([k, v]) => [
+            k,
+            { views: v.views.slice(-7), shares: v.shares.slice(-7), er: v.er.slice(-7), reels: v.reels.slice(-7) },
+          ]),
+        ),
+      },
+      "14d": {
+        labels: allDays.slice(-14),
+        series: Object.fromEntries(
+          Object.entries(seriesByChannel).map(([k, v]) => [
+            k,
+            { views: v.views.slice(-14), shares: v.shares.slice(-14), er: v.er.slice(-14), reels: v.reels.slice(-14) },
+          ]),
+        ),
+      },
+      "90d": { labels: allDays, series: seriesByChannel },
+    };
 
-  const recent7Shares = reelHistory
-    .filter(
-      (r) =>
-        nowMs - new Date(r.published_at || r.picked_at || 0).getTime() <=
-        sevenDaysMs,
-    )
-    .reduce((s, r) => s + (Number(r.shares) || 0), 0);
-  const prev7Shares = reelHistory
-    .filter((r) => {
-      const age =
-        nowMs - new Date(r.published_at || r.picked_at || 0).getTime();
-      return age > sevenDaysMs && age <= 14 * 24 * 60 * 60 * 1000;
-    })
-    .reduce((s, r) => s + (Number(r.shares) || 0), 0);
-  const sharesDelta =
-    prev7Shares > 0
-      ? Math.round(((recent7Shares - prev7Shares) / prev7Shares) * 100)
-      : recent7Shares > 0
-        ? 100
-        : 0;
+    const ytInsights = goodYTChannels.flatMap((c) => c.insights || []);
 
-  const viralAnalytics = {
-    timeSeriesRanges,
-    kpis: {
-      totalViews: scoredReels.reduce((s, r) => s + (r.playCount || 0), 0),
-      totalReels: scoredReels.length,
-      avgER:
-        scoredReels.length > 0
-          ? +(
-              scoredReels.reduce((s, r) => s + r.er, 0) / scoredReels.length
-            ).toFixed(1)
-          : 0,
-      totalShares: scoredReels.reduce((s, r) => s + (r.shares || 0), 0),
-      viewsDelta,
-      sharesDelta,
-    },
-    leaderboard: scoredReels.slice(0, 25),
-    patternsText: viralPatternsText,
-  };
+    viralAnalytics = {
+      timeSeriesRanges: ytTimeSeriesRanges,
+      kpis: {
+        totalViews: ytTotalViews,
+        totalReels: ytTotalVideos,
+        avgER: ytAvgER,
+        totalShares: ytTotalShares,
+        viewsDelta: ytViewsDelta,
+        sharesDelta: ytSharesDelta,
+      },
+      leaderboard: ytLeaderboard,
+      patternsText: ytInsights.length ? ytInsights.join("\n") : "No insights available.",
+    };
+  } else {
+    // If YouTube credentials are not configured yet, do NOT fabricate fake shares
+    viralAnalytics = {
+      timeSeriesRanges,
+      kpis: {
+        totalViews: 0,
+        totalReels: 0,
+        avgER: 0,
+        totalShares: 0,
+        viewsDelta: 0,
+        sharesDelta: 0,
+      },
+      leaderboard: [],
+      patternsText: "No YouTube channels connected. Connect your YouTube accounts in Configuration.",
+    };
+  }
 
   return {
     systemHealth: {
@@ -972,6 +1001,7 @@ async function getDashboardDataUncached() {
     recentActivity: buildRecentActivity(reelHistory, watchStates),
     topInsights: reelInsights.slice(0, 15),
     viralAnalytics,
+    ytAnalytics,
   };
 }
 
@@ -2053,6 +2083,22 @@ export function startLogServer(): void {
         "-C", jobDir, "."
       ]);
       tarProc.stdout.pipe(res);
+      return;
+    }
+
+    // ── GET /api/analytics/youtube — real YouTube Analytics ─────────────────
+    if (req.method === "GET" && (url === "/api/analytics/youtube" || url.startsWith("/api/analytics/youtube?"))) {
+      try {
+        const qp = new URL(url, `http://localhost`).searchParams;
+        const days = Math.min(365, Math.max(7, Number(qp.get("days")) || 28));
+        const refresh = qp.get("refresh") === "true";
+        const report = await youtubeAnalyticsReport(days, refresh);
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store", "Access-Control-Allow-Origin": "*" });
+        res.end(JSON.stringify(report));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: (err as Error).message }));
+      }
       return;
     }
 
