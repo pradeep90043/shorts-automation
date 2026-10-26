@@ -1,0 +1,517 @@
+{
+ "version": 1,
+ "places": [
+  "bedroom",
+  "study",
+  "kitchen",
+  "classroom",
+  "office",
+  "living-room",
+  "room",
+  "shop",
+  "park",
+  "street",
+  "desk-closeup",
+  "black",
+  "paper"
+ ],
+ "actions": [
+  "walk",
+  "run",
+  "enter",
+  "exit",
+  "sit",
+  "stand",
+  "lie",
+  "sleep",
+  "wake",
+  "pick",
+  "put",
+  "give",
+  "use",
+  "write",
+  "press",
+  "look",
+  "face",
+  "pose",
+  "mood",
+  "say",
+  "think",
+  "switch",
+  "jump",
+  "dance",
+  "clap",
+  "kneel",
+  "pray",
+  "hug",
+  "fall",
+  "drink",
+  "eat",
+  "nod",
+  "shake",
+  "point",
+  "wave",
+  "bow"
+ ],
+ "shotSizes": [
+  "wide",
+  "full",
+  "medium",
+  "close",
+  "detail"
+ ],
+ "moves": [
+  "static",
+  "push-in",
+  "pull-out",
+  "pan-left",
+  "pan-right",
+  "follow"
+ ],
+ "feels": [
+  "steady",
+  "handheld"
+ ],
+ "times": [
+  "day",
+  "dusk",
+  "night",
+  "rain"
+ ],
+ "fx": [
+  "rain",
+  "dust",
+  "leaves",
+  "sunrays",
+  "glow"
+ ],
+ "poses": [
+  "stand",
+  "lean",
+  "point",
+  "hand-over",
+  "shrug",
+  "slump",
+  "hold",
+  "reach",
+  "walk",
+  "run",
+  "sit",
+  "look-up",
+  "sit-read",
+  "sit-bench",
+  "sit-chair",
+  "sit-slump",
+  "sit-hold",
+  "lie",
+  "wave",
+  "laugh",
+  "think",
+  "cry",
+  "cheer",
+  "arms-crossed",
+  "facepalm",
+  "jump",
+  "crouch",
+  "kneel",
+  "pray",
+  "clap-a",
+  "clap-b",
+  "hug",
+  "dance-a",
+  "dance-b",
+  "push",
+  "bow"
+ ],
+ "moods": [
+  "neutral",
+  "sad",
+  "worried",
+  "happy",
+  "tired",
+  "sleep",
+  "angry",
+  "surprised"
+ ],
+ "props": {
+  "desk": {
+   "mount": "floor",
+   "seat": false,
+   "top": true
+  },
+  "table": {
+   "mount": "floor",
+   "seat": false,
+   "top": true
+  },
+  "chair": {
+   "mount": "floor",
+   "seat": true,
+   "top": false
+  },
+  "stool": {
+   "mount": "floor",
+   "seat": true,
+   "top": true
+  },
+  "nightstand": {
+   "mount": "floor",
+   "seat": false,
+   "top": true
+  },
+  "bed": {
+   "mount": "floor",
+   "seat": true,
+   "top": true
+  },
+  "sofa": {
+   "mount": "floor",
+   "seat": true,
+   "top": false
+  },
+  "bench": {
+   "mount": "floor",
+   "seat": true,
+   "top": true
+  },
+  "bookcase": {
+   "mount": "floor",
+   "seat": false,
+   "top": true
+  },
+  "wardrobe": {
+   "mount": "floor",
+   "seat": false,
+   "top": false
+  },
+  "fridge": {
+   "mount": "floor",
+   "seat": false,
+   "top": true
+  },
+  "kitchen-counter": {
+   "mount": "floor",
+   "seat": false,
+   "top": true
+  },
+  "stove": {
+   "mount": "floor",
+   "seat": false,
+   "top": true
+  },
+  "tv-stand": {
+   "mount": "floor",
+   "seat": false,
+   "top": true
+  },
+  "tv": {
+   "mount": "surface",
+   "seat": false,
+   "top": false
+  },
+  "plant": {
+   "mount": "floor",
+   "seat": false,
+   "top": false
+  },
+  "lamp-floor": {
+   "mount": "floor",
+   "seat": false,
+   "top": false
+  },
+  "door": {
+   "mount": "floor",
+   "seat": false,
+   "top": false
+  },
+  "trash-bin": {
+   "mount": "floor",
+   "seat": false,
+   "top": false
+  },
+  "whiteboard": {
+   "mount": "wall",
+   "seat": false,
+   "top": false
+  },
+  "window": {
+   "mount": "wall",
+   "seat": false,
+   "top": false
+  },
+  "poster": {
+   "mount": "wall",
+   "seat": false,
+   "top": false
+  },
+  "clock": {
+   "mount": "wall",
+   "seat": false,
+   "top": false
+  },
+  "wall-shelf": {
+   "mount": "wall",
+   "seat": false,
+   "top": true
+  },
+  "picture": {
+   "mount": "wall",
+   "seat": false,
+   "top": false
+  },
+  "mirror": {
+   "mount": "wall",
+   "seat": false,
+   "top": false
+  },
+  "laptop": {
+   "mount": "surface",
+   "seat": false,
+   "top": false
+  },
+  "book": {
+   "mount": "surface",
+   "seat": false,
+   "top": false
+  },
+  "book-open": {
+   "mount": "surface",
+   "seat": false,
+   "top": false
+  },
+  "book-stack": {
+   "mount": "surface",
+   "seat": false,
+   "top": false
+  },
+  "books-box": {
+   "mount": "surface",
+   "seat": false,
+   "top": false
+  },
+  "notebook": {
+   "mount": "surface",
+   "seat": false,
+   "top": false
+  },
+  "phone": {
+   "mount": "surface",
+   "seat": false,
+   "top": false
+  },
+  "mug": {
+   "mount": "surface",
+   "seat": false,
+   "top": false
+  },
+  "bottle": {
+   "mount": "surface",
+   "seat": false,
+   "top": false
+  },
+  "glass": {
+   "mount": "surface",
+   "seat": false,
+   "top": false
+  },
+  "plate": {
+   "mount": "surface",
+   "seat": false,
+   "top": false
+  },
+  "bowl": {
+   "mount": "surface",
+   "seat": false,
+   "top": false
+  },
+  "lamp-desk": {
+   "mount": "surface",
+   "seat": false,
+   "top": false
+  },
+  "bag": {
+   "mount": "surface",
+   "seat": false,
+   "top": false
+  },
+  "ball": {
+   "mount": "surface",
+   "seat": false,
+   "top": false
+  },
+  "alarm-clock": {
+   "mount": "surface",
+   "seat": false,
+   "top": false
+  },
+  "pillow": {
+   "mount": "surface",
+   "seat": false,
+   "top": false
+  },
+  "pen": {
+   "mount": "surface",
+   "seat": false,
+   "top": false
+  },
+  "paper": {
+   "mount": "surface",
+   "seat": false,
+   "top": false
+  },
+  "box": {
+   "mount": "surface",
+   "seat": false,
+   "top": false
+  },
+  "gift": {
+   "mount": "surface",
+   "seat": false,
+   "top": false
+  },
+  "cake": {
+   "mount": "surface",
+   "seat": false,
+   "top": false
+  },
+  "dumbbell": {
+   "mount": "surface",
+   "seat": false,
+   "top": false
+  },
+  "guitar": {
+   "mount": "floor",
+   "seat": false,
+   "top": false
+  },
+  "headphones": {
+   "mount": "surface",
+   "seat": false,
+   "top": false
+  },
+  "trophy": {
+   "mount": "surface",
+   "seat": false,
+   "top": false
+  },
+  "flower-pot": {
+   "mount": "surface",
+   "seat": false,
+   "top": false
+  },
+  "food": {
+   "mount": "surface",
+   "seat": false,
+   "top": false
+  }
+ },
+ "placeThings": {
+  "bedroom": [
+   "window",
+   "bed",
+   "pillow",
+   "lamp",
+   "nightstand",
+   "clock"
+  ],
+  "study": [
+   "window",
+   "desk",
+   "chair",
+   "lamp",
+   "bookcase",
+   "clock"
+  ],
+  "kitchen": [
+   "window",
+   "counter",
+   "stove",
+   "fridge"
+  ],
+  "classroom": [
+   "board",
+   "desk",
+   "clock"
+  ],
+  "office": [
+   "window",
+   "desk",
+   "chair",
+   "laptop",
+   "plant"
+  ],
+  "living-room": [
+   "window",
+   "sofa",
+   "lamp",
+   "tv-stand",
+   "tv"
+  ],
+  "room": [],
+  "shop": [
+   "counter"
+  ],
+  "park": [
+   "bench",
+   "bin"
+  ],
+  "street": [],
+  "desk-closeup": [
+   "desk"
+  ],
+  "black": [],
+  "paper": []
+ },
+ "avatar": {
+  "age": [
+   "child",
+   "teen",
+   "adult",
+   "old"
+  ],
+  "gender": [
+   "male",
+   "female"
+  ],
+  "build": [
+   "slim",
+   "average",
+   "heavy"
+  ],
+  "hair": [
+   "short",
+   "spiky",
+   "side-part",
+   "long",
+   "bun",
+   "ponytail",
+   "curly",
+   "bald",
+   "cap",
+   "hijab"
+  ],
+  "beard": [
+   "none",
+   "stubble",
+   "beard",
+   "mustache"
+  ],
+  "outfit": [
+   "shirt",
+   "tshirt",
+   "jacket",
+   "uniform",
+   "kurta",
+   "dress",
+   "saree"
+  ],
+  "skin": [
+   "silhouette",
+   "light",
+   "medium",
+   "tan",
+   "dark"
+  ]
+ },
+ "text": "places: bedroom, study, kitchen, classroom, office, living-room, room, shop, park, street, desk-closeup, black, paper (bedroom has bed, pillow, nightstand, lamp, window, clock; study has desk, chair, lamp, bookcase, window, clock; kitchen has counter, stove, fridge, window; classroom has board, desk, clock; office has desk, chair, laptop, window, plant; living-room has sofa, lamp, tv-stand, tv, window; park has bench, bin; shop has a built-in \"counter\"; desk-closeup has a built-in \"desk\" with the person seated behind it)\nfloor furniture: desk, table, chair, stool, nightstand, bed, sofa, bench, bookcase, wardrobe, fridge, kitchen-counter, stove, tv-stand, plant, lamp-floor, door, trash-bin, guitar\nwall things: whiteboard, window, poster, clock, wall-shelf, picture, mirror\nsmall things (stand on a surface or are carried): tv, laptop, book, book-open, book-stack, books-box, notebook, phone, mug, bottle, glass, plate, bowl, lamp-desk, bag, ball, alarm-clock, pillow, pen, paper, box, gift, cake, dumbbell, headphones, trophy, flower-pot, food\ncan be sat on: chair, stool, bed, sofa, bench. things can be put on: desk, table, stool, nightstand, bed, bench, bookcase, fridge, kitchen-counter, stove, tv-stand, wall-shelf\nactions: walk, run, enter, exit, sit, stand, lie, sleep, wake, pick, put, give, use, write, press, look, face, pose, mood, say, think, switch, jump, dance, clap, kneel, pray, hug, fall, drink, eat, nod, shake, point, wave, bow\nposes: stand, lean, point, hand-over, shrug, slump, hold, reach, walk, run, sit, look-up, sit-read, sit-bench, sit-chair, sit-slump, sit-hold, lie, wave, laugh, think, cry, cheer, arms-crossed, facepalm, jump, crouch, kneel, pray, clap-a, clap-b, hug, dance-a, dance-b, push, bow. moods: neutral, sad, worried, happy, tired, sleep, angry, surprised\ncast look (all optional): age child/teen/adult/old, gender male/female, build slim/average/heavy, hair short/spiky/side-part/long/bun/ponytail/curly/bald/cap/hijab, hairColor \"#hex\", beard none/stubble/beard/mustache, glasses true/false, outfit shirt/tshirt/jacket/uniform/kurta/dress/saree, top \"#hex\", bottom \"#hex\", skin silhouette/light/medium/tan/dark\ncamera shot: wide, full, medium, close, detail; move: static, push-in, pull-out, pan-left, pan-right, follow"
+}

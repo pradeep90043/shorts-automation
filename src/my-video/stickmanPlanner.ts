@@ -629,7 +629,7 @@ let geminiDownUntil = 0;
 // planning answers are long structured JSON: the router often needs 60-120 s, so give each call longer than the 60 s default
 const PLAN_CALL_TIMEOUT_MS = Number(process.env.PLAN_CALL_TIMEOUT_MS) || 150_000;
 const HEDGE_MS = Number(process.env.PLAN_HEDGE_MS) || 25_000;
-async function askLlm(prompt: string): Promise<string> {
+export async function askLlm(prompt: string): Promise<string> {
   const providers: { name: string; ask: () => Promise<string> }[] = [];
   if (config.ai.provider === "freellmapi" || process.env.FREELLMAPI_KEY) {
     providers.push({ name: "FreeLLMAPI", ask: () => new FreeLlmApiClient().generateText(prompt, PLAN_CALL_TIMEOUT_MS) });
