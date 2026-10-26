@@ -12,7 +12,7 @@ assert.strictEqual(parseListCard("no json here"), null);
 assert.strictEqual(parseListCard('{"title":"x","rows":[{"label":"a","value":"b"}]}'), null, "needs at least 3 rows");
 assert.strictEqual(parseListCard('{"title":"","rows":[]}'), null);
 const long = parseListCard(JSON.stringify({ title: "T".repeat(200), rows: Array.from({ length: 12 }, (_, i) => ({ label: "L".repeat(80) + i, value: "V".repeat(80) })) }));
-assert.ok(long && long.title.length <= 60 && long.rows.length === 7 && long.rows.every((r) => r.label.length <= 26 && r.value.length <= 22), "lengths and row count clamped");
+assert.ok(long && long.title.length <= 60 && long.rows.length === 10 && long.rows.every((r) => r.label.length <= 26 && r.value.length <= 22), "lengths and row count clamped");
 
 // OCR-style fallback
 const ocr = "सोने का अंडा देने वाला\nपौधे :- 250 से 300\nउत्पादन शुरू :- 2-3 साल बाद\nसालाना उत्पादन :- 15 से 25 टन\nबिक्री :- 20 से 60 रु/किलो";

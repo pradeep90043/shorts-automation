@@ -18,6 +18,9 @@ export interface ListCardContent {
   image: string;
 }
 
+/** a "top 10" card shows all ten (rows get shorter and the text a little smaller past 7) */
+export const MAX_ROWS = 10;
+
 const clip = (s: unknown, max: number): string => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, max);
 
 /** The prompt that turns a source reel's text into a list card. `hindi` = Devanagari wording (all channels but CodeOrCap). */
@@ -26,7 +29,7 @@ export function listCardPrompt(material: string, hindi: boolean): string {
     `From the MATERIAL below (the text of a short video) make a LIST CARD in ${hindi ? "Hindi written in Devanagari script (numbers as digits)" : "English"}. ` +
     `Use the facts and numbers of the material but write your own wording; NEVER invent a number, price or claim that is not in the material. Ignore calls to action in the material (follow, subscribe, comment, DM, link in bio, join a list): they are not facts. ` +
     `Answer with JSON only: {"title": hook of at most 55 characters that contains the main number or promise, ` +
-    `"rows": 4 to 7 objects {"label": at most 24 characters, "value": at most 20 characters, the number or short fact}, ` +
+    `"rows": 4 to 10 objects {"label": at most 24 characters, "value": at most 20 characters, the number or short fact}; when the material lists N items (a "top 10"), give all N of them in order, up to 10, so the card matches its title, ` +
     `"closing": one short sentence of at most 90 characters (a caveat or takeaway), ` +
     `"image": one photo scene that fits the topic, described in English, no text, no people's faces}.\n\nMATERIAL:\n${material.slice(0, 1800)}\n/no_think`
   );
@@ -42,7 +45,7 @@ export function parseListCard(raw: string): ListCardContent | null {
   const rows = (Array.isArray(j?.rows) ? j.rows : [])
     .map((r: any) => ({ label: clip(r?.label, 26), value: clip(r?.value, 22) }))
     .filter((r: { label: string; value: string }) => r.label && r.value)
-    .slice(0, 7);
+    .slice(0, MAX_ROWS);
   if (!title || rows.length < 3) return null;
   return { title, rows, closing: clip(j?.closing, 100) || undefined, image: clip(j?.image, 200) || title };
 }
@@ -55,7 +58,7 @@ export function listCardFromLines(text: string, title: string): ListCardContent 
     if (m) rows.push({ label: clip(m[1], 26), value: clip(m[2], 22) });
   }
   if (rows.length < 3) return null;
-  return { title: clip(title, 60) || "Quick facts", rows: rows.slice(0, 7), image: clip(title, 200) || "a clean modern workspace" };
+  return { title: clip(title, 60) || "Quick facts", rows: rows.slice(0, MAX_ROWS), image: clip(title, 200) || "a clean modern workspace" };
 }
 
 export const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -79,9 +82,13 @@ export function cardSvg(c: ListCardContent, accent: string, footer?: string): st
 
   const maxLabel = Math.max(...c.rows.map((r) => r.label.length), 1);
   const maxValue = Math.max(...c.rows.map((r) => r.value.length), 1);
-  const rowSize = Math.max(34, Math.min(52, Math.floor((CARD_W - 200) / ((maxLabel + maxValue + 2) * GLYPH))));
-  const rowH = Math.round(rowSize * 2.3);
+  const closingLines = c.closing ? wrapHeadline(c.closing, 34, 3) : [];
   const cardTop = ruleY + 60;
+  // rows share the height left between the title and the closing line (and the footer): 8-10 rows get tighter and smaller
+  const room = CARD_H - 170 - cardTop - (closingLines.length ? 80 + closingLines.length * 62 : 0) - 36;
+  let rowSize = Math.max(34, Math.min(52, Math.floor((CARD_W - 200) / ((maxLabel + maxValue + 2) * GLYPH))));
+  const rowH = Math.min(Math.round(rowSize * 2.3), Math.floor(room / c.rows.length));
+  rowSize = Math.max(30, Math.min(rowSize, Math.floor(rowH / 1.75)));
   const cardH = c.rows.length * rowH + 36;
   const rows = c.rows
     .map((r, i) => {
@@ -92,7 +99,6 @@ export function cardSvg(c: ListCardContent, accent: string, footer?: string): st
     })
     .join("");
 
-  const closingLines = c.closing ? wrapHeadline(c.closing, 34, 3) : [];
   const closingTop = cardTop + cardH + 80;
   const closing = closingLines
     .map((l, i) => `<text x="${CARD_W / 2}" y="${closingTop + i * 62}" text-anchor="middle" font-family="${FONT}" font-size="46" fill="#fff" fill-opacity="0.92">${esc(l)}</text>`)
