@@ -22,10 +22,11 @@ import {
   type StageKey, type StickmanEstimate,
 } from "./stickmanEstimate";
 import {
-  assertImportablePlan, assertPlanOnly, cleanScript, fitScriptToDuration, importStickmanPlan, planFromPlanOnly, planStickmanVideo,
+  askLlm, assertImportablePlan, assertPlanOnly, cleanScript, fitScriptToDuration, importStickmanPlan, planFromPlanOnly, planStickmanVideo,
   sceneNotesForBeats, splitScriptIntoBeats, type StickmanPlan,
 } from "./stickmanPlanner";
 import { lessonQualityReport, type QualityWarning } from "./lessonQuality";
+import { addDirectorShots, directorShotsEnabled } from "./directorShots";
 import { cancelVoiceboxRun, estimateVoiceboxSec, generateVoiceboxNarration, sceneLines, type VoiceboxRunRef } from "./voiceboxNarration";
 import { voiceInputsFor } from "./voiceProfiles";
 
@@ -292,6 +293,12 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
       Object.assign(job, { title: plan.title, description: plan.description, tags: plan.tags, scenes: plan.scenes.length, aiVisuals: plan.aiVisuals });
       setStage(job, "plan", { status: "done", fraction: 1 });
       log(`Planned ${plan.scenes.length} scenes (${planOnly ? "imported plan, no AI" : plan.aiVisuals ? "AI" : "rule-based"} visuals)`);
+      // story channels: each beat also becomes a staged film shot (DIRECTOR_SHOTS); beats it cannot stage keep their visual
+      if (!planOnly && !imported && directorShotsEnabled(job.input.channelKey)) {
+        setStage(job, "plan", { fraction: 0.8, detail: "Staging story shots" });
+        await addDirectorShots(plan, askLlm, log);
+        if (isCancelled(job)) return;
+      }
       // lesson-quality gate: warnings only, shown in the dashboard and kept on the job
       const warnings = lessonQualityReport(plan.scenes.map((s) => ({ text: s.text, visual: s.visual }))).slice(0, 15);
       job.warnings = warnings;
