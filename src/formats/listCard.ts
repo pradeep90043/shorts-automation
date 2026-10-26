@@ -5,6 +5,7 @@ import sharp from "sharp";
 import { brandFor, generateBackgroundImage, wrapHeadline } from "../cover/coverImage";
 import { config } from "../config";
 import { pipelineLogger } from "../utils/logger";
+import { iconFor, iconSvg } from "./rowIcons";
 
 /**
  * Format "image_music": one list card (our own AI picture + our own layout, never a frame of the source) that is shown for a few
@@ -85,13 +86,16 @@ export function cardLayout(c: ListCardContent, accent: string, footer?: string):
   const rowSize = 44;
   const valueSize = Math.round(rowSize * 1.12);
   const lineH = Math.round(rowSize * 1.25);
-  const inner = CARD_W - 200;
+  // each row starts with an icon of what it is about (rowIcons.ts: a stored icon set, no extra AI picture)
+  const iconSize = 64;
+  const textX = 100 + iconSize + 26;
+  const inner = CARD_W - 100 - textX;
   const laid = c.rows.map((r) => {
     // measured widths of the row fonts (regular label ~0.5 em, bold value ~0.58 em per character); GLYPH is the safe upper bound
     const valueW = r.value.length * valueSize * 0.58;
     const perLine = Math.max(8, Math.floor((inner - valueW - 30) / (rowSize * 0.5)));
     const lines = wrapHeadline(r.label, perLine, 4);
-    return { ...r, lines, h: lines.length * lineH + Math.round(rowSize * 1.0) };
+    return { ...r, lines, icon: iconFor(r.label), h: Math.max(lines.length * lineH, iconSize) + Math.round(rowSize * 1.0) };
   });
   const cardTop = ruleY + 60;
   const cardH = laid.reduce((sum, r) => sum + r.h, 0) + 36;
@@ -103,9 +107,11 @@ export function cardLayout(c: ListCardContent, accent: string, footer?: string):
       const base = top + Math.round(rowSize * 0.5) + lineH - Math.round(lineH * 0.2);
       const sep = i < laid.length - 1 ? `<line x1="100" x2="${CARD_W - 100}" y1="${y}" y2="${y}" stroke="${accent}" stroke-opacity="0.3" stroke-width="2"/>` : "";
       const label = r.lines
-        .map((l, k) => `<text x="100" y="${base + k * lineH}" font-family="${FONT}" font-size="${rowSize}" fill="#fff" fill-opacity="0.9">${esc(l)}</text>`)
+        .map((l, k) => `<text x="${textX}" y="${base + k * lineH}" font-family="${FONT}" font-size="${rowSize}" fill="#fff" fill-opacity="0.9">${esc(l)}</text>`)
         .join("");
-      return label +
+      // the icon sits on the first line of the label
+      const icon = iconSvg(r.icon, 100, base - Math.round(rowSize * 0.36) - iconSize / 2, iconSize, accent);
+      return icon + label +
         `<text x="${CARD_W - 100}" y="${base}" text-anchor="end" font-family="${FONT}" font-weight="700" font-size="${valueSize}" fill="${i >= laid.length - 2 ? accent : "#fff"}">${esc(r.value)}</text>${sep}`;
     })
     .join("");
@@ -124,12 +130,15 @@ export function cardLayout(c: ListCardContent, accent: string, footer?: string):
   const foot = footer ? `<text x="${CARD_W / 2}" y="${height - 70}" text-anchor="middle" font-family="${FONT}" font-size="30" fill="#fff" fill-opacity="0.7">${esc(footer)}</text>` : "";
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_W}" height="${height}">
-<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#050b1c" stop-opacity="0.55"/><stop offset="0.45" stop-color="#050b1c" stop-opacity="0.66"/><stop offset="1" stop-color="#050b1c" stop-opacity="0.95"/></linearGradient></defs>
+<defs><linearGradient id="g" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="${HERO_H}"><stop offset="0" stop-color="#050b1c" stop-opacity="0.28"/><stop offset="0.45" stop-color="#050b1c" stop-opacity="0.5"/><stop offset="1" stop-color="#050b1c" stop-opacity="0.97"/></linearGradient></defs>
 <rect width="${CARD_W}" height="${height}" fill="url(#g)"/><g transform="translate(0,${shift})">${title}
 <rect x="${CARD_W / 2 - 110}" y="${ruleY}" width="220" height="6" rx="3" fill="${accent}"/>
 <rect x="60" y="${cardTop}" width="${CARD_W - 120}" height="${cardH}" rx="46" fill="#080e1e" fill-opacity="0.86" stroke="${accent}" stroke-width="3"/>${rows}${closing}</g>${foot}</svg>`;
   return { svg, height };
 }
+
+/** Height of the AI hero picture at the top of the card; below it the card fades into the brand's dark colour. */
+export const HERO_H = 1400;
 
 export function cardSvg(c: ListCardContent, accent: string, footer?: string): string {
   return cardLayout(c, accent, footer).svg;
@@ -147,8 +156,11 @@ export async function renderListCardPng(c: ListCardContent, brandKey: string, ou
   const prompt = `${c.image}. ${PICTURE_MOOD}. No text, no letters, no words, no logos, no watermark. vertical composition`;
   const bg = opts.background !== undefined ? opts.background : await generateBackgroundImage(prompt, CARD_W, CARD_H, c.image);
   const { svg, height } = cardLayout(c, brand.accent, opts.footer);
+  // the AI picture is the hero at the top (behind the title); the rest of a tall card is the dark brand colour
   const base = bg
-    ? sharp(bg).resize(CARD_W, height, { fit: "cover" })
+    ? sharp(await sharp({ create: { width: CARD_W, height, channels: 3, background: "#050b1c" } })
+        .composite([{ input: await sharp(bg).resize(CARD_W, Math.min(height, HERO_H), { fit: "cover" }).toBuffer(), top: 0, left: 0 }])
+        .png().toBuffer())
     : sharp(await sharp({ create: { width: CARD_W, height, channels: 3, background: brand.bg } })
         .composite([{ input: Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_W}" height="${height}"><defs><radialGradient id="r" cx="0.7" cy="0.15" r="0.8"><stop offset="0" stop-color="${brand.accent}" stop-opacity="0.45"/><stop offset="1" stop-color="${brand.accent}" stop-opacity="0"/></radialGradient></defs><rect width="${CARD_W}" height="${height}" fill="url(#r)"/></svg>`) }])
         .png().toBuffer());
