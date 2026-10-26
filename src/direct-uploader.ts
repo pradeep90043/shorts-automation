@@ -3827,7 +3827,8 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     if ((!context.shortFormat || context.shortFormat === "stickman") && !/^(off|false|0|no)$/i.test((process.env.STILL_SOURCE_CARD ?? "").trim())) {
       const imageSource = !context.isVideo || !context.originalVideoPath;
       const frozen = imageSource ? 1 : await stillFraction(context.originalVideoPath!);
-      const text = [context.ocr?.text, imageSource ? context.captionMetadata?.description : ""].filter(Boolean).join(" ");
+      // the screen text, plus the caption (a list reel often writes its rows there; OCR may catch only the title)
+      const text = [context.ocr?.text, context.captionMetadata?.description].filter(Boolean).join(" ");
       if (isStillTextSource(frozen, text)) {
         pipelineLogger.info(`Source is a still ${imageSource ? "image" : `picture (${Math.round(frozen * 100)}% frozen)`}: rebuilding it as our own list card`, "DirectUploader");
         context.shortFormat = "image_music";

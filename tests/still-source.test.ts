@@ -13,6 +13,7 @@ import { frozenShare, isStillTextSource, stillFraction } from "../src/formats/st
 
   const text = "Top 10 highest paid jobs in India 2026: AI engineer 8-40 LPA, data scientist 8-35 LPA";
   assert.strictEqual(isStillTextSource(0.9, text), true);
+  assert.strictEqual(isStillTextSource(0.56, text), true, "a list reel that animates in, then holds the table (the salary reel: 56%)");
   assert.strictEqual(isStillTextSource(0.3, text), false, "a moving reel keeps the normal Short");
   assert.strictEqual(isStillTextSource(0.9, "short"), false, "too little text to rebuild");
   assert.strictEqual(isStillTextSource(0.9, text, { STILL_SOURCE_CARD: "off" }), false);

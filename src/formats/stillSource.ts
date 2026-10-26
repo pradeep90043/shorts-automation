@@ -33,9 +33,9 @@ export function frozenShare(log: string): number {
 
 const off = (v: string | undefined): boolean => /^(off|false|0|no)$/i.test((v ?? "").trim());
 
-/** A still reel with enough on-screen text to rebuild: at least 70% frozen and some 40 characters of OCR text. */
+/** A still reel with enough text to rebuild: at least half of it frozen (a list reel often animates in, then holds) and 40+ characters of text. */
 export function isStillTextSource(frozen: number, ocrText: string | undefined, env: NodeJS.ProcessEnv = process.env): boolean {
   if (off(env.STILL_SOURCE_CARD)) return false;
-  const minShare = Number(env.STILL_SOURCE_MIN_SHARE) || 0.7;
+  const minShare = Number(env.STILL_SOURCE_MIN_SHARE) || 0.5;
   return frozen >= minShare && (ocrText ?? "").replace(/\s+/g, " ").trim().length >= 40;
 }
