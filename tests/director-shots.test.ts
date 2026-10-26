@@ -3,13 +3,15 @@ import { addDirectorShots, carryHolds, directorShotsEnabled, sanitizeCast, sanit
 import type { StickmanPlan } from "../src/my-video/stickmanPlanner";
 
 (async () => {
-  // 1) the switch: off by default, per channel or all
-  assert.strictEqual(directorShotsEnabled("storiyum", {}), false);
+  // 1) the switch: on for every channel by default, off, or a list of channels
+  assert.strictEqual(directorShotsEnabled("storiyum", {}), true);
+  assert.strictEqual(directorShotsEnabled("codeorcap", { DIRECTOR_SHOTS: "off" }), false);
   assert.strictEqual(directorShotsEnabled("storiyum", { DIRECTOR_SHOTS: "storiyum" }), true);
   assert.strictEqual(directorShotsEnabled("codeorcap", { DIRECTOR_SHOTS: "storiyum, infoonspot" }), false);
   assert.strictEqual(directorShotsEnabled("infoonspot", { DIRECTOR_SHOTS: "storiyum, infoonspot" }), true);
   assert.strictEqual(directorShotsEnabled("codeorcap", { DIRECTOR_SHOTS: "all" }), true);
   assert.strictEqual(directorShotsEnabled(undefined, { DIRECTOR_SHOTS: "storiyum" }), false);
+  assert.strictEqual(directorShotsEnabled(undefined, {}), true);
 
   // 2) cast: known looks only, unique ids, at most 5, one skin for everyone
   const cast = sanitizeCast({ skin: "medium", cast: [
@@ -85,7 +87,15 @@ import type { StickmanPlan } from "../src/my-video/stickmanPlanner";
   assert.strictEqual((plan.scenes[3].visual as any).shot, undefined, "the unusable shot left the normal visual");
   assert.strictEqual((plan.scenes[0].visual as any).shot.cast[0].skin, "tan");
   assert.ok(calls[1].includes("raju:") && calls[1].includes("Never put the narration on screen"));
-  assert.ok(logs.some((l) => l.includes("9/10 beats staged")));
+  assert.ok(logs.some((l) => l.includes("9/10 story beats staged")));
+
+  // 4b) explainer beats with a teaching panel keep it; only the others are staged (and only they are sent to the AI)
+  const mixed: StickmanPlan = { ...plan, scenes: plan.scenes.map((s, i) => ({ ...s, visual: (i % 2 ? { code: { lines: ["x"] } } : i === 4 ? { photo: { url: "u" } } : { pose: "idle" }) as any })) };
+  const asked: string[] = [];
+  const r3 = await addDirectorShots(mixed, async (p) => { asked.push(p); return ask(p); }, () => {}, 4);
+  assert.deepStrictEqual([r3.beats, r3.staged], [4, 4], "beats 0, 2, 6, 8 staged; odd beats keep code, beat 4 keeps its photo");
+  assert.ok(mixed.scenes.every((s, i) => !!(s.visual as any).shot === [0, 2, 6, 8].includes(i)));
+  assert.ok(!asked.slice(1).join("").includes("Line number 1 "), "a code beat is not sent to the AI as a line to stage");
 
   // 5) the AI is down: nothing breaks, nothing is staged
   const plan2: StickmanPlan = { ...plan, scenes: plan.scenes.map((s) => ({ ...s, visual: { pose: "idle" } as any })) };

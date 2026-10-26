@@ -293,7 +293,7 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
       Object.assign(job, { title: plan.title, description: plan.description, tags: plan.tags, scenes: plan.scenes.length, aiVisuals: plan.aiVisuals });
       setStage(job, "plan", { status: "done", fraction: 1 });
       log(`Planned ${plan.scenes.length} scenes (${planOnly ? "imported plan, no AI" : plan.aiVisuals ? "AI" : "rule-based"} visuals)`);
-      // story channels: each beat also becomes a staged film shot (DIRECTOR_SHOTS); beats it cannot stage keep their visual
+      // every channel: beats without a teaching panel become staged film shots (DIRECTOR_SHOTS=off disables; beats it cannot stage keep their visual)
       if (!planOnly && !imported && directorShotsEnabled(job.input.channelKey)) {
         setStage(job, "plan", { fraction: 0.8, detail: "Staging story shots" });
         await addDirectorShots(plan, askLlm, log);

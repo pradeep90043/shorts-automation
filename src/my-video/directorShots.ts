@@ -1,7 +1,8 @@
 /**
- * Director shots for story videos: on channels where it is switched on (DIRECTOR_SHOTS=storiyum, or "all"), every narrated
- * beat also gets a `shot` - a small film scene described in words (place, characters, what they do, camera) that my-video's
- * director stages physically (people sit on chairs, hands reach cups, the camera follows; my-video/src/stickman/film/direct.ts).
+ * Director shots: on every channel (unless DIRECTOR_SHOTS=off, or a comma list of channels), each narrated beat that does not
+ * carry an information panel (code, chart, table, steps, a real photo... - those keep teaching) gets a `shot`: a small film
+ * scene described in words (place, characters, what they do, camera) that my-video's director stages physically (people sit
+ * on chairs, hands reach cups, the camera follows; my-video/src/stickman/film/direct.ts).
  *
  * The AI first designs the cast once (so a character looks the same all video), then writes the beats' shots in batches.
  * Every shot is checked here against the director's vocabulary (directorCatalog.json, exported from my-video by
@@ -15,9 +16,9 @@ import { WORDS_PER_SEC, countWords, type StickmanPlan } from "./stickmanPlanner"
 
 type Dict = Record<string, any>;
 
-/** Which channels get director shots: DIRECTOR_SHOTS = "off" (default) | "all" | comma list of channel keys. */
+/** Which channels get director shots: DIRECTOR_SHOTS = "all" (default) | "off" | comma list of channel keys. */
 export function directorShotsEnabled(channelKey: string | undefined, env: NodeJS.ProcessEnv = process.env): boolean {
-  const v = (env.DIRECTOR_SHOTS ?? "off").trim().toLowerCase();
+  const v = (env.DIRECTOR_SHOTS ?? "all").trim().toLowerCase();
   if (!v || v === "off" || v === "0" || v === "false") return false;
   if (v === "all" || v === "on" || v === "1" || v === "true") return true;
   return !!channelKey && v.split(",").map((s) => s.trim()).includes(channelKey.toLowerCase());
@@ -198,6 +199,10 @@ export function carryHolds(prev: Dict | undefined, shot: Dict): string[] {
   return fixed;
 }
 
+/** visuals that teach (the explainer channels' panels, a real photo): a beat that has one keeps it instead of a shot */
+export const INFO_PANELS = ["steps", "flow", "code", "terminal", "browser", "compare", "counter", "chart", "progress", "table", "alert", "news", "photo", "svg", "container", "quiz"];
+export const hasInfoPanel = (visual: Dict | undefined) => !!visual && INFO_PANELS.some((k) => visual[k] !== undefined && visual[k] !== null);
+
 const secsFor = (text: string) => Math.max(1.5, countWords(text) / WORDS_PER_SEC);
 
 export function buildCastPrompt(beats: string[]): string {
@@ -270,7 +275,11 @@ export async function addDirectorShots(
   if (!cast.size) { log("director: no cast, keeping the normal visuals"); return result; }
   log(`director: cast ${[...cast.keys()].join(", ")}`);
 
-  const groups = Array.from({ length: Math.ceil(beats.length / batch) }, (_, g) => beats.map((_, i) => i).slice(g * batch, g * batch + batch));
+  // only beats without a teaching panel are staged (the AI is not even asked about the others)
+  const stageable = beats.map((_, i) => i).filter((i) => !hasInfoPanel(plan.scenes[i].visual as Dict));
+  result.beats = stageable.length;
+  if (!stageable.length) { log("director: every beat carries an information panel, nothing to stage"); return result; }
+  const groups = Array.from({ length: Math.ceil(stageable.length / batch) }, (_, g) => stageable.slice(g * batch, g * batch + batch));
   await pool(groups.map((idxs) => async () => {
     let parsed: any;
     try { parsed = parseAiJson<any>(await ask(buildShotsPrompt(beats, idxs, cast))); } catch (err: any) { log(`director: beats ${idxs[0]}-${idxs[idxs.length - 1]} not staged (${err.message})`); return; }
@@ -289,6 +298,6 @@ export async function addDirectorShots(
       result.staged++;
     });
   }), 4);
-  log(`director: ${result.staged}/${beats.length} beats staged as film shots (${result.repaired} repaired, the rest keep their normal visual)`);
+  log(`director: ${result.staged}/${stageable.length} story beats staged as film shots (${beats.length - stageable.length} keep their information panel; ${result.repaired} repaired)`);
   return result;
 }
