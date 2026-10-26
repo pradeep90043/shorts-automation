@@ -35,6 +35,7 @@
     "test:verdict-number": "ts-node tests/verdict-number.test.ts",
     "test:dashboard-auth": "ts-node tests/dashboard-auth.test.ts",
     "test:voicebox-narration": "ts-node tests/voicebox-narration.test.ts",
+    "test:careers-niche": "ts-node tests/careers-niche.test.ts",
     "test:cloned-voice": "ts-node tests/cloned-voice.test.ts",
     "test:cover-image": "ts-node tests/cover-image.test.ts",
     "test:ig-caption": "ts-node tests/ig-caption.test.ts",

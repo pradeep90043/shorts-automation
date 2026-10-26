@@ -405,7 +405,8 @@ function loadPrimaryProfile(): ChannelProfile {
     key: "codeorcap",
     brandName: process.env.BRAND_NAME || "CodeOrCap",
     handle: process.env.BRAND_HANDLE || "@codeorcap",
-    theme: resolveTheme(process.env.NICHE, "primary profile"),
+    // CodeOrCap moved from "tech" to "careers" on 2026-10-26 (see themes.ts); CODEORCAP_NICHE=tech switches it back
+    theme: resolveTheme(process.env.CODEORCAP_NICHE || "careers", "primary profile"),
     isDefault: true,
     youtube: {
       clientId: process.env.YOUTUBE_CLIENT_ID || "",

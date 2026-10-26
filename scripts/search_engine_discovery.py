@@ -20,61 +20,40 @@ import urllib.request
 REEL_REGEX = re.compile(r"instagram\.com/reel/([A-Za-z0-9_-]+)")
 
 NICHE_KEYWORDS = {
-    # anything tech (coding, dev careers, AI, security, cloud, gadgets) plus science and any verifiable claim (health, space, nature, viral hoaxes).
-    # (Used to be only fact-check / myth-busting queries, which kept returning the same few reels.)
+    # CodeOrCap since 2026-10-26: money and careers for Indian techies (salaries, careers, roadmaps, side businesses, franchise ideas).
+    # Picked from the channel's analytics: these list Shorts hold ~70% of its lifetime views. No memes, no coding tips, no science.
     "codeorcap": [
-        # coding + dev craft
-        "programming tips",
-        "coding tips for beginners",
-        "software developer life",
-        "web development tips",
-        "javascript tips and tricks",
-        "python tricks",
-        "java spring boot",
-        "react js tips",
-        "backend development explained",
-        "system design explained",
-        "data structures and algorithms",
-        "github tips",
-        "linux terminal tips",
-        # AI
-        "ai tools you should know",
-        "chatgpt prompts",
-        "artificial intelligence explained",
-        "machine learning explained",
-        "ai agents explained",
-        # security, cloud, infra
-        "cybersecurity tips",
-        "ethical hacking basics",
-        "cloud computing explained",
-        "devops explained",
-        # careers, news, facts
-        "tech career advice",
-        "software engineer interview tips",
-        "tech news today",
-        "new gadgets tech",
-        "tech facts did you know",
-        "tech myth busted",
-        "tech explained",
-        # science + anything that can be shown as claim -> verify -> verdict (the old science reels were the viral ones)
-        "science facts",
-        "science explained",
-        "physics explained",
-        "space facts",
-        "human body facts",
-        "psychology facts",
-        "health myths debunked",
-        "nutrition myths",
-        "history facts you did not know",
-        "viral claim fact check",
-        "is this true myth vs fact",
-        "mind blowing facts",
-        "science experiment",
-        "chemistry facts",
-        "animal facts nature",
-        "viral video real or fake",
-        "optical illusion explained",
-        "viral hoax debunked",
+        # salaries
+        "software engineer salary india",
+        "salary comparison india vs abroad",
+        "fresher vs experienced salary",
+        "salary in bangalore vs mumbai",
+        "highest paying jobs in india",
+        "highest paying it jobs",
+        "salary hike tips",
+        "how much do software engineers earn",
+        # careers + roadmaps
+        "career roadmap 2026",
+        "ai engineer roadmap",
+        "data scientist career india",
+        "best career options after graduation",
+        "high paying skills to learn",
+        "jobs that will pay the most",
+        "career advice for freshers",
+        "job interview tips india",
+        "government vs private job salary",
+        # business + side income
+        "franchise business under 5 lakh",
+        "low investment business ideas india",
+        "small business ideas india",
+        "side hustle ideas for employees",
+        "business ideas for students",
+        "profitable business ideas",
+        "passive income ideas india",
+        # money for young professionals
+        "money tips for salaried employees",
+        "how to save money on salary",
+        "first salary money tips",
     ],
     # any story: movies, series, cartoons, anime, short films
     "storiyum": [
@@ -304,7 +283,7 @@ def main():
             print(f"WARN: unknown profile '{p_key}', using codeorcap keywords", file=sys.stderr)
         kw_list = NICHE_KEYWORDS.get(p_key, NICHE_KEYWORDS["codeorcap"])
         timelimit = RECENCY.get(p_key)
-        spread = p_key == "codeorcap"  # broad tech niche: sample many topics per run
+        spread = p_key == "codeorcap"  # broad niche: sample many topics per run
     else:
         kw_list = NICHE_KEYWORDS["codeorcap"]
         spread = True

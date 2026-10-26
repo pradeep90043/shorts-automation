@@ -124,6 +124,11 @@ async function initChannelConfigsTableOnce(retryOnRace: boolean): Promise<boolea
       ALTER TABLE channel_configs ADD COLUMN IF NOT EXISTS subtitle_style VARCHAR(32) DEFAULT 'classic';
       ALTER TABLE channel_configs ADD COLUMN IF NOT EXISTS tts_voice VARCHAR(64) DEFAULT 'default';
     `);
+    // CodeOrCap's niche moved from tech to careers (2026-10-26): without this a dashboard save would put the stored 'tech' back.
+    // CODEORCAP_NICHE=tech keeps the old niche.
+    if ((process.env.CODEORCAP_NICHE || "careers").toLowerCase() === "careers") {
+      await pool.query(`UPDATE channel_configs SET niche = 'careers' WHERE key = 'codeorcap' AND niche = 'tech'`);
+    }
 
     tableInitialized = true;
 

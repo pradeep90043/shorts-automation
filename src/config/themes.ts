@@ -212,7 +212,39 @@ const financeTheme: ContentTheme = {
   },
 };
 
+// CodeOrCap since 2026-10-26 — money and careers for Indian techies. Picked from the channel's analytics: the money/career list Shorts
+// (franchise ideas under ₹5 lakh, salary by city / experience, highest-paying careers, AI roadmap) hold ~70% of all lifetime views.
+// Memes are deliberately out of this niche.
+const careersTheme: ContentTheme = {
+  niche: "careers",
+  channelDescriptor:
+    "an Indian money and career YouTube Shorts & Instagram channel for techies and young professionals: salaries, high-paying careers, career roadmaps, side businesses, franchise and business ideas, money habits",
+  titleRules: `TITLE RULES: Max 65 chars, in English. Lead with a number or a ₹ amount when the clip has one (e.g. "14 ...", "₹2 Lakh ..."). Add the year if relevant. One or two emojis. No ALL CAPS, never promise income ("guaranteed", "100% profit").`,
+  descriptionRules: (brandName: string) =>
+    `DESCRIPTION RULES: 120-250 words. Include, in this exact order: 1) What the video is about (primary keyword in the first sentence). ` +
+    `2) EVERYTHING SHOWN IN THE REEL: if it shows a list, ranking, salary table or set of ideas, list EVERY item as its own line "• <name> — <amount or one short fact>", in the order shown, with the exact count shown. Never skip an item and never invent one. ` +
+    `3) Who it is for. 4) Follow @${brandName} for daily money and career Shorts. 5) A question to the audience. ` +
+    `6) A credit line reading exactly: "📲 CONTENT SOURCE/CREDIT: @<original_creator>\\n(Respective Owner)\\nDM FOR CREDIT OR REMOVAL". ` +
+    `7) "Disclaimer: Figures are estimates for information only, not financial advice." 8) Hashtags on the last line, ALWAYS including #career. IMPORTANT: You MUST use \\n\\n to create paragraph breaks between sections.`,
+  keywordsRule: `Provide 1 primary keyword, 5 secondary keywords, 15 tags, and 8-12 hashtags (always include #career #shorts).`,
+  analysisRules:
+    `CAREER & MONEY RULES: Identify the salary, career, business idea or money claim shown and every number in it. Separate fact from estimate. ` +
+    `Never state an amount the clip does not show. Flag promises of guaranteed income as unsafe and do not repeat them. ` +
+    `If the clip is a meme or joke rather than money or career information, say so: it is off-niche for this channel.`,
+  appendVerdict: false,
+  requiredHashtag: "career",
+  noHistoryHint:
+    "No historical uploads data yet. Prefer short list Shorts with a number in the title: salaries by city or experience, highest-paying careers, business ideas under a budget, career roadmaps.",
+  fallback: {
+    title: "Highest Paying Tech Careers in India (2026) 💰",
+    description:
+      "A quick look at the careers that pay the most in India right now.\n\nFollow for daily money and career Shorts.\n\n📲 CONTENT SOURCE/CREDIT: @creator\n(Respective Owner)\nDM FOR CREDIT OR REMOVAL\n\nDisclaimer: Figures are estimates for information only, not financial advice.\n\n#career #salary #jobs #india #shorts",
+    tags: ["career", "salary", "jobs in india", "high paying jobs", "business ideas", "shorts", "money"],
+  },
+};
+
 export const CONTENT_THEMES: Record<string, ContentTheme> = {
+  careers: careersTheme,
   tech: techTheme,
   stories: storiesTheme,
   humor: humorTheme,

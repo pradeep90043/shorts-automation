@@ -24,7 +24,7 @@ export interface Brand {
 }
 
 const BRANDS: Record<string, Brand> = {
-  codeorcap: { name: "CODE OR CAP", bg: "#0B0B0B", accent: "#FFB800", style: "dark cyberpunk developer workspace, glowing code on monitors, neon yellow accents, cinematic lighting, high contrast" },
+  codeorcap: { name: "CODE OR CAP", bg: "#0B0B0B", accent: "#FFB800", style: "premium money and career look: modern Indian city office, young professional, rupee and growth visuals, warm gold accents, cinematic lighting, high contrast" },
   storiyum: { name: "STORIYUM", bg: "#14101F", accent: "#FF8A3D", style: "cinematic storybook illustration, warm dramatic light, emotional atmosphere, rich colours" },
   infoonspot: { name: "INFOONSPOT", bg: "#0A1220", accent: "#00D1FF", style: "breaking news style, bold modern tech visuals, deep blue tones, dramatic lighting" },
   prompt_gag: { name: "PROMPT GAG", bg: "#12081C", accent: "#B26BFF", style: "playful satirical illustration, vivid colours, funny expressive scene" },

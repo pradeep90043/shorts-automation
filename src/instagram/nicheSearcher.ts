@@ -19,6 +19,15 @@ export interface ScoredReel {
 // niche key → mood key → hashtag list
 // "default" is used when the requested mood has no specific entry.
 const HASHTAG_MAP: Record<string, Record<string, string[]>> = {
+  // CodeOrCap (since 2026-10-26) — money and careers for Indian techies; no meme tags. Broad, high-volume tags first.
+  careers: {
+    default: [
+      "salary", "careeradvice", "businessideas", "highpayingjobs", "jobsinindia",
+      "softwareengineer", "techcareers", "salaryhike", "franchisebusiness", "sidehustle",
+      "careergrowth", "jobsearch", "smallbusinessideas", "moneytips", "itjobs",
+      "interviewtips", "careerroadmap", "freshers", "personalfinanceindia", "startupindia",
+    ],
+  },
   // CodeOrCap — tech AND science: coding, dev careers, AI, security, cloud, gadgets, plus science, health, space and any claim that can be fact-checked.
   // Broad, high-volume tags come first: the Puppeteer fallback only visits the first 5 hashtags.
   tech: {
