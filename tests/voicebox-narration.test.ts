@@ -71,7 +71,7 @@ assert.strictEqual(storiyum.sample_path, "assets/voice-samples/pakizah.mp3");
 assert.ok(Number(storiyum.sample_end) - Number(storiyum.sample_start) < 30, "the sample window stays under 30 s");
 const codeorcap = voiceInputsFor("codeorcap");
 assert.strictEqual(codeorcap.voice, "paddy1");
-assert.strictEqual(codeorcap.sample_path, "assets/voice-samples/paddy1.mp3");
+assert.strictEqual(codeorcap.sample_path, "assets/voice-samples/paddy1_clean.mp3");
 assert.ok(require("fs").existsSync(codeorcap.sample_path), "the sample file is committed in the repo");
 assert.ok(require("fs").existsSync(storiyum.sample_path), "the Storiyum sample file is committed in the repo");
 assert.notStrictEqual(codeorcap.voice, storiyum.voice, "the two channels have different voices");
@@ -79,7 +79,7 @@ assert.deepStrictEqual(voiceInputsFor(undefined), {});
 
 // all four channels: CodeOrCap and Prompt Gag speak as paddy1, Storiyum and InfoOnSpot as paki1
 assert.strictEqual(voiceInputsFor("prompt_gag").voice, "paddy1");
-assert.strictEqual(voiceInputsFor("PROMPT_GAG").sample_path, "assets/voice-samples/paddy1.mp3");
+assert.strictEqual(voiceInputsFor("PROMPT_GAG").sample_path, "assets/voice-samples/paddy1_clean.mp3");
 assert.strictEqual(voiceInputsFor("infoonspot").voice, "paki1");
 assert.strictEqual(voiceInputsFor("infoonspot").sample_path, "assets/voice-samples/pakizah.mp3");
 assert.ok(require("fs").existsSync(voiceInputsFor("prompt_gag").sample_path));

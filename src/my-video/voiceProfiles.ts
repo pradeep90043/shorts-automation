@@ -20,23 +20,24 @@ export interface VoiceProfile {
 }
 
 export const VOICE_PROFILES: Record<string, VoiceProfile> = {
-  // CodeOrCap narrates in the owner's own cloned voice (paddy1): a 15 s window of his recording, level-normalised
+  // CodeOrCap narrates in the owner's own cloned voice (paddy1): 12 s of the recording cut on pauses, cleaned with DeepFilterNet
+  // (noise floor -46 -> -56 dB at the same speech level), so the clone stops copying the phone's hiss
   codeorcap: {
     voice: "paddy1",
-    sample_path: "assets/voice-samples/paddy1.mp3",
+    sample_path: "assets/voice-samples/paddy1_clean.mp3",
     sample_start: "0",
-    sample_end: "15",
+    sample_end: "12",
     sample_language: "hi",
-    sample_text: "अपने अलग अलग backend में बना सकते हो, रश्च में बना सकते हो, लेकिन हम जिसकी बात करने जा रहे हैं वो है जावा, और जावा में अगर हम लोग बात करें तो जावा में है अपना spring boot जिसको यूज करके।",
+    sample_text: "कि आपका स्वागत है कोड और कैप में और आज हम लोग पढ़ेंगे कि हम लोग कैसे जावा का यूज करके एक बेटर बैक एंड बनाया जा सकता है बैक एंड तो वैसे और पाइथन में बन सकता है अ",
   },
   // Prompt Gag (finance) speaks in the owner's voice, same sample as CodeOrCap
   prompt_gag: {
     voice: "paddy1",
-    sample_path: "assets/voice-samples/paddy1.mp3",
+    sample_path: "assets/voice-samples/paddy1_clean.mp3",
     sample_start: "0",
-    sample_end: "15",
+    sample_end: "12",
     sample_language: "hi",
-    sample_text: "अपने अलग अलग backend में बना सकते हो, रश्च में बना सकते हो, लेकिन हम जिसकी बात करने जा रहे हैं वो है जावा, और जावा में अगर हम लोग बात करें तो जावा में है अपना spring boot जिसको यूज करके।",
+    sample_text: "कि आपका स्वागत है कोड और कैप में और आज हम लोग पढ़ेंगे कि हम लोग कैसे जावा का यूज करके एक बेटर बैक एंड बनाया जा सकता है बैक एंड तो वैसे और पाइथन में बन सकता है अ",
   },
   // InfoOnSpot speaks in the Pakizah voice, same sample as Storiyum
   infoonspot: {
