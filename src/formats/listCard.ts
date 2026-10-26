@@ -18,8 +18,8 @@ export interface ListCardContent {
   image: string;
 }
 
-/** a "top 10" card shows all ten (rows get shorter and the text a little smaller past 7) */
-export const MAX_ROWS = 10;
+/** every item of the source is shown: the card grows taller and the video pans down it (only a runaway answer is cut) */
+export const MAX_ROWS = 60;
 
 const clip = (s: unknown, max: number): string => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, max);
 
@@ -29,7 +29,7 @@ export function listCardPrompt(material: string, hindi: boolean): string {
     `From the MATERIAL below (the text of a short video) make a LIST CARD in ${hindi ? "Hindi written in Devanagari script (numbers as digits)" : "English"}. ` +
     `Use the facts and numbers of the material but write your own wording; NEVER invent a number, price or claim that is not in the material. Ignore calls to action in the material (follow, subscribe, comment, DM, link in bio, join a list): they are not facts. ` +
     `Answer with JSON only: {"title": hook of at most 55 characters that contains the main number or promise, ` +
-    `"rows": 4 to 10 objects {"label": at most 24 characters, "value": at most 20 characters, the number or short fact}; when the material lists N items (a "top 10"), give all N of them in order, up to 10, so the card matches its title, ` +
+    `"rows": one object per item of the material, ALL of them in order with nothing left out (a "top 10" has 10 rows, a table of 25 has 25) {"label": the item, "value": its number or short fact}, ` +
     `"closing": one short sentence of at most 90 characters (a caveat or takeaway), ` +
     `"image": one photo scene that fits the topic, described in English, no text, no people's faces}.\n\nMATERIAL:\n${material.slice(0, 1800)}\n/no_think`
   );
@@ -43,7 +43,7 @@ export function parseListCard(raw: string): ListCardContent | null {
   try { j = JSON.parse(m[0]); } catch { return null; }
   const title = clip(j?.title, 60);
   const rows = (Array.isArray(j?.rows) ? j.rows : [])
-    .map((r: any) => ({ label: clip(r?.label, 26), value: clip(r?.value, 22) }))
+    .map((r: any) => ({ label: clip(r?.label, 80), value: clip(r?.value, 40) }))
     .filter((r: { label: string; value: string }) => r.label && r.value)
     .slice(0, MAX_ROWS);
   if (!title || rows.length < 3) return null;
@@ -55,7 +55,7 @@ export function listCardFromLines(text: string, title: string): ListCardContent 
   const rows: Array<{ label: string; value: string }> = [];
   for (const line of (text || "").split(/\n+/)) {
     const m = /^\s*([^:]{2,40}?)\s*(?::-|:|–|—)\s*(.{1,30})$/.exec(line);
-    if (m) rows.push({ label: clip(m[1], 26), value: clip(m[2], 22) });
+    if (m) rows.push({ label: clip(m[1], 80), value: clip(m[2], 40) });
   }
   if (rows.length < 3) return null;
   return { title: clip(title, 60) || "Quick facts", rows: rows.slice(0, MAX_ROWS), image: clip(title, 200) || "a clean modern workspace" };
@@ -70,8 +70,9 @@ export const PICTURE_MOOD = "photorealistic, cinematic dramatic lighting, dark m
 export const CARD_W = 1080;
 export const CARD_H = 1920;
 
-export function cardSvg(c: ListCardContent, accent: string, footer?: string): string {
-  const titleLines = wrapHeadline(c.title, 20, 3);
+/** The card's SVG and its height: 1920 when everything fits on one screen, taller when it does not (the video then pans down). */
+export function cardLayout(c: ListCardContent, accent: string, footer?: string): { svg: string; height: number } {
+  const titleLines = wrapHeadline(c.title, 20, 4);
   const titleSize = Math.max(64, Math.min(96, Math.floor((CARD_W * 0.88) / (Math.max(...titleLines.map((l) => l.length), 1) * GLYPH))));
   const titleY0 = 230;
   const titleH = Math.round(titleSize * 1.2);
@@ -80,40 +81,58 @@ export function cardSvg(c: ListCardContent, accent: string, footer?: string): st
     .join("");
   const ruleY = titleY0 + (titleLines.length - 1) * titleH + 44;
 
-  const maxLabel = Math.max(...c.rows.map((r) => r.label.length), 1);
-  const maxValue = Math.max(...c.rows.map((r) => r.value.length), 1);
-  const closingLines = c.closing ? wrapHeadline(c.closing, 34, 3) : [];
+  // one readable size for every row; a long label wraps onto more lines instead of shrinking the text
+  const rowSize = 44;
+  const valueSize = Math.round(rowSize * 1.12);
+  const lineH = Math.round(rowSize * 1.25);
+  const inner = CARD_W - 200;
+  const laid = c.rows.map((r) => {
+    // measured widths of the row fonts (regular label ~0.5 em, bold value ~0.58 em per character); GLYPH is the safe upper bound
+    const valueW = r.value.length * valueSize * 0.58;
+    const perLine = Math.max(8, Math.floor((inner - valueW - 30) / (rowSize * 0.5)));
+    const lines = wrapHeadline(r.label, perLine, 4);
+    return { ...r, lines, h: lines.length * lineH + Math.round(rowSize * 1.0) };
+  });
   const cardTop = ruleY + 60;
-  // rows share the height left between the title and the closing line (and the footer): 8-10 rows get tighter and smaller
-  const room = CARD_H - 170 - cardTop - (closingLines.length ? 80 + closingLines.length * 62 : 0) - 36;
-  let rowSize = Math.max(34, Math.min(52, Math.floor((CARD_W - 200) / ((maxLabel + maxValue + 2) * GLYPH))));
-  const rowH = Math.min(Math.round(rowSize * 2.3), Math.floor(room / c.rows.length));
-  rowSize = Math.max(30, Math.min(rowSize, Math.floor(rowH / 1.75)));
-  const cardH = c.rows.length * rowH + 36;
-  const rows = c.rows
+  const cardH = laid.reduce((sum, r) => sum + r.h, 0) + 36;
+  let y = cardTop + 18;
+  const rows = laid
     .map((r, i) => {
-      const y = cardTop + 18 + i * rowH + Math.round(rowH * 0.62);
-      const sep = i < c.rows.length - 1 ? `<line x1="100" x2="${CARD_W - 100}" y1="${cardTop + 18 + (i + 1) * rowH}" y2="${cardTop + 18 + (i + 1) * rowH}" stroke="${accent}" stroke-opacity="0.3" stroke-width="2"/>` : "";
-      return `<text x="100" y="${y}" font-family="${FONT}" font-size="${rowSize}" fill="#fff" fill-opacity="0.9">${esc(r.label)}</text>` +
-        `<text x="${CARD_W - 100}" y="${y}" text-anchor="end" font-family="${FONT}" font-weight="700" font-size="${Math.round(rowSize * 1.12)}" fill="${i >= c.rows.length - 2 ? accent : "#fff"}">${esc(r.value)}</text>${sep}`;
+      const top = y;
+      y += r.h;
+      const base = top + Math.round(rowSize * 0.5) + lineH - Math.round(lineH * 0.2);
+      const sep = i < laid.length - 1 ? `<line x1="100" x2="${CARD_W - 100}" y1="${y}" y2="${y}" stroke="${accent}" stroke-opacity="0.3" stroke-width="2"/>` : "";
+      const label = r.lines
+        .map((l, k) => `<text x="100" y="${base + k * lineH}" font-family="${FONT}" font-size="${rowSize}" fill="#fff" fill-opacity="0.9">${esc(l)}</text>`)
+        .join("");
+      return label +
+        `<text x="${CARD_W - 100}" y="${base}" text-anchor="end" font-family="${FONT}" font-weight="700" font-size="${valueSize}" fill="${i >= laid.length - 2 ? accent : "#fff"}">${esc(r.value)}</text>${sep}`;
     })
     .join("");
 
+  const closingLines = c.closing ? wrapHeadline(c.closing, 34, 4) : [];
   const closingTop = cardTop + cardH + 80;
   const closing = closingLines
     .map((l, i) => `<text x="${CARD_W / 2}" y="${closingTop + i * 62}" text-anchor="middle" font-family="${FONT}" font-size="46" fill="#fff" fill-opacity="0.92">${esc(l)}</text>`)
     .join("");
-  // centre the whole block in the safe area: a card of 4 rows must not leave the lower half of the frame empty
   const blockTop = titleY0 - titleSize;
   const blockBottom = closingLines.length ? closingTop + (closingLines.length - 1) * 62 : cardTop + cardH;
-  const shift = Math.max(0, Math.round(CARD_H / 2 - (blockTop + blockBottom) / 2));
-  const foot = footer ? `<text x="${CARD_W / 2}" y="${CARD_H - 70}" text-anchor="middle" font-family="${FONT}" font-size="28" fill="#fff" fill-opacity="0.6">${esc(footer)}</text>` : "";
+  // taller than one screen: the card grows (with room for the footer) and the video pans down it
+  const height = Math.max(CARD_H, blockBottom + 200);
+  // fits on one screen: centre the block so a short card does not leave the lower half empty
+  const shift = height === CARD_H ? Math.max(0, Math.round(CARD_H / 2 - (blockTop + blockBottom) / 2)) : 0;
+  const foot = footer ? `<text x="${CARD_W / 2}" y="${height - 70}" text-anchor="middle" font-family="${FONT}" font-size="30" fill="#fff" fill-opacity="0.7">${esc(footer)}</text>` : "";
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_W}" height="${CARD_H}">
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_W}" height="${height}">
 <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#050b1c" stop-opacity="0.55"/><stop offset="0.45" stop-color="#050b1c" stop-opacity="0.66"/><stop offset="1" stop-color="#050b1c" stop-opacity="0.95"/></linearGradient></defs>
-<rect width="${CARD_W}" height="${CARD_H}" fill="url(#g)"/><g transform="translate(0,${shift})">${title}
+<rect width="${CARD_W}" height="${height}" fill="url(#g)"/><g transform="translate(0,${shift})">${title}
 <rect x="${CARD_W / 2 - 110}" y="${ruleY}" width="220" height="6" rx="3" fill="${accent}"/>
 <rect x="60" y="${cardTop}" width="${CARD_W - 120}" height="${cardH}" rx="46" fill="#080e1e" fill-opacity="0.86" stroke="${accent}" stroke-width="3"/>${rows}${closing}</g>${foot}</svg>`;
+  return { svg, height };
+}
+
+export function cardSvg(c: ListCardContent, accent: string, footer?: string): string {
+  return cardLayout(c, accent, footer).svg;
 }
 
 export interface RenderCardOptions {
@@ -127,13 +146,14 @@ export async function renderListCardPng(c: ListCardContent, brandKey: string, ou
   const brand = brandFor(brandKey);
   const prompt = `${c.image}. ${PICTURE_MOOD}. No text, no letters, no words, no logos, no watermark. vertical composition`;
   const bg = opts.background !== undefined ? opts.background : await generateBackgroundImage(prompt, CARD_W, CARD_H, c.image);
+  const { svg, height } = cardLayout(c, brand.accent, opts.footer);
   const base = bg
-    ? sharp(bg).resize(CARD_W, CARD_H, { fit: "cover" })
-    : sharp(await sharp({ create: { width: CARD_W, height: CARD_H, channels: 3, background: brand.bg } })
-        .composite([{ input: Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_W}" height="${CARD_H}"><defs><radialGradient id="r" cx="0.7" cy="0.25" r="0.8"><stop offset="0" stop-color="${brand.accent}" stop-opacity="0.45"/><stop offset="1" stop-color="${brand.accent}" stop-opacity="0"/></radialGradient></defs><rect width="${CARD_W}" height="${CARD_H}" fill="url(#r)"/></svg>`) }])
+    ? sharp(bg).resize(CARD_W, height, { fit: "cover" })
+    : sharp(await sharp({ create: { width: CARD_W, height, channels: 3, background: brand.bg } })
+        .composite([{ input: Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_W}" height="${height}"><defs><radialGradient id="r" cx="0.7" cy="0.15" r="0.8"><stop offset="0" stop-color="${brand.accent}" stop-opacity="0.45"/><stop offset="1" stop-color="${brand.accent}" stop-opacity="0"/></radialGradient></defs><rect width="${CARD_W}" height="${height}" fill="url(#r)"/></svg>`) }])
         .png().toBuffer());
   fs.mkdirSync(path.dirname(outPng), { recursive: true });
-  await base.composite([{ input: Buffer.from(cardSvg(c, brand.accent, opts.footer)) }]).png().toFile(outPng);
+  await base.composite([{ input: Buffer.from(svg) }]).png().toFile(outPng);
   pipelineLogger.info(`List card (${bg ? "AI picture" : "branded background"}): "${c.title}", ${c.rows.length} rows`, "ListCard");
   return outPng;
 }
@@ -149,23 +169,45 @@ export function pickMusicBed(seed: string, dir = MUSIC_DIR): string {
   return fs.existsSync(file) ? file : path.join(dir, `${MUSIC_BEDS[0]}.m4a`);
 }
 
-/** ffmpeg arguments: a slow push-in on the card, a short fade at both ends, the music fitted to the length at -16 LUFS. */
-export function stillReelArgs(png: string, bed: string, out: string, seconds: number): string[] {
+/** Pan speed down a card taller than the screen, and the pauses at its top and bottom. */
+const PAN_PX_PER_SEC = 140;
+const PAN_HOLD_TOP = 1.5;
+const PAN_HOLD_END = 2.0;
+
+/** How long a card is shown: `seconds`, or longer when it is tall enough to need a pan down its whole length. */
+export function stillReelSeconds(height: number, seconds = 6): number {
+  if (height <= CARD_H) return seconds;
+  return Math.max(seconds, Math.ceil((PAN_HOLD_TOP + (height - CARD_H) / PAN_PX_PER_SEC + PAN_HOLD_END) * 10) / 10);
+}
+
+/**
+ * ffmpeg arguments, in HD (crf 16, the still-image tune, sharp lanczos scaling). A card of one screen gets a slow push-in;
+ * a taller card pans down at a steady speed after a short hold on the title. Fades at both ends; the music loops to the
+ * length at -16 LUFS.
+ */
+export function stillReelArgs(png: string, bed: string, out: string, seconds: number, height = CARD_H): string[] {
   const frames = Math.round(seconds * 30);
   const fo = Math.max(0, seconds - 0.4).toFixed(2);
   const af = Math.max(0, seconds - 0.9).toFixed(2);
+  const motion = height > CARD_H
+    ? `crop=w=${CARD_W}:h=${CARD_H}:x=0:y='min(ih-oh,max(0,(t-${PAN_HOLD_TOP})*${PAN_PX_PER_SEC}))'`
+    : `scale=1296:2304:flags=lanczos,zoompan=z='1+0.05*on/${frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=1080x1920:fps=30`;
   return [
-    "-y", "-loop", "1", "-framerate", "30", "-i", png, "-i", bed,
+    "-y", "-loop", "1", "-framerate", "30", "-i", png, "-stream_loop", "-1", "-i", bed,
     "-filter_complex",
-    `[0:v]scale=1296:2304:flags=lanczos,zoompan=z='1+0.05*on/${frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=1080x1920:fps=30,fade=t=in:st=0:d=0.3,fade=t=out:st=${fo}:d=0.3,format=yuv420p[v];` +
+    `[0:v]${motion},fade=t=in:st=0:d=0.3,fade=t=out:st=${fo}:d=0.3,format=yuv420p[v];` +
       `[1:a]atrim=0:${seconds},asetpts=PTS-STARTPTS,afade=t=in:d=0.4,afade=t=out:st=${af}:d=0.8,loudnorm=I=-16:TP=-1.5:LRA=7,aformat=sample_rates=44100:channel_layouts=stereo[a]`,
-    "-map", "[v]", "-map", "[a]", "-t", String(seconds), "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", out,
+    "-map", "[v]", "-map", "[a]", "-t", String(seconds), "-r", "30",
+    "-c:v", "libx264", "-preset", "medium", "-tune", "stillimage", "-crf", "16", "-profile:v", "high",
+    "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out,
   ];
 }
 
-export function renderStillReel(png: string, bed: string, out: string, seconds = 6): Promise<string> {
+export async function renderStillReel(png: string, bed: string, out: string, seconds = 6): Promise<string> {
+  const height = (await sharp(png).metadata()).height ?? CARD_H;
+  const length = stillReelSeconds(height, seconds);
   return new Promise((resolve, reject) => {
-    execFile(config.binaries.ffmpeg || "ffmpeg", stillReelArgs(png, bed, out, seconds), { maxBuffer: 16 * 1024 * 1024 }, (err, _so, se) =>
+    execFile(config.binaries.ffmpeg || "ffmpeg", stillReelArgs(png, bed, out, length, height), { maxBuffer: 16 * 1024 * 1024 }, (err, _so, se) =>
       err ? reject(new Error(`still reel: ${String(se).slice(-300) || err.message}`)) : resolve(out),
     );
   });

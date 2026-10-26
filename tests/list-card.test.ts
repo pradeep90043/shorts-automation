@@ -3,7 +3,7 @@ import { execFileSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { cardSvg, listCardFromLines, listCardPrompt, parseListCard, pickMusicBed, renderListCardPng, renderStillReel } from "../src/formats/listCard";
+import { cardLayout, cardSvg, listCardFromLines, stillReelArgs, stillReelSeconds, listCardPrompt, parseListCard, pickMusicBed, renderListCardPng, renderStillReel } from "../src/formats/listCard";
 
 // the LLM answer: JSON is found inside chatter, clamped and validated
 const good = parseListCard('Sure! {"title":"1 acre lemon farming: ₹5-15 lakh a year?","rows":[{"label":"Plants","value":"250-300"},{"label":"Yield","value":"15-25 tonnes"},{"label":"Price","value":"₹20-60/kg"},{"label":"","value":"x"}],"closing":"Estimates only.","image":"lemon orchard"} done');
@@ -12,7 +12,14 @@ assert.strictEqual(parseListCard("no json here"), null);
 assert.strictEqual(parseListCard('{"title":"x","rows":[{"label":"a","value":"b"}]}'), null, "needs at least 3 rows");
 assert.strictEqual(parseListCard('{"title":"","rows":[]}'), null);
 const long = parseListCard(JSON.stringify({ title: "T".repeat(200), rows: Array.from({ length: 12 }, (_, i) => ({ label: "L".repeat(80) + i, value: "V".repeat(80) })) }));
-assert.ok(long && long.title.length <= 60 && long.rows.length === 10 && long.rows.every((r) => r.label.length <= 26 && r.value.length <= 22), "lengths and row count clamped");
+assert.ok(long && long.title.length <= 60 && long.rows.length === 12 && long.rows.every((r) => r.label.length <= 80 && r.value.length <= 40), "every row kept, runaway lengths clamped");
+// a card taller than one screen grows, and its video lasts long enough to pan down all of it
+const tall = cardLayout({ title: "Top 25", rows: Array.from({ length: 25 }, (_, i) => ({ label: `Job ${i}`, value: "₹10 LPA" })), image: "x" }, "#FFB800");
+assert.ok(tall.height > 1920 && tall.svg.includes(`height="${tall.height}"`), "tall card grows");
+assert.strictEqual(cardLayout({ title: "Top 3", rows: [{ label: "a", value: "1" }, { label: "b", value: "2" }, { label: "c", value: "3" }], image: "x" }, "#FFB800").height, 1920);
+assert.strictEqual(stillReelSeconds(1920), 6);
+assert.ok(stillReelSeconds(tall.height) > 6, "tall card shown longer");
+assert.ok(stillReelArgs("a.png", "b.m4a", "o.mp4", 10, 3000).join(" ").includes("crop=w=1080:h=1920"), "tall card pans");
 
 // OCR-style fallback
 const ocr = "सोने का अंडा देने वाला\nपौधे :- 250 से 300\nउत्पादन शुरू :- 2-3 साल बाद\nसालाना उत्पादन :- 15 से 25 टन\nबिक्री :- 20 से 60 रु/किलो";

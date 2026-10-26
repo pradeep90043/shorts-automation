@@ -3859,8 +3859,12 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         ocrText: context.ocr?.text,
         title: context.metadata?.title,
         hindi,
-        // CodeOrCap's cards carry its handle; Prompt Gag's carry the "not investment advice" line
-        footer: key === "prompt_gag" ? "शैक्षिक जानकारी, निवेश सलाह नहीं" : key === "codeorcap" ? `${this.profile.handle || "@codeorcap"} · figures are estimates` : undefined,
+        // CodeOrCap's cards credit the source creator next to its own handle; Prompt Gag's carry the "not investment advice" line
+        footer: key === "prompt_gag"
+          ? "शैक्षिक जानकारी, निवेश सलाह नहीं"
+          : key === "codeorcap"
+            ? [context.sourceCreatorUsername && `source: @${context.sourceCreatorUsername.replace(/^@/, "")}`, this.profile.handle || "@codeorcap", "figures are estimates"].filter(Boolean).join(" · ")
+            : undefined,
         llm: async (prompt) => {
           const client = this.freellmapi ?? (this.formatLlm ??= new FreeLlmApiClient());
           return client.generateText(prompt, undefined, 2500, nextDirectorModel());
