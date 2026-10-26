@@ -14,7 +14,8 @@ import { FacebookPublisher, FacebookUploadResult } from "./facebook/publisher";
 import { NotifyService, escapeMarkdown } from "./notify";
 import { PipelineContext, VideoMetadata } from "./types";
 import { pipelineLogger } from "./utils/logger";
-import { howItWorksLines, renderHowItWorksClip } from "./my-video/howItWorksClip";
+import { howItWorksLines, renderHowItWorksClip, verdictCategory, verdictLine, type ClipVerdict } from "./my-video/howItWorksClip";
+import { isStillTextSource, stillFraction } from "./formats/stillSource";
 import { dropUnsupportedFigures, insightEnabledFor, insightIntro, insightLang, insightRuleFor, insightTitle, looksEnglish } from "./my-video/insightClip";
 import { makeAsk } from "./longvideo-auto/llm";
 import { splitForVoice, toDevanagari } from "./audio/clonedVoice";
@@ -2998,7 +2999,7 @@ ${this.theme.analysisRules}`;
         // run that starts now, while the reel is rendered. If it fails or is late, the Edge voice is used as before.
         if (clonedVoiceEnabled(this.profile.key) && context.metadata?.voiceoverScript) {
           const claim = context.metadata.voiceoverScript;
-          const hiw = insightEnabledFor(this.profile.key, this.profile.watch?.outroVersion) ? howItWorksLines(this.deriveTranscriptionWorkflow(context).explanation, insightIntro(this.profile.key)) : [];
+          const hiw = insightEnabledFor(this.profile.key, this.profile.watch?.outroVersion) ? howItWorksLines(this.deriveTranscriptionWorkflow(context).explanation, insightIntro(this.profile.key), this.v2Verdict(context), insightLang(process.env, this.profile.key)) : [];
           context.clonedHowItWorksLines = hiw;
           // the claim is spoken in sentence-sized pieces on separate runners (one long line is the slowest, and the one that times out)
           const claimParts = splitForVoice(spokenText(claim));
@@ -3820,6 +3821,16 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
    * true = handled here; false = anything went wrong or no format was asked for, so the channel's normal Short is made (a slot is never lost).
    */
   private async tryFormatShort(context: PipelineContext): Promise<boolean> {
+    // A still-picture reel (a salary table, a list card) is rebuilt from its text with our list-card template: its frames
+    // are someone else's design and our captions would sit on its text. Only on a normal (or stickman) slot.
+    if ((!context.shortFormat || context.shortFormat === "stickman") && context.isVideo !== false && context.originalVideoPath) {
+      const frozen = await stillFraction(context.originalVideoPath);
+      if (isStillTextSource(frozen, context.ocr?.text)) {
+        pipelineLogger.info(`Source reel is a still picture (${Math.round(frozen * 100)}% frozen): rebuilding it as our own list card`, "DirectUploader");
+        context.shortFormat = "image_music";
+        context.stillSourceCard = true;
+      }
+    }
     const format = context.shortFormat;
     if (format !== "image_music" && format !== "image_voice" && format !== "manual") return false;
     const id = context.id;
@@ -3865,7 +3876,8 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       }
       let finalVideoPath = built.videoPath;
       // the 5-8 s card stays a card; the longer image+voice Short gets the channel's end sequence like any other Short
-      if (format === "image_voice" && (key === "codeorcap" || key === "storiyum" || key === "prompt_gag")) {
+      // a rebuilt still reel keeps the channel's V2 clip (with the verdict) like any normal Short
+      if ((format === "image_voice" || context.stillSourceCard) && (key === "codeorcap" || key === "storiyum" || key === "prompt_gag")) {
         const withVerdict = path.join(context.tempDir, "video_with_verdict.mp4");
         if (await this.appendVerdictSequence(context, finalVideoPath, withVerdict)) finalVideoPath = withVerdict;
       }
@@ -3875,6 +3887,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     } catch (err) {
       pipelineLogger.warn(`Format ${format} failed (${err instanceof Error ? err.message : err}): making the normal Short instead`, "DirectUploader");
       context.shortFormat = undefined;
+      context.stillSourceCard = false;
       return false;
     }
   }
@@ -3900,7 +3913,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       // One cloned voice: the lines the cloud run spoke for this clip, used only when they are exactly the lines the clip narrates now.
       if (context.clonedVoice) {
         const set = await context.clonedVoice;
-        const lines = howItWorksLines(rawExplanation, insightIntro(profileKey));
+        const lines = howItWorksLines(rawExplanation, insightIntro(profileKey), this.v2Verdict(context), insightLang(process.env, profileKey));
         const asked = context.clonedHowItWorksLines ?? [];
         const files = lines.map((_, i) => set?.file(`hiw_${i}`));
         if (set && lines.length === asked.length && lines.every((l, i) => l === asked[i]) && files.every(Boolean)) clonedHiwFiles = files as string[];
@@ -3910,7 +3923,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
       const myVideoClip = path.join(tempDir, "hiw_myvideo.mp4");
       const rendered = await renderHowItWorksClip(
         // the short's own diagram (not the generic placeholder deriveTranscriptionWorkflow invents when it is missing)
-        { explanation: rawExplanation, intro: insightIntro(profileKey), title2: insightTitle(profileKey), language: insightLang(process.env, profileKey), title: context.metadata?.title, mermaid: context.metadata?.diagramWorkflow, diagramTitle: workflowData.diagramTitle, narrationFiles: clonedHiwFiles },
+        { explanation: rawExplanation, intro: insightIntro(profileKey), title2: insightTitle(profileKey), language: insightLang(process.env, profileKey), title: context.metadata?.title, mermaid: context.metadata?.diagramWorkflow, diagramTitle: workflowData.diagramTitle, narrationFiles: clonedHiwFiles, verdict: this.v2Verdict(context) },
         myVideoClip,
       );
       if (!rendered) return { done: false, clonedHiwFiles };
@@ -5211,16 +5224,20 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
   }
 
   private verdictCategory(verdict: string): { label: string; color: string } {
-    const v = verdict.toLowerCase();
-    if (v.includes("partially true") || v.includes("mostly true") || v.includes("largely true"))
-      return { label: "PARTIALLY TRUE", color: "#FFD700" };
-    if (v.includes("partially false") || v.includes("partially wrong") || v.includes("misleading") || v.includes("mostly false"))
-      return { label: "PARTIALLY WRONG", color: "#FF8C00" };
-    if (v.includes("false") || v.includes("wrong") || v.includes("incorrect") || v.includes("fake") || v.includes("myth"))
-      return { label: "WRONG", color: "#FF4444" };
-    if (v.includes("true") || v.includes("correct") || v.includes("accurate") || v.includes("verified") || v.includes("fact"))
-      return { label: "TRUE", color: "#00CC66" };
-    return { label: "UNVERIFIED", color: "#FFFFFF" };
+    return verdictCategory(verdict);
+  }
+
+  /**
+   * CodeOrCap V2: the verdict is the last scene of the how-it-works clip instead of the avatar end card after it.
+   * Undefined when the channel has no V2 clip, VERDICT_IN_V2=off, or the model gave no verdict (then the end card stays).
+   */
+  private v2Verdict(context: PipelineContext): ClipVerdict | undefined {
+    const key = this.profile.key.toLowerCase();
+    if (key !== "codeorcap" || /^(off|false|0|no)$/i.test((process.env.VERDICT_IN_V2 ?? "").trim())) return undefined;
+    if (!insightEnabledFor(key, this.profile.watch?.outroVersion)) return undefined;
+    const verdict = context.metadata?.verdict?.trim();
+    if (!verdict) return undefined;
+    return { verdict, score: context.metadata?.factCheckScore ?? 7 };
   }
 
   /**
@@ -5300,7 +5317,8 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
     type ProfileKey = keyof typeof PROFILE_CFG;
     const cfg = (PROFILE_CFG as Record<string, typeof PROFILE_CFG[ProfileKey]>)[profileKey];
     if (!cfg) return false;
-    const noEndCard = (cfg as { noEndCard?: boolean }).noEndCard === true;
+    // the end card is dropped when the V2 clip already ends on the verdict (CodeOrCap)
+    const noEndCard = (cfg as { noEndCard?: boolean }).noEndCard === true || Boolean(this.v2Verdict(context));
     if (noEndCard && !insightEnabledFor(profileKey, this.profile.watch?.outroVersion)) return false;
 
     try {
@@ -5543,7 +5561,9 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         const myVideoDone = built.done;
 
         if (!myVideoDone) {
-        const speechScript = `${insightIntro(profileKey)} ${rawExplanation}`;
+        // the Pexels fallback speaks the verdict too: the end card is not added when the V2 clip carries it
+        const fallbackVerdict = this.v2Verdict(context);
+        const speechScript = `${insightIntro(profileKey)} ${rawExplanation}${fallbackVerdict ? ` ${verdictLine(fallbackVerdict, insightLang(process.env, profileKey))}` : ""}`;
 
         let ttsDuration = 3.5;
         try {

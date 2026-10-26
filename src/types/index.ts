@@ -191,6 +191,7 @@ export interface PipelineContext {
   channelPinned?: boolean; // true if target channel profile was explicitly chosen or redirected
   channelProfileKey?: string; // key of the channel profile (e.g. codeorcap, storiyum, prompt_gag)
   shortFormat?: string; // format of this Short in the format experiment (see schedule/formatTest.ts); undefined = the channel's normal Short
+  stillSourceCard?: boolean; // the source reel is a still picture, rebuilt from its text as our own list card (formats/stillSource.ts)
   captionMetadata?: { title: string; description: string }; // user-provided title+description from Telegram caption
   sourceCreatorUsername?: string; // the original poster's @handle (from the source URL/page), used to cache/reuse their watermark zone positions — see src/utils/creatorZones.ts
   userPrompt?: string; // custom re-generation prompt instruction from the user

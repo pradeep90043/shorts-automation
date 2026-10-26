@@ -34,6 +34,43 @@ export interface HowItWorksInput {
   title2?: string;
   /** "hi" = Hindi channel: the director writes every title / label / callout in Hindi (Devanagari) */
   language?: string;
+  /** CodeOrCap: the fact-check verdict closes the clip as its last scene (it replaces the avatar verdict end card) */
+  verdict?: ClipVerdict;
+}
+
+export interface ClipVerdict {
+  /** the model's verdict words, e.g. "Mostly True" */
+  verdict: string;
+  /** factCheckScore, 1-10 */
+  score: number;
+}
+
+/** The end card's verdict categories, from the model's verdict words. */
+export function verdictCategory(verdict: string): { label: string; color: string } {
+  const v = verdict.toLowerCase();
+  if (v.includes("partially true") || v.includes("mostly true") || v.includes("largely true"))
+    return { label: "PARTIALLY TRUE", color: "#FFD700" };
+  if (v.includes("partially false") || v.includes("partially wrong") || v.includes("misleading") || v.includes("mostly false"))
+    return { label: "PARTIALLY WRONG", color: "#FF8C00" };
+  if (v.includes("false") || v.includes("wrong") || v.includes("incorrect") || v.includes("fake") || v.includes("myth"))
+    return { label: "WRONG", color: "#FF4444" };
+  if (v.includes("true") || v.includes("correct") || v.includes("accurate") || v.includes("verified") || v.includes("fact"))
+    return { label: "TRUE", color: "#00CC66" };
+  return { label: "UNVERIFIED", color: "#FFFFFF" };
+}
+
+const NUM_EN = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+const NUM_HI = ["शून्य", "एक", "दो", "तीन", "चार", "पाँच", "छह", "सात", "आठ", "नौ", "दस"];
+const LABEL_HI: Record<string, string> = { TRUE: "सही", "PARTIALLY TRUE": "काफ़ी हद तक सही", "PARTIALLY WRONG": "आधा सच", WRONG: "ग़लत", UNVERIFIED: "पक्का नहीं" };
+const clampScore = (n: number): number => Math.min(10, Math.max(1, Math.round(Number(n) || 7)));
+
+/** The spoken verdict line (numbers as words, so every voice reads them right). */
+export function verdictLine(v: ClipVerdict, language = "en"): string {
+  const { label } = verdictCategory(v.verdict);
+  const s = clampScore(v.score);
+  return language === "hi"
+    ? `तो हमारा फ़ैसला: ${LABEL_HI[label]}। दस में से ${NUM_HI[s]}।`
+    : `So the verdict: ${label.toLowerCase()}. ${NUM_EN[s][0].toUpperCase()}${NUM_EN[s].slice(1)} out of ten.`;
 }
 
 const INTRO = "Let us check how is it working.";
@@ -61,8 +98,9 @@ export function mermaidNodes(mermaid: string | undefined): string[] {
   return labels.length > 5 ? [...labels.slice(0, 4), labels[labels.length - 1]] : labels;
 }
 
-/** The lines the clip narrates, in scene order: the intro, then one per sentence of the explanation. */
-export const howItWorksLines = (explanation: string, intro: string = INTRO): string[] => [intro, ...explanationBeats(explanation)];
+/** The lines the clip narrates, in scene order: the intro, then one per sentence of the explanation, then the verdict (when given). */
+export const howItWorksLines = (explanation: string, intro: string = INTRO, verdict?: ClipVerdict, language = "en"): string[] =>
+  [intro, ...explanationBeats(explanation), ...(verdict ? [verdictLine(verdict, language)] : [])];
 
 /** Narration beats: one per sentence of the explanation (list numbers removed), at most MAX_BODY_BEATS. */
 export function explanationBeats(explanation: string): string[] {
@@ -165,6 +203,23 @@ export function buildHowItWorksSpec(input: HowItWorksInput, slug: string, direct
     const visual = fromLlm && !isThin(fromLlm) ? { ...fromLlm, accent: fromLlm.accent ?? "gold" } : visualFromSentence(text, k, beats.length, nodes, heading);
     raw.push({ text, visual });
   });
+  let verdictText = "";
+  if (input.verdict) {
+    // the closing scene: the verdict label and score, spoken and shown (replaces the avatar end card)
+    const { label } = verdictCategory(input.verdict.verdict);
+    const score = clampScore(input.verdict.score);
+    verdictText = verdictLine(input.verdict, input.language);
+    const good = label === "TRUE" || label === "PARTIALLY TRUE";
+    raw.push({
+      text: verdictText,
+      visual: {
+        pose: good ? "smug" : "think", mood: good ? "happy" : "neutral", accent: "gold", camera: "push", setting: "stage",
+        title: input.language === "hi" ? "फ़ैसला" : "VERDICT",
+        callouts: [input.language === "hi" ? LABEL_HI[label] : label, `${score}/10`],
+        props: [{ type: good ? "check" : "warning" }],
+      },
+    });
+  }
 
   const scenes: StickmanScene[] = raw.map((s, i) => ({
     id: `s${String(i + 1).padStart(2, "0")}`,
@@ -172,7 +227,8 @@ export function buildHowItWorksSpec(input: HowItWorksInput, slug: string, direct
     visual: sanitizeVisual(s.visual, i),
   }));
   diversifyVisuals(scenes);
-  dropInventedNumbers(scenes, beats.join(" ")); // a chart/counter may only show figures the narration states
+  // a chart/counter may only show figures the narration states (the verdict's score is stated by its own line)
+  dropInventedNumbers(scenes, [...beats, verdictText ? `${verdictText} ${clampScore(input.verdict!.score)}/10` : ""].join(" "));
 
   return {
     slug,
