@@ -230,7 +230,10 @@ const careersTheme: ContentTheme = {
   analysisRules:
     `CAREER & MONEY RULES: Identify the salary, career, business idea or money claim shown and every number in it. Separate fact from estimate. ` +
     `Never state an amount the clip does not show. Flag promises of guaranteed income as unsafe and do not repeat them. ` +
-    `If the clip is a meme or joke rather than money or career information, say so: it is off-niche for this channel.`,
+    `If the clip is a meme or joke rather than money or career information, say so: it is off-niche for this channel. ` +
+    // the V2 end card ("the verdict of this video is ... out of 10") shows this: is the money claim real or cap?
+    `Then judge how realistic the numbers are for India today: a factCheckScore (1-10, 10 = matches real salary / cost data) and a short verdict ` +
+    `using these words: "Accurate", "Mostly True", "Misleading" (exaggerated or missing costs) or "False".`,
   appendVerdict: false,
   requiredHashtag: "career",
   noHistoryHint:
