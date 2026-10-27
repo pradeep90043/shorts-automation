@@ -16,11 +16,25 @@ import { MYTH_TOPICS, pickTopic } from "../src/mythology/topics";
 function sampleAsk() {
   const key = process.env.GROQ_API_KEY;
   if (!key) return makeAsk();
+  const headers = { Authorization: `Bearer ${key}`, "Content-Type": "application/json" };
+  // Groq retires models often: take the biggest general model the key can see right now
+  let model: Promise<string> | undefined;
+  const pickModel = async (): Promise<string> => {
+    if (process.env.GROQ_MODEL) return process.env.GROQ_MODEL;
+    const res = await fetch("https://api.groq.com/openai/v1/models", { headers });
+    const ids: string[] = res.ok ? (((await res.json()) as any).data ?? []).map((m: any) => String(m.id)) : [];
+    const prefer = [/gpt-oss-120b/, /kimi-k2/, /llama-4-maverick/, /qwen3-32b/, /llama-3\.3-70b/, /70b/, /llama-4-scout/];
+    const usable = ids.filter((id) => !/whisper|guard|tts|embed|playai|compound/i.test(id));
+    const chosen = prefer.map((re) => usable.find((id) => re.test(id))).find(Boolean) ?? usable[0];
+    if (!chosen) throw new Error(`Groq has no usable model (${ids.join(", ") || "model list failed"})`);
+    console.log(`Groq model: ${chosen}`);
+    return chosen;
+  };
   return async (prompt: string, opts?: { maxTokens?: number }) => {
     const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile", messages: [{ role: "user", content: prompt }], max_tokens: opts?.maxTokens ?? 3000, temperature: 0.8 }),
+      headers,
+      body: JSON.stringify({ model: await (model ??= pickModel()), messages: [{ role: "user", content: prompt }], max_tokens: opts?.maxTokens ?? 3000, temperature: 0.8 }),
     });
     if (!res.ok) throw new Error(`Groq HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
     return ((await res.json()) as any).choices?.[0]?.message?.content ?? "";
