@@ -1,7 +1,7 @@
 import assert from "assert";
 import fs from "fs";
 import path from "path";
-import { buildOmniVoiceJob, characterKey, CHARACTER_VOICES } from "../src/audio/omnivoice/job";
+import { buildOmniVoiceJob, characterKey, CHARACTER_VOICES, NARRATOR_VOICES, narratorVoiceFor } from "../src/audio/omnivoice/job";
 import { embedJob, kaggleSlots, kernelMetadata, parseKernelStatus } from "../src/audio/omnivoice/kaggleRunner";
 import { voiceEngine } from "../src/audio/narration";
 import { sceneLines } from "../src/my-video/voiceboxNarration";
@@ -12,25 +12,33 @@ assert.strictEqual(voiceEngine({ VOICE_ENGINE: "voicebox" }), "voicebox");
 assert.strictEqual(voiceEngine({ VOICE_ENGINE: " VoiceBox " }), "voicebox");
 assert.strictEqual(voiceEngine({ VOICE_ENGINE: "anything" }), "omnivoice");
 
-// a channel's job: its cloned narrator from voiceProfiles.ts, only the characters its lines use
-const job = buildOmniVoiceJob("lv-1", [
+// a channel's job: its designed narrator (no cloned recording), only the characters its lines use
+const storyLines = [
   { name: "segment_0_s01", text: "बहुत समय पहले की बात है।" },
   { name: "segment_1_s02", text: "माँ! मुझे डर लग रहा है!", speaker: "Child", emotion: "surprise" },
   { name: "segment_2_s03", text: "मेरा छोटू आ गया!", speaker: "old-mother" },
   { name: "segment_3_s04", text: "कोई अनजान आदमी।", speaker: "stranger" },
   { name: "segment_4_s05", text: "कहानी खत्म।", speaker: "narrator" },
-], { channelKey: "Storiyum", language: "hi", speed: "1.0" });
-assert.strictEqual(job.sample.file, "pakizah.mp3", "Storiyum narrates in the Pakizah voice");
-assert.strictEqual(job.sample.end, 14.7);
-assert.ok(job.sample.text.length > 20, "the sample transcript is OmniVoice's ref_text");
+];
+const job = buildOmniVoiceJob("lv-1", storyLines, { channelKey: "Storiyum", language: "hi", speed: "1.0" }, {});
+assert.strictEqual(job.narrator, NARRATOR_VOICES.storiyum, "Storiyum's designed narrator");
+assert.strictEqual(job.sample, undefined, "no cloned recording by default");
+assert.strictEqual(narratorVoiceFor("infoonspot", { NARRATOR_VOICE_INFOONSPOT: " female, elderly, indian accent " }), "female, elderly, indian accent", "per-channel override");
+assert.strictEqual(narratorVoiceFor("unknown", {}), NARRATOR_VOICES.codeorcap);
+// VOICE_CLONE=on brings back the cloned voices from voiceProfiles.ts
+const cloned = buildOmniVoiceJob("lv-1", storyLines, { channelKey: "Storiyum" }, { VOICE_CLONE: "on" });
+assert.strictEqual(cloned.narrator, undefined);
+assert.strictEqual(cloned.sample!.file, "pakizah.mp3", "Storiyum's clone is the Pakizah voice");
+assert.strictEqual(cloned.sample!.end, 14.7);
+assert.ok(cloned.sample!.text.length > 20, "the sample transcript is OmniVoice's ref_text");
 assert.deepStrictEqual(Object.keys(job.characters).sort(), ["child", "old_mother"], "only the characters that speak");
 assert.strictEqual(job.characters.child, CHARACTER_VOICES.child);
-assert.deepStrictEqual(job.lines.map((l) => l.speaker), [undefined, "child", "old_mother", undefined, undefined], "unknown speakers and the narrator use the cloned voice");
+assert.deepStrictEqual(job.lines.map((l) => l.speaker), [undefined, "child", "old_mother", undefined, undefined], "unknown speakers and the narrator use the narrator voice");
 assert.strictEqual(job.lines[1].emotion, "surprise", "the emotion reaches the runner");
 assert.strictEqual(job.format, "mp3");
 
 // a channel without a profile falls back to CodeOrCap's voice
-assert.strictEqual(buildOmniVoiceJob("x", [], { channelKey: "unknown" }).sample.file, "paddy1_clean.mp3");
+assert.strictEqual(buildOmniVoiceJob("x", [], { channelKey: "unknown" }, { VOICE_CLONE: "on" }).sample!.file, "paddy1_clean.mp3");
 assert.strictEqual(characterKey("Old Woman"), "old_woman");
 assert.strictEqual(characterKey(""), undefined);
 

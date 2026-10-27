@@ -53,7 +53,7 @@ export async function generateNarration(opts: NarrationOptions): Promise<{ dir: 
     lines,
     emotionsTagged: true,
     workflow: OMNIVOICE_WORKFLOW,
-    inputs: { ...(opts.inputs ?? {}), characters: JSON.stringify(job.characters) },
+    inputs: { ...(opts.inputs ?? {}), characters: JSON.stringify(job.characters), ...(job.narrator ? { narrator: job.narrator } : {}) },
     giveUpMs: Math.max(10 * 60_000, budget - (Date.now() - started)),
   });
 }

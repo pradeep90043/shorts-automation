@@ -1,12 +1,13 @@
 """
-Narration in OmniVoice (k2-fsa/OmniVoice): one audio file per line, in the channel's cloned voice.
+Narration in OmniVoice (k2-fsa/OmniVoice): one audio file per line, in the channel's narrator voice.
 
 Runs on Kaggle (GPU, src/audio/omnivoice/kaggleRunner.ts pushes it as a script kernel with the job embedded in JOB_JSON)
 and on GitHub Actions (CPU fallback, .github/workflows/omnivoice-scenes.yml: --job <shard.json> --sample <wav>).
 
-The job: {"tag", "language", "speed", "format", "sample": {"file", "start", "end", "text"},
+The job: {"tag", "language", "speed", "format", "narrator": "<voice design>" | "sample": {"file", "start", "end", "text"},
           "characters": {"<speaker>": "<voice design>"}, "lines": [{"name", "text", "emotion"?, "speaker"?}]}
 
+The narrator is a designed voice (the default) or, with VOICE_CLONE=on, a clone of the channel's recorded sample.
 OmniVoice has no emotion switch, so a line's emotion (src/audio/emotion.ts) becomes its pace. A line spoken by a character
 (Storiyum dialogue) uses a designed voice: one anchor clip per character, cloned for all of that character's lines so the
 voice stays the same from line to line. Writes <name>.mp3 (or .wav) per line and manifest.json (tag + seconds per line).
@@ -17,6 +18,7 @@ import os
 import subprocess
 import sys
 import time
+import zlib
 
 JOB_JSON = None  # kaggleRunner.ts replaces this with the job
 
@@ -124,13 +126,15 @@ def level_gain(wav):
     return min(TARGET_SPEECH_DB - speech_db, PEAK_DB - peak_db)
 
 
-def finish(wav, out_path, fmt, work):
-    """Each line denoised, the silence around the speech trimmed (the scene lasts as long as its audio), and brought to one speech level."""
+def finish(wav, out_path, fmt, work, cleanup=True):
+    """Each line (when `cleanup`: denoised) with the silence around the speech trimmed (the scene lasts as long as its audio), and
+    brought to one speech level."""
     clean = wav.replace(".wav", ".clean.wav")
     # trimmed BEFORE the hiss removal: noisereduce softens word edges, and a trim after it cut real speech (lines came out 25-60% shorter)
-    ffmpeg("-i", wav, "-af", f"{denoise_chain(work)},{TRIM},areverse,{TRIM},areverse", "-ar", "24000", "-ac", "1", clean)
+    pre = f"{denoise_chain(work)}," if cleanup else ""
+    ffmpeg("-i", wav, "-af", f"{pre}{TRIM},areverse,{TRIM},areverse", "-ar", "24000", "-ac", "1", clean)
     deep = wav.replace(".wav", ".nr.wav")
-    if deep_clean(clean, deep):
+    if cleanup and deep_clean(clean, deep):
         os.replace(deep, clean)
     # a short fade at both ends: the model can stop mid-sound, and a hard stop is a click when the scenes play back to back
     length = duration_of(clean)
@@ -209,22 +213,34 @@ def main():
         audio = audio.cpu().numpy() if torch.is_tensor(audio) else np.asarray(audio)
         return audio.squeeze().astype(np.float32)
 
-    sample = job["sample"]
-    if a.sample:
-        # GitHub: already cut by the workflow, cleaned here like on Kaggle
-        narrator_wav = f"{work}/narrator.wav"
-        ffmpeg("-i", a.sample, "-ac", "1", "-ar", "24000", "-af", denoise_chain(work), narrator_wav)
+    def designed(name, design):
+        """A designed voice as an anchor clip, cloned for every line of that voice so it stays the same from line to line. The seed comes
+        from the design text, so the same design gives the same voice in every run (a channel keeps its narrator across videos)."""
+        torch.manual_seed(zlib.crc32(design.encode("utf-8")))
+        anchor = f"{work}/voice_{name}.wav"
+        sf.write(anchor, speak(ANCHOR_TEXT, 1.0, None, instruct=design), sr)
+        log(f"voice '{name}': {design}")
+        return (anchor, ANCHOR_TEXT)
+
+    if job.get("narrator"):
+        # the default: a generic designed narrator, clean by construction (no recording, no recording hiss)
+        voices = {None: designed("narrator", job["narrator"])}
     else:
-        narrator_wav = cut_sample(find_file(os.path.basename(sample["file"])), sample.get("start", 0), sample.get("end", 15), f"{work}/narrator.wav", work)
-    voices = {None: (narrator_wav, sample.get("text") or None)}
+        sample = job["sample"]
+        if a.sample:
+            # GitHub: already cut by the workflow, cleaned here like on Kaggle
+            narrator_wav = f"{work}/narrator.wav"
+            ffmpeg("-i", a.sample, "-ac", "1", "-ar", "24000", "-af", denoise_chain(work), narrator_wav)
+        else:
+            narrator_wav = cut_sample(find_file(os.path.basename(sample["file"])), sample.get("start", 0), sample.get("end", 15), f"{work}/narrator.wav", work)
+        voices = {None: (narrator_wav, sample.get("text") or None)}
+    # the hiss removal is for cloned recordings; a designed voice is clean and only gets trimmed, levelled and faded
+    cleanup = not job.get("narrator")
 
     for speaker, design in (job.get("characters") or {}).items():
-        if not any(l.get("speaker") == speaker for l in job["lines"]):
-            continue
-        anchor = f"{work}/voice_{speaker}.wav"
-        sf.write(anchor, speak(ANCHOR_TEXT, 1.0, None, instruct=design), sr)
-        voices[speaker] = (anchor, ANCHOR_TEXT)
-        log(f"character voice '{speaker}': {design}")
+        if any(l.get("speaker") == speaker for l in job["lines"]):
+            voices[speaker] = designed(speaker, design)
+    torch.manual_seed(int(time.time()))  # the lines themselves vary naturally
 
     manifest = {"tag": job.get("tag"), "device": device, "lines": {}}
     for i, line in enumerate(job["lines"], 1):
@@ -246,7 +262,7 @@ def main():
                     raise
                 log(f"{line['name']}: {err}; retrying")
         out_path = os.path.join(a.out, f"{line['name']}.{fmt}")
-        finish(raw, out_path, fmt, work)
+        finish(raw, out_path, fmt, work, cleanup)
         manifest["lines"][line["name"]] = round(duration_of(out_path), 2)
         log(f"[{i}/{len(job['lines'])}] {line['name']} {manifest['lines'][line['name']]}s ({line.get('emotion') or 'neutral'}, {line.get('speaker') or 'narrator'})")
 
