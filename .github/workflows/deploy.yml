@@ -107,6 +107,7 @@ jobs:
             if [ -n "${GEMINI_API_KEY}" ]; then printf 'GEMINI_API_KEY=%s\n' "${GEMINI_API_KEY}" >> .env; fi
             if [ -n "${COVER_IMAGE_API_KEY}" ]; then printf 'COVER_IMAGE_API_KEY=%s\n' "${COVER_IMAGE_API_KEY}" >> .env; fi
             if [ -n "${COVER_IMAGE_API_URL}" ]; then printf 'COVER_IMAGE_API_URL=%s\n' "${COVER_IMAGE_API_URL}" >> .env; fi
+            if [ -n "${KAGGLE_API_TOKEN}" ]; then printf 'KAGGLE_API_TOKEN=%s\n' "${KAGGLE_API_TOKEN}" >> .env; fi   # OmniVoice narration on Kaggle
             # This VM has 1 GB for everything: one Short at a time, a small Node heap
             printf 'MAX_PARALLEL_PIPELINES=1\n' >> .env
             printf 'NODE_OPTIONS=--max-old-space-size=450\n' >> .env
@@ -122,6 +123,7 @@ jobs:
           COVER_IMAGE_API_KEY: ${{ secrets.COVER_IMAGE_API_KEY }}
           COVER_IMAGE_API_URL: ${{ secrets.COVER_IMAGE_API_URL }}
           PRODUCTION_COOKIES: ${{ secrets.PRODUCTION_COOKIES }}
+          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
 
       - name: Rsync runtime files to VM
         run: |
