@@ -69,9 +69,39 @@ def denoise_chain(work):
     return _denoise_chain
 
 
+_nr = None  # the noisereduce module once imported, False when it is unavailable
+
+
+def deep_clean(src, out):
+    """Stationary spectral gating (noisereduce): learns the steady hiss the clone copied from the voice sample and removes it from the
+    whole line, gaps included, which RNNoise alone leaves audible. Returns False when it is not installed or fails; the caller then keeps
+    the ffmpeg chain only."""
+    global _nr
+    if _nr is False:
+        return False
+    try:
+        import numpy as np
+        import soundfile as sf
+        if _nr is None:
+            import noisereduce
+            _nr = noisereduce
+        a, sr = sf.read(src, dtype="float32")
+        a = a if a.ndim == 1 else a.mean(axis=1)
+        clean = _nr.reduce_noise(y=a, sr=sr, stationary=True, prop_decrease=0.9, n_std_thresh_stationary=1.5)
+        sf.write(out, np.clip(clean, -1, 1).astype("float32"), sr)
+        return True
+    except Exception as err:
+        log(f"noisereduce unavailable ({str(err)[:160]}): ffmpeg denoise only")
+        _nr = False
+        return False
+
+
 def cut_sample(src, start, end, out, work):
     """The voice sample, cut and cleaned: its background hiss would otherwise be cloned as part of the voice."""
     ffmpeg("-ss", str(start), "-to", str(end), "-i", src, "-vn", "-ac", "1", "-ar", "24000", "-af", denoise_chain(work), out)
+    deep = out.replace(".wav", ".df.wav")
+    if deep_clean(out, deep):
+        os.replace(deep, out)
     return out
 
 
@@ -100,7 +130,9 @@ def level_gain(wav):
 def finish(wav, out_path, fmt, work):
     """Each line denoised, the silence around the speech trimmed (the scene lasts as long as its audio), and brought to one speech level."""
     clean = wav.replace(".wav", ".clean.wav")
-    ffmpeg("-i", wav, "-af", f"{denoise_chain(work)},{TRIM},areverse,{TRIM},areverse", "-ar", "24000", "-ac", "1", clean)
+    deep = wav.replace(".wav", ".df.wav")
+    src = deep if deep_clean(wav, deep) else wav
+    ffmpeg("-i", src, "-af", f"{denoise_chain(work)},{TRIM},areverse,{TRIM},areverse", "-ar", "24000", "-ac", "1", clean)
     # a short fade at both ends: the model can stop mid-sound, and a hard stop is a click when the scenes play back to back
     length = duration_of(clean)
     fade = f"afade=t=in:d=0.01,afade=t=out:st={max(0.0, length - FADE_OUT):.3f}:d={FADE_OUT}" if length > 2 * FADE_OUT else ""
@@ -147,6 +179,8 @@ def main():
 
     if on_kaggle():
         subprocess.run([sys.executable, "-m", "pip", "install", "-q", "omnivoice"], check=True)
+        # best effort: without it the lines are cleaned by the ffmpeg chain only
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "noisereduce"], check=False)
 
     import numpy as np
     import soundfile as sf
@@ -176,6 +210,8 @@ def main():
         # GitHub: already cut by the workflow, cleaned here like on Kaggle
         narrator_wav = f"{work}/narrator.wav"
         ffmpeg("-i", a.sample, "-ac", "1", "-ar", "24000", "-af", denoise_chain(work), narrator_wav)
+        if deep_clean(narrator_wav, f"{work}/narrator.df.wav"):
+            os.replace(f"{work}/narrator.df.wav", narrator_wav)
     else:
         narrator_wav = cut_sample(find_file(os.path.basename(sample["file"])), sample.get("start", 0), sample.get("end", 15), f"{work}/narrator.wav", work)
     voices = {None: (narrator_wav, sample.get("text") or None)}

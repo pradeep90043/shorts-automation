@@ -7,6 +7,25 @@ import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { config } from "../config";
 import { logger } from "../utils/logger";
+import { MusicService } from "../music";
+
+/**
+ * A mood-matched track from the music library (blocklisted tracks skipped), copied into the project so my-video plays it as a ducked
+ * bed under the narration (video.json "music"). STICKMAN_MUSIC=off, or no musicMood, = no music. Never throws: no track = no music.
+ */
+function musicBed(spec: { slug: string; musicMood?: string }, projectDir: string): { music?: string[] } {
+  if (!spec.musicMood || /^(off|false|0|no)$/i.test((process.env.STICKMAN_MUSIC ?? "").trim())) return {};
+  try {
+    const track = new MusicService().selectLocalTrack(config.paths.musicDir, spec.musicMood);
+    const name = `music${path.extname(track).toLowerCase() || ".mp3"}`;
+    fs.copyFileSync(track, path.join(projectDir, name));
+    logger.info(`[stickman] music bed for ${spec.slug}: ${path.basename(track)} (${spec.musicMood})`);
+    return { music: [`content/${spec.slug}/${name}`] };
+  } catch (err) {
+    logger.warn(`[stickman] no music bed for ${spec.slug}: ${err instanceof Error ? err.message : err}`);
+    return {};
+  }
+}
 
 /** true only when the variable is explicitly on (on/true/1/yes) */
 const switchOnStrict = (name: string): boolean => /^(on|true|1|yes)$/i.test((process.env[name] ?? "").trim());
@@ -57,6 +76,8 @@ export interface StickmanVideoSpec {
    * the files go into the project and my-video measures them, so each scene lasts exactly as long as its audio.
    */
   narrationDir?: string;
+  /** a soft music bed from the music library (assets/music/<mood>), ducked under the voice by my-video; absent = no music */
+  musicMood?: string;
   /**
    * When set, the cloud runner uploads the finished video straight to YouTube (it asks this for a short-lived
    * token) and the server skips downloading it. Return null when that is not possible: the video is downloaded.
@@ -535,6 +556,7 @@ const doRender = async (spec: StickmanVideoSpec, onProgress?: ProgressCallback):
     // narration words; STICKMAN_AMBIENCE=on) and the whoosh at every scene change, which with one sentence per scene lands on every
     // sentence end (STICKMAN_TRANSITION_SOUND=on). Short foley (footsteps, a door) stays.
     fx: { ambience: switchOnStrict("STICKMAN_AMBIENCE"), transitionSound: switchOnStrict("STICKMAN_TRANSITION_SOUND") },
+    ...musicBed(spec, projectDir),
     scenes: spec.scenes,
   };
   fs.writeFileSync(path.join(projectDir, "video.json"), JSON.stringify(videoJson, null, 2));
