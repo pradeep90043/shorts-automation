@@ -87,7 +87,7 @@ def deep_clean(src, out):
             _nr = noisereduce
         a, sr = sf.read(src, dtype="float32")
         a = a if a.ndim == 1 else a.mean(axis=1)
-        clean = _nr.reduce_noise(y=a, sr=sr, stationary=True, prop_decrease=0.9, n_std_thresh_stationary=1.5)
+        clean = _nr.reduce_noise(y=a, sr=sr, stationary=True, prop_decrease=0.75)
         sf.write(out, np.clip(clean, -1, 1).astype("float32"), sr)
         return True
     except Exception as err:
@@ -99,9 +99,6 @@ def deep_clean(src, out):
 def cut_sample(src, start, end, out, work):
     """The voice sample, cut and cleaned: its background hiss would otherwise be cloned as part of the voice."""
     ffmpeg("-ss", str(start), "-to", str(end), "-i", src, "-vn", "-ac", "1", "-ar", "24000", "-af", denoise_chain(work), out)
-    deep = out.replace(".wav", ".df.wav")
-    if deep_clean(out, deep):
-        os.replace(deep, out)
     return out
 
 
@@ -130,9 +127,11 @@ def level_gain(wav):
 def finish(wav, out_path, fmt, work):
     """Each line denoised, the silence around the speech trimmed (the scene lasts as long as its audio), and brought to one speech level."""
     clean = wav.replace(".wav", ".clean.wav")
-    deep = wav.replace(".wav", ".df.wav")
-    src = deep if deep_clean(wav, deep) else wav
-    ffmpeg("-i", src, "-af", f"{denoise_chain(work)},{TRIM},areverse,{TRIM},areverse", "-ar", "24000", "-ac", "1", clean)
+    # trimmed BEFORE the hiss removal: noisereduce softens word edges, and a trim after it cut real speech (lines came out 25-60% shorter)
+    ffmpeg("-i", wav, "-af", f"{denoise_chain(work)},{TRIM},areverse,{TRIM},areverse", "-ar", "24000", "-ac", "1", clean)
+    deep = wav.replace(".wav", ".nr.wav")
+    if deep_clean(clean, deep):
+        os.replace(deep, clean)
     # a short fade at both ends: the model can stop mid-sound, and a hard stop is a click when the scenes play back to back
     length = duration_of(clean)
     fade = f"afade=t=in:d=0.01,afade=t=out:st={max(0.0, length - FADE_OUT):.3f}:d={FADE_OUT}" if length > 2 * FADE_OUT else ""
@@ -146,7 +145,12 @@ def finish(wav, out_path, fmt, work):
 def duration_of(path):
     out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path],
                          capture_output=True, text=True, check=True).stdout.strip()
-    return float(out or 0)
+    try:
+        return float(out or 0)
+    except ValueError:
+        # ffprobe says "N/A" for a WAV written through the areverse trim; the samples themselves know their length
+        import soundfile as sf
+        return sf.info(path).duration
 
 
 def line_speed(line, base):
@@ -210,8 +214,6 @@ def main():
         # GitHub: already cut by the workflow, cleaned here like on Kaggle
         narrator_wav = f"{work}/narrator.wav"
         ffmpeg("-i", a.sample, "-ac", "1", "-ar", "24000", "-af", denoise_chain(work), narrator_wav)
-        if deep_clean(narrator_wav, f"{work}/narrator.df.wav"):
-            os.replace(f"{work}/narrator.df.wav", narrator_wav)
     else:
         narrator_wav = cut_sample(find_file(os.path.basename(sample["file"])), sample.get("start", 0), sample.get("end", 15), f"{work}/narrator.wav", work)
     voices = {None: (narrator_wav, sample.get("text") or None)}

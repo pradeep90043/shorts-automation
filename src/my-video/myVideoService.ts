@@ -2,7 +2,7 @@ import fs from "fs";
 import { publicBaseUrl } from "../utils/publicUrl";
 import path from "path";
 import { randomBytes } from "crypto";
-import { spawn } from "child_process";
+import { execFileSync, spawn } from "child_process";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { config } from "../config";
@@ -17,9 +17,11 @@ function musicBed(spec: { slug: string; musicMood?: string }, projectDir: string
   if (!spec.musicMood || /^(off|false|0|no)$/i.test((process.env.STICKMAN_MUSIC ?? "").trim())) return {};
   try {
     const track = new MusicService().selectLocalTrack(config.paths.musicDir, spec.musicMood);
-    const name = `music${path.extname(track).toLowerCase() || ".mp3"}`;
-    fs.copyFileSync(track, path.join(projectDir, name));
-    logger.info(`[stickman] music bed for ${spec.slug}: ${path.basename(track)} (${spec.musicMood})`);
+    const name = "music.mp3";
+    // my-video plays the bed at a fixed 0.06 (ducked under speech, x2.2 in the pauses): barely audible, so the track itself is raised
+    const gainDb = Number(process.env.STICKMAN_MUSIC_GAIN_DB ?? 6) || 0;
+    execFileSync(config.binaries.ffmpeg, ["-hide_banner", "-loglevel", "error", "-y", "-i", track, "-vn", "-af", `volume=${gainDb}dB,alimiter=limit=0.95:level=0`, "-codec:a", "libmp3lame", "-q:a", "3", path.join(projectDir, name)]);
+    logger.info(`[stickman] music bed for ${spec.slug}: ${path.basename(track)} (${spec.musicMood}, +${gainDb} dB)`);
     return { music: [`content/${spec.slug}/${name}`] };
   } catch (err) {
     logger.warn(`[stickman] no music bed for ${spec.slug}: ${err instanceof Error ? err.message : err}`);
