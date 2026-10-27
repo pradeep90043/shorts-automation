@@ -18,23 +18,82 @@ jobs:
   render:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      JOB_ID: ${{ inputs.job_id }}
+      BUNDLE_URL: ${{ inputs.bundle_url }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Prepare diagnostics
+        run: mkdir -p diagnostics/previews
 
       - name: Set up FFmpeg with libass
         run: |
           bash scripts/ensure_ffmpeg.sh
 
       - name: Render short video
+        id: render
+        shell: bash
         run: |
+          set -o pipefail
+          # Bundle URLs may contain signed credentials. Mask before any renderer output.
+          echo "::add-mask::$BUNDLE_URL"
           python3 scripts/render_short.py \
-            --bundle "${{ inputs.bundle_url }}" \
-            --out "video_final.mp4"
+            --bundle "$BUNDLE_URL" \
+            --out "video_final.mp4" 2>&1 | tee diagnostics/render.log
 
-      - name: Upload rendered video artifact
+      - name: Capture video metadata and preview frames
+        if: always()
+        shell: bash
+        env:
+          RENDER_OUTCOME: ${{ steps.render.outcome }}
+        run: |
+          set +e
+          if [ -f video_final.mp4 ]; then
+            ffprobe -v error -show_format -show_streams -of json video_final.mp4 > diagnostics/ffprobe.json 2> diagnostics/ffprobe.stderr
+            mkdir -p diagnostics/previews
+            ffmpeg -hide_banner -loglevel error -i video_final.mp4 \
+              -vf "fps=1/5,scale=360:-2" -frames:v 12 \
+              diagnostics/previews/frame-%03d.jpg 2> diagnostics/preview-extraction.stderr
+          else
+            printf '{"error":"video_final.mp4 was not produced"}\n' > diagnostics/ffprobe.json
+          fi
+          export RENDER_OUTCOME
+          python3 - <<'PY'
+          import json, os
+          from datetime import datetime, timezone
+          manifest = {
+              "job_id": os.environ.get("JOB_ID", ""),
+              "repository": os.environ.get("GITHUB_REPOSITORY", ""),
+              "ref": os.environ.get("GITHUB_REF", ""),
+              "commit_sha": os.environ.get("GITHUB_SHA", ""),
+              "workflow": os.environ.get("GITHUB_WORKFLOW", ""),
+              "workflow_run_id": os.environ.get("GITHUB_RUN_ID", ""),
+              "workflow_run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT", ""),
+              "workflow_job": os.environ.get("GITHUB_JOB", ""),
+              "workflow_run_url": (
+                  os.environ.get("GITHUB_SERVER_URL", "https://github.com")
+                  + "/" + os.environ.get("GITHUB_REPOSITORY", "")
+                  + "/actions/runs/" + os.environ.get("GITHUB_RUN_ID", "")
+              ),
+              "render_outcome": os.environ.get("RENDER_OUTCOME", "unknown"),
+              "video_present": os.path.isfile("video_final.mp4"),
+              "preview_frames_dir": "diagnostics/previews",
+              "created_at": datetime.now(timezone.utc).isoformat(),
+          }
+          with open("diagnostics/manifest.json", "w", encoding="utf-8") as f:
+              json.dump(manifest, f, indent=2)
+              f.write("\\n")
+          PY
+
+      - name: Upload rendered video and diagnostic bundle
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: rendered-short-${{ inputs.job_id }}
-          path: video_final.mp4
-          retention-days: 1
+          name: rendered-short-${{ inputs.job_id }}-run-${{ github.run_id }}
+          path: |
+            video_final.mp4
+            diagnostics/
+          if-no-files-found: warn
+          retention-days: 7
