@@ -9,11 +9,29 @@ import { makeAsk } from "../src/longvideo-auto/llm";
 import { makeMythShort } from "../src/mythology";
 import { MYTH_TOPICS, pickTopic } from "../src/mythology/topics";
 
+/**
+ * A fresh runner has no FreeLLMAPI (the dev session starts its own, seeded with the Groq key): ask Groq directly when its key is
+ * set, else the server's usual providers.
+ */
+function sampleAsk() {
+  const key = process.env.GROQ_API_KEY;
+  if (!key) return makeAsk();
+  return async (prompt: string, opts?: { maxTokens?: number }) => {
+    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile", messages: [{ role: "user", content: prompt }], max_tokens: opts?.maxTokens ?? 3000, temperature: 0.8 }),
+    });
+    if (!res.ok) throw new Error(`Groq HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    return ((await res.json()) as any).choices?.[0]?.message?.content ?? "";
+  };
+}
+
 async function main() {
   const [id, outDir = "mythology-out"] = process.argv.slice(2);
   const topic = MYTH_TOPICS.find((t) => t.id === id) ?? pickTopic([]);
   console.log(`Topic: ${topic.id} (${topic.source})`);
-  const made = await makeMythShort("prompt_gag", topic, { ask: makeAsk(), handle: () => "@promptgag1" }, path.resolve(outDir, "work"));
+  const made = await makeMythShort("prompt_gag", topic, { ask: sampleAsk(), handle: () => "@promptgag1" }, path.resolve(outDir, "work"));
   fs.mkdirSync(outDir, { recursive: true });
   fs.copyFileSync(made.video, path.join(outDir, `${topic.id}.mp4`));
   fs.writeFileSync(path.join(outDir, `${topic.id}.json`), JSON.stringify({ topic, metadata: made.metadata, script: made.script }, null, 2));

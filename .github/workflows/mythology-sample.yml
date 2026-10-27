@@ -32,6 +32,7 @@ jobs:
             printf 'BOT_ENV=dev\n'
             printf 'VOICEBOX_GITHUB_REPO=pradeep90043/shorts-automation-test\n'
             [ -n "${GEMINI_API_KEY}" ] && printf 'GEMINI_API_KEY=%s\n' "${GEMINI_API_KEY}"
+            [ -n "${GROQ_API_KEY}" ] && printf 'GROQ_API_KEY=%s\n' "${GROQ_API_KEY}"
             [ -n "${COVER_IMAGE_API_KEY}" ] && printf 'COVER_IMAGE_API_KEY=%s\n' "${COVER_IMAGE_API_KEY}"
             [ -n "${COVER_IMAGE_API_URL}" ] && printf 'COVER_IMAGE_API_URL=%s\n' "${COVER_IMAGE_API_URL}"
             true
@@ -39,10 +40,14 @@ jobs:
         env:
           DEV_ENV: ${{ secrets.DEV_ENV }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           COVER_IMAGE_API_KEY: ${{ secrets.COVER_IMAGE_API_KEY }}
           COVER_IMAGE_API_URL: ${{ secrets.COVER_IMAGE_API_URL }}
       - name: Make one Short
-        run: npx ts-node scripts/mythology-sample.ts "${{ github.event.inputs.topic }}" mythology-out
+        # the Groq key: a GROQ_API_KEY secret, else the one in the dev settings (as the dev session does)
+        run: |
+          [ -z "$(grep -E '^GROQ_API_KEY=.' .env)" ] && echo "::warning::no Groq key: the sample uses the server's providers"
+          npx ts-node scripts/mythology-sample.ts "${{ github.event.inputs.topic }}" mythology-out
         env:
           GITHUB_TOKEN: ${{ secrets.RENDER_GITHUB_TOKEN }}
       - uses: actions/upload-artifact@v4
