@@ -35,7 +35,10 @@ export function mythPrompt(topic: MythTopic): string {
     `Rules:\n` +
     `- Tell it as the source tells it. Do not invent names, numbers, places or events. Where traditions differ, say "कुछ कथाओं के अनुसार".\n` +
     `- Respectful and devotional in tone. No mocking, no politics, no caste or religious comparison, no claims that one faith is better.\n` +
-    `- 7 scenes. Scene 1 is a hook question or shocking line that makes a viewer stay. Scenes 2-6 tell the story with rising tension. ` +
+    `- 7 scenes. Scene 1 is the HOOK: talk straight to the viewer with a question that opens with "क्या आपको पता है" or "क्या आप जानते हैं", ` +
+    `about the most surprising thing in the story, WITHOUT the hero's name or the answer, so the viewer has to keep watching ` +
+    `(e.g. "क्या आपको पता है, महाभारत में कोई ऐसा भी था जो पूरा युद्ध एक ही पल में खत्म कर सकता था?"). ` +
+    `Scene 2 starts the story and reveals who it is. Scenes 3-6 tell it with rising tension. ` +
     `Scene 7 gives the twist or lesson in one strong line, then "ऐसी ही कथाओं के लिए फ़ॉलो करें।"\n` +
     `- narration: ONE spoken sentence per scene in pure Hindi, Devanagari script only, 10 to 20 words, numbers written as Hindi words. ` +
     `All 7 together 100 to 130 words (the Short must stay under 50 seconds). Short dramatic sentences.\n` +
@@ -43,7 +46,7 @@ export function mythPrompt(topic: MythTopic): string {
     `- image: an English description of ONE painting for the scene: the setting, the figures, their action, the light. ` +
     `Gods and revered figures are shown from behind, in silhouette or from a distance, never a close-up of a god's face. No text in the picture.\n` +
     `- title: an English hook of at most 55 characters plus " | " plus 2-4 Hindi words, one emoji, total at most 90 characters.\n` +
-    `- hook: 2-5 Hindi words for the big text on the first scene.\n` +
+    `- hook: 2-5 Hindi words for the big text on the first scene, a teaser that does not give the answer (e.g. "एक पल में युद्ध खत्म?").\n` +
     `- description: 2-3 Hindi sentences about the story without spoiling the twist, then "स्रोत: ${topic.source}".\n` +
     `- tags: 10 search tags in English or Hinglish (e.g. "mahabharat story", "karna", "hindi kahani").\n` +
     `Answer with JSON only: {"title":"","hook":"","description":"","tags":[],"scenes":[{"narration":"","caption":"","image":""}]}\n/no_think`
