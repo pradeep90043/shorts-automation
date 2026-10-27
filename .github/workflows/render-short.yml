@@ -84,7 +84,7 @@ jobs:
           }
           with open("diagnostics/manifest.json", "w", encoding="utf-8") as f:
               json.dump(manifest, f, indent=2)
-              f.write("\\n")
+              f.write("\n")
           PY
 
       - name: Upload rendered video and diagnostic bundle
