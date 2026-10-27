@@ -19,6 +19,8 @@ export interface VoiceboxLine {
   text: string;
   /** how the line should sound (src/audio/emotion.ts); absent = neutral */
   emotion?: string;
+  /** a story character speaking this line (src/audio/omnivoice/job.ts CHARACTER_VOICES); absent = the narrator */
+  speaker?: string;
 }
 
 export interface VoiceboxRunRef {
@@ -39,8 +41,8 @@ const POLL_MS = 20000;
 const GIVE_UP_MS = 3 * 60 * 60 * 1000;
 
 /** The scenes as Voicebox lines, named the way my-video names a scene's audio file. */
-export function sceneLines(scenes: { id: string; text: string; ttsText?: string }[]): VoiceboxLine[] {
-  return scenes.map((s, i) => ({ name: `segment_${i}_${s.id}`, text: (s.ttsText || s.text).trim() }));
+export function sceneLines(scenes: { id: string; text: string; ttsText?: string; speaker?: string }[]): VoiceboxLine[] {
+  return scenes.map((s, i) => ({ name: `segment_${i}_${s.id}`, text: (s.ttsText || s.text).trim(), ...(s.speaker ? { speaker: s.speaker } : {}) }));
 }
 
 /**
@@ -101,6 +103,10 @@ export interface VoiceboxOptions {
   inputs?: Record<string, string>;
   /** how long to wait for the whole run before giving up (default 3 hours) */
   giveUpMs?: number;
+  /** the workflow that speaks the lines (default voicebox-scenes.yml; omnivoice-scenes.yml is the OmniVoice CPU fallback) */
+  workflow?: string;
+  /** the lines already carry their emotion (src/audio/narration.ts tags them once for Kaggle and the fallback) */
+  emotionsTagged?: boolean;
 }
 
 /** Speaks every line on GitHub Actions and returns the folder holding <name>.mp3 for each line. */
@@ -123,14 +129,14 @@ export async function generateVoiceboxNarration(opts: VoiceboxOptions): Promise<
     }
   }
   if (!runId) {
-    const linesJson = JSON.stringify(await tagEmotions(opts.lines));
+    const linesJson = JSON.stringify(opts.emotionsTagged ? opts.lines : await tagEmotions(opts.lines));
     if (linesJson.length > MAX_INPUT_CHARS) {
       throw new Error(`The narration is too long for one voice run (${linesJson.length} of ${MAX_INPUT_CHARS} characters). Split the video in two parts.`);
     }
     const english = opts.language.toLowerCase().startsWith("en");
     const dispatchedAt = Date.now() - 15000;
     emit(0.01, "Sending the script to the voice runners...");
-    const res = await gh(`/actions/workflows/${WORKFLOW}/dispatches`, {
+    const res = await gh(`/actions/workflows/${opts.workflow ?? WORKFLOW}/dispatches`, {
       method: "POST",
       body: JSON.stringify({
         ref: process.env.VOICEBOX_GITHUB_REF || "main",
@@ -145,7 +151,7 @@ export async function generateVoiceboxNarration(opts: VoiceboxOptions): Promise<
     }
     for (let i = 0; i < 20 && !runId; i++) {
       await sleep(5000);
-      const list = (await (await gh(`/actions/workflows/${WORKFLOW}/runs?event=workflow_dispatch&per_page=5`)).json()) as any;
+      const list = (await (await gh(`/actions/workflows/${opts.workflow ?? WORKFLOW}/runs?event=workflow_dispatch&per_page=5`)).json()) as any;
       const found = (list.workflow_runs || []).find((r: any) => new Date(r.created_at).getTime() >= dispatchedAt);
       if (found) runId = found.id;
     }

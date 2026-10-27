@@ -27,7 +27,8 @@ import {
 } from "./stickmanPlanner";
 import { lessonQualityReport, type QualityWarning } from "./lessonQuality";
 import { addDirectorShots, directorShotsEnabled } from "./directorShots";
-import { cancelVoiceboxRun, estimateVoiceboxSec, generateVoiceboxNarration, sceneLines, type VoiceboxRunRef } from "./voiceboxNarration";
+import { cancelVoiceboxRun, estimateVoiceboxSec, sceneLines, type VoiceboxRunRef } from "./voiceboxNarration";
+import { generateNarration } from "../audio/narration";
 import { voiceInputsFor } from "./voiceProfiles";
 
 /** `voice: "voicebox"` = the cloned voice made on GitHub Actions (see voiceboxNarration.ts) instead of an edge-tts voice. */
@@ -324,10 +325,11 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
           audio.estSec = voiceSec;
         }
         setStage(job, "audio", { status: "running", fraction: 0.01, detail: `Cloned voice for ${lines.length} scenes` });
-        const made = await generateVoiceboxNarration({
+        const made = await generateNarration({
           slug: `lv-${job.id}`,
           lines,
           language,
+          channelKey: job.input.channelKey,
           resume: resume ? job.voiceRun : undefined,
           inputs: voiceInputsFor(job.input.channelKey), // the channel's own cloned voice (Storiyum = paki1)
           isCancelled: () => isCancelled(job),
