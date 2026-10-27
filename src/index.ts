@@ -22,6 +22,7 @@ import { startAutoLong } from "./longvideo-auto";
 import { makeAsk } from "./longvideo-auto/llm";
 import { autoLongStatus } from "./longvideo-auto/status";
 import { JobQueue } from "./utils/queue";
+import { isMythologyChannel, startMythology } from "./mythology";
 
 async function bootstrap() {
   pipelineLogger.info(
@@ -197,6 +198,11 @@ async function bootstrap() {
 
     // Recurring channel-watch automation (no-ops if <PREFIX>_WATCH_CHANNELS
     // isn't configured for this profile).
+    // a mythology channel writes its own Shorts (src/mythology): no source reels are picked for it
+    if (isMythologyChannel(profile.key)) {
+      pipelineLogger.info(`[${profile.brandName}] Reel watcher off: this channel publishes mythology Shorts`, "Bootstrap");
+      continue;
+    }
     try {
       const watcher = new ChannelWatcher(profile, notifyService, config.profiles.indexOf(profile));
       notifyService.registerWatcher(watcher);
@@ -234,6 +240,23 @@ async function bootstrap() {
     });
   } catch (err) {
     pipelineLogger.error("[AutoLong] could not start the daily long video", err, "Bootstrap");
+  }
+
+  try {
+    startMythology({
+      ask: makeAsk(),
+      upload: async (key, video, md) => {
+        const yt = await youtubeServiceFor(key);
+        if (!yt) return null;
+        const res = await yt.uploadToAllChannels(video, md, { brandKey: key });
+        return res[0]?.videoId ?? null;
+      },
+      handle: (key) => config.profiles.find((p) => p.key === key)?.handle ?? "",
+      now: () => Date.now(),
+      busy: () => !JobQueue.isIdle() || isStickmanBusy(),
+    });
+  } catch (err) {
+    pipelineLogger.error("[Mythology] could not start", err, "Bootstrap");
   }
 
   pipelineLogger.info(

@@ -48,7 +48,8 @@
     "dm:knowledge": "ts-node src/instagram/dm/cli.ts knowledge",
     "dm:outbound": "ts-node src/instagram/dm/cli.ts outbound",
     "dm:daemon": "ts-node src/instagram/dm/cli.ts daemon",
-    "dm:trigger": "ts-node scripts/trigger-dm.ts"
+    "dm:trigger": "ts-node scripts/trigger-dm.ts",
+    "test:mythology": "ts-node tests/mythology.test.ts"
   },
   "dependencies": {
     "@types/pg": "^8.20.0",
