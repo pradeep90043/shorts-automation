@@ -1,0 +1,55 @@
+# One mythology Short made with the real providers (dev keys), kept as a run artifact. Never uploads to YouTube and does not
+# touch the dev session. Runs on a push to the feature branch, or by hand with a topic id.
+name: Mythology sample
+
+on:
+  push:
+    branches: [feat/mythology-shorts]
+    paths: ["src/mythology/**", "scripts/mythology-sample.ts", ".github/workflows/mythology-sample.yml"]
+  workflow_dispatch:
+    inputs:
+      topic:
+        description: "topic id from src/mythology/topics.ts (empty = random)"
+        required: false
+
+jobs:
+  sample:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: System deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-noto-core >/dev/null
+      - run: npm ci --no-audit --no-fund
+      - name: Dev settings (dev LLM pool, dev voice repo; no channel tokens are used)
+        run: |
+          printf '%s\n' "${DEV_ENV}" > .env
+          {
+            printf 'BOT_ENV=dev\n'
+            printf 'VOICEBOX_GITHUB_REPO=pradeep90043/shorts-automation-test\n'
+            [ -n "${GEMINI_API_KEY}" ] && printf 'GEMINI_API_KEY=%s\n' "${GEMINI_API_KEY}"
+            [ -n "${COVER_IMAGE_API_KEY}" ] && printf 'COVER_IMAGE_API_KEY=%s\n' "${COVER_IMAGE_API_KEY}"
+            [ -n "${COVER_IMAGE_API_URL}" ] && printf 'COVER_IMAGE_API_URL=%s\n' "${COVER_IMAGE_API_URL}"
+            true
+          } >> .env
+        env:
+          DEV_ENV: ${{ secrets.DEV_ENV }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          COVER_IMAGE_API_KEY: ${{ secrets.COVER_IMAGE_API_KEY }}
+          COVER_IMAGE_API_URL: ${{ secrets.COVER_IMAGE_API_URL }}
+      - name: Make one Short
+        run: npx ts-node scripts/mythology-sample.ts "${{ github.event.inputs.topic }}" mythology-out
+        env:
+          GITHUB_TOKEN: ${{ secrets.RENDER_GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mythology-sample
+          path: |
+            mythology-out/*.mp4
+            mythology-out/*.json
+          if-no-files-found: warn
