@@ -34,7 +34,10 @@ export function mythPrompt(topic: MythTopic): string {
     `STORY: ${topic.topic}\nSOURCE: ${topic.source}\n\n` +
     `Rules:\n` +
     `- Tell it as the source tells it. Do not invent names, numbers, places or events. Where traditions differ, say "कुछ कथाओं के अनुसार".\n` +
-    `- Respectful and devotional in tone. No mocking, no politics, no caste or religious comparison, no claims that one faith is better.\n` +
+    `- Respectful and devotional in tone. No mocking, no politics, no caste or religious comparison, no claims that one faith is better. ` +
+    `Never use loaded words such as "धर्म परिवर्तन" or "conversion" in the narration, title or captions.\n` +
+    `- Never put words in quotation marks as if someone said or wrote them unless they are the exact known words; otherwise tell it in your own words.\n` +
+    `- Spell names the standard Hindi way (कलिंग, अशोक, युधिष्ठिर, द्रोणाचार्य).\n` +
     `- 7 scenes. Scene 1 is the HOOK: talk straight to the viewer with a question that opens with "क्या आपको पता है" or "क्या आप जानते हैं", ` +
     `about the most surprising thing in the story, WITHOUT the hero's name or the answer, so the viewer has to keep watching ` +
     `(e.g. "क्या आपको पता है, महाभारत में कोई ऐसा भी था जो पूरा युद्ध एक ही पल में खत्म कर सकता था?"). ` +
