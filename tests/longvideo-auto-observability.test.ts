@@ -30,8 +30,8 @@ assert.strictEqual(dailyLongEnabled({ AUTO_LONG_VIDEO_ENABLED: "false" } as any)
 const cfg = effectiveConfig({} as any);
 assert.strictEqual(cfg.shortsGridActive, true);
 assert.strictEqual(cfg.dailyLongEnabled, true);
-assert.deepStrictEqual(cfg.longReleaseIst, ["18:37", "19:22", "20:07", "20:52"]);
-assert.strictEqual(cfg.shortSlotsIst.codeorcap.length, 5);
+assert.deepStrictEqual(cfg.longReleaseIst, ["18:25", "19:15", "20:05", "20:55"]);
+assert.strictEqual(cfg.shortSlotsIst.codeorcap.length, 4);
 assert.ok(cfg.switches.INSIGHT_CLIP_CHANNELS.includes("codeorcap,storiyum,prompt_gag,infoonspot") || cfg.switches.INSIGHT_CLIP_CHANNELS.includes("codeorcap"));
 
 (async () => {

@@ -50,11 +50,11 @@ const seed: LongCandidate = {
 
   const out = await produceLongVideo(req, false, deps);
   assert.strictEqual(out.videoUrl, "https://youtu.be/vid1");
-  assert.strictEqual(out.releaseAt, "2026-10-16T13:07:00.000Z", "CodeOrCap's slot: 18:37 IST that evening");
+  assert.strictEqual(out.releaseAt, "2026-10-16T12:55:00.000Z", "CodeOrCap's slot: 18:25 IST that evening");
   assert.deepStrictEqual(events, [
     "start:voicebox:hi:600:codeorcap",
     "snippet:vid1:स्प्रिंग बूट की पूरी कहानी",
-    "schedule:vid1:2026-10-16T13:07:00.000Z",
+    "schedule:vid1:2026-10-16T12:55:00.000Z",
     "notify",
   ]);
   assert.ok(store.forDay("codeorcap", "2026-10-15")[0].usedForLongAt, "the seed is marked used");

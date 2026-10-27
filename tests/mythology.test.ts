@@ -21,7 +21,8 @@ assert.deepStrictEqual(mythologyChannels({ MYTHOLOGY_CHANNELS: "off" }), []);
 const slots = mythSlots("prompt_gag", {});
 assert.strictEqual(slots.length, 2);
 assert.ok(slots[0] < slots[1] && slots[1] - slots[0] >= 6 * 60, `spread over the day: ${slots}`);
-assert.strictEqual(mythSlots("prompt_gag", { MYTHOLOGY_PER_DAY: "5" }).length, 5);
+assert.deepStrictEqual(slots, [9 * 60 + 40, 19 * 60 + 40], "09:40 and 19:40");
+assert.strictEqual(mythSlots("prompt_gag", { MYTHOLOGY_PER_DAY: "5" }).length, 4, "at most the channel's 4 slots");
 const at = (min: number) => Date.UTC(2026, 9, 27, 0, 0) - 5.5 * 3600_000 + min * 60_000; // IST minute -> epoch ms
 assert.strictEqual(istMinute(at(510)), 510);
 assert.strictEqual(dueSlot([510, 1230], [], at(400), 50), null, "too early");

@@ -51,7 +51,7 @@ const cand = (channelKey: string, shortcode: string, o: Partial<LongCandidate> =
     produce: async (req, useFallback) => {
       if (failNext > 0) { failNext--; throw new Error("llm timeout"); }
       produced.push(`${req.channelKey}${useFallback ? "(fallback)" : ""}`);
-      return { videoUrl: `https://youtu.be/${req.channelKey}`, releaseAt: "2026-10-16T13:07:00.000Z" };
+      return { videoUrl: `https://youtu.be/${req.channelKey}`, releaseAt: "2026-10-16T12:55:00.000Z" };
     },
     backoffMs: 60_000,
   };

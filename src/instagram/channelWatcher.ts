@@ -4,7 +4,7 @@ import { isOffValue } from "../utils/switches";
 import { NotifyService } from "../notify";
 import { WatchStore, QueuedReel } from "../utils/watchStore";
 import { formatForSlot, formatTestFor, istDayIndex, type ShortFormat } from "../schedule/formatTest";
-import { CHANNEL_ORDER, channelSlotIndex, gridFromEnv, hhmm, pickMinute, shortSlots, shortsGridActive } from "../schedule/shortsGrid";
+import { CHANNEL_ORDER, channelSlotIndex, gridFromEnv, hhmm, pickMinute, shortSlots, shortsGridActive, spreadSlots } from "../schedule/shortsGrid";
 import { candidateStore } from "../longvideo-auto/config";
 import { istDateOf } from "../longvideo-auto/candidateStore";
 import type { JobEntry } from "../utils/db";
@@ -571,10 +571,10 @@ export class ChannelWatcher {
   private slotTimesUtcMs(count: number): number[] {
     if (this.gridOn()) {
       const now = Date.now();
-      return shortSlots(this.gridIndex(), CHANNEL_ORDER.length, gridFromEnv())
+      // the day's Shorts spread over the channel's slots (2 = morning + evening), not crowded into the first ones
+      return spreadSlots(shortSlots(this.gridIndex(), CHANNEL_ORDER.length, gridFromEnv()), count)
         .map((m) => this.istTodayAtMinuteUtcMs(m))
-        .filter((ms) => ms > now - 2 * 60 * 1000)
-        .slice(0, count);
+        .filter((ms) => ms > now - 2 * 60 * 1000);
     }
     const start = this.firstSlotUtcMs();
     return Array.from({ length: count }, (_, i) => start + i * this.slotGapMs());
@@ -595,7 +595,8 @@ export class ChannelWatcher {
     pipelineLogger.info(
       `[${this.profile.brandName}] Shorts grid ${this.gridOn() ? "ACTIVE" : "OFF (SHORTS_GRID=off: legacy scheduleTime/gapHours in use; the grid would be)"}: ` +
         `selects reels ${hhmm(pickMinute(this.gridIndex(), cfg))} IST, publishes at ` +
-        `${shortSlots(this.gridIndex(), CHANNEL_ORDER.length, cfg).map(hhmm).join(", ")} IST`,
+        `${spreadSlots(shortSlots(this.gridIndex(), CHANNEL_ORDER.length, cfg), this.profile.watch.dailyCount).map(hhmm).join(", ")} IST ` +
+          `(${this.profile.watch.dailyCount}/day over its slots ${shortSlots(this.gridIndex(), CHANNEL_ORDER.length, cfg).map(hhmm).join(", ")})`,
       "ChannelWatcher",
     );
   }

@@ -5,7 +5,7 @@ import { startClonedLines } from "../audio/clonedVoice";
 import { config } from "../config";
 import { askUntil } from "../formats/runFormat";
 import type { Ask } from "../longvideo-auto/llm";
-import { CHANNEL_ORDER, channelSlotIndex, gridFromEnv, hhmm, shortSlots } from "../schedule/shortsGrid";
+import { CHANNEL_ORDER, channelSlotIndex, gridFromEnv, hhmm, shortSlots, spreadSlots } from "../schedule/shortsGrid";
 import type { VideoMetadata } from "../types";
 import { pipelineLogger } from "../utils/logger";
 import { renderMythShort } from "./render";
@@ -27,11 +27,7 @@ export const isMythologyChannel = (key: string, env: NodeJS.ProcessEnv = process
 
 /** The channel's slots (minutes after IST midnight) it publishes on: spread over the day, so 2 a day = its first and last slot. */
 export function mythSlots(channelKey: string, env: NodeJS.ProcessEnv = process.env): number[] {
-  const all = shortSlots(channelSlotIndex(channelKey, 0), CHANNEL_ORDER.length, gridFromEnv(env));
-  const want = Math.max(1, Math.min(all.length, Number(env.MYTHOLOGY_PER_DAY) || 2));
-  if (want >= all.length) return all;
-  if (want === 1) return [all[all.length - 1]];
-  return Array.from({ length: want }, (_, i) => all[Math.round((i * (all.length - 1)) / (want - 1))]);
+  return spreadSlots(shortSlots(channelSlotIndex(channelKey, 0), CHANNEL_ORDER.length, gridFromEnv(env)), Number(env.MYTHOLOGY_PER_DAY) || 2);
 }
 
 const IST_MS = 5.5 * 3600_000;

@@ -3,9 +3,10 @@ import { switchOn } from "../utils/switches";
 /**
  * The daily publishing grid shared by the four channels.
  *
- * 5 Shorts per channel between 07:00 and 22:00 IST, no two channels at the same minute: slots run every STEP minutes,
- * channel k takes slots k, k+N, k+2N... (N = number of channels), so each channel's Shorts are N*STEP apart (3 h for 4
- * channels at 45 min). Long videos are released in the gaps of that grid, never on a Short slot.
+ * 4 slots per channel between 08:00 and 21:00 IST, no two channels at the same minute: slots run every STEP minutes,
+ * channel k takes slots k, k+N, k+2N... (N = number of channels), so each channel's slots are N*STEP apart (3 h 20 min for 4
+ * channels at 50 min). A channel that publishes fewer Shorts than it has slots spreads them over the day (spreadSlots): 2 a day
+ * = its first (morning) and last (evening) slot. Long videos are released in the gaps of that grid, never on a Short slot.
  *
  * Everything here is pure (minutes after IST midnight) so it can be tested without clocks or the watcher.
  */
@@ -26,7 +27,7 @@ export interface GridConfig {
   pickLeadMin: number;
 }
 
-export const DEFAULT_GRID: GridConfig = { startMin: 7 * 60, stepMin: 45, perDay: 5, endMin: 22 * 60, pickLeadMin: 60 };
+export const DEFAULT_GRID: GridConfig = { startMin: 8 * 60, stepMin: 50, perDay: 4, endMin: 21 * 60, pickLeadMin: 60 };
 
 export const hhmm = (min: number): string => `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
 export const parseHhmm = (s: string): number => {
@@ -53,6 +54,18 @@ export function shortSlots(channelIndex: number, channelCount: number, cfg: Grid
   return out;
 }
 
+/**
+ * `count` of a channel's slots spread over the day instead of the first `count`: always the first and the last, the rest evenly
+ * between (2 = morning + evening, 3 = morning, afternoon, evening). All of them when count >= the slots.
+ */
+export function spreadSlots(slots: number[], count: number): number[] {
+  const want = Math.max(0, Math.floor(count));
+  if (want >= slots.length) return [...slots];
+  if (want === 0) return [];
+  if (want === 1) return [slots[0]];
+  return Array.from({ length: want }, (_, i) => slots[Math.round((i * (slots.length - 1)) / (want - 1))]);
+}
+
 /** Every Short slot of the day for `channelCount` channels, sorted. */
 export function allShortSlots(channelCount: number, cfg: GridConfig = DEFAULT_GRID): { channelIndex: number; minute: number }[] {
   const all: { channelIndex: number; minute: number }[] = [];
@@ -77,6 +90,8 @@ export function longReleaseSlots(
   cfg: GridConfig = DEFAULT_GRID,
 ): number[] {
   const slots = allShortSlots(channelCount, cfg).map((s) => s.minute);
+  // the gap after the day's last Short counts too (one step on), so a grid that ends early still gives every channel its slot
+  if (slots.length) slots.push(slots[slots.length - 1] + cfg.stepMin);
   const out: number[] = [];
   for (let i = 0; i + 1 < slots.length && out.length < count; i++) {
     const mid = Math.floor((slots[i] + slots[i + 1]) / 2);

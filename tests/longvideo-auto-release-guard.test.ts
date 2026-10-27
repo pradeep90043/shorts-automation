@@ -8,13 +8,13 @@ const day = "2026-10-16";
 const at = (hhmm: string) => istMinuteToUtcMs(day, Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3)));
 const earlyMorning = at("04:00");
 const r0 = assignRelease("codeorcap", earlyMorning, day);
-assert.strictEqual(new Date(r0.atMs + 5.5 * 3600e3).toISOString().slice(11, 16), "18:37");
+assert.strictEqual(new Date(r0.atMs + 5.5 * 3600e3).toISOString().slice(11, 16), "18:25");
 const r3 = assignRelease("infoonspot", earlyMorning, day);
-assert.strictEqual(new Date(r3.atMs + 5.5 * 3600e3).toISOString().slice(11, 16), "20:52");
+assert.strictEqual(new Date(r3.atMs + 5.5 * 3600e3).toISOString().slice(11, 16), "20:55");
 
 // a video that finishes after its slot gets the next free one, never "now"
 const late = assignRelease("codeorcap", at("18:40"), day);
-assert.strictEqual(new Date(late.atMs + 5.5 * 3600e3).toISOString().slice(11, 16), "19:22");
+assert.strictEqual(new Date(late.atMs + 5.5 * 3600e3).toISOString().slice(11, 16), "19:15");
 // two videos never share a slot
 const taken = new Set([`${day}:${r0.minute}`]);
 assert.notStrictEqual(assignRelease("codeorcap", earlyMorning, day, taken).minute, r0.minute);
