@@ -125,6 +125,7 @@ jobs:
         run: |
           pip install --quiet torch torchaudio --index-url https://download.pytorch.org/whl/cpu
           pip install --quiet omnivoice
+          pip install --quiet noisereduce || true   # steady-hiss cleaner; optional
 
       - name: Speak this shard
         env:

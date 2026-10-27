@@ -33,6 +33,9 @@ import { assignSpeakers } from "../audio/omnivoice/speakers";
 import { voiceInputsFor } from "./voiceProfiles";
 
 /** `voice: "voicebox"` = the cloned voice made on GitHub Actions (see voiceboxNarration.ts) instead of an edge-tts voice. */
+/** The music bed under a channel's narration: emotional for stories, calm (assets/music/serious) for explainers. */
+export const musicMoodFor = (channelKey?: string): string => ((channelKey ?? "").toLowerCase() === "storiyum" ? "emotional" : "serious");
+
 export const isVoicebox = (voice?: string): boolean => /^voicebox/i.test(voice ?? "");
 
 /** A plan-only JSON may carry its own `"voice": "voicebox"` and `"language": "hi"` next to title/description/tags. */
@@ -362,6 +365,7 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
         onRunnerUploaded: runnerUploadedHook ? (videoId: string) => runnerUploadedHook!(job, videoId) : undefined,
         resolution: resolution ?? (orientation === "vertical" ? 1080 : 720),
         rate: job.estimate.rate,
+        musicMood: musicMoodFor(job.input.channelKey),
         ...(narrationDir
           ? { narrationDir, language }
           : job.input.voice ? { voice: job.input.voice, language: job.input.voice.slice(0, 2) } : {}),
