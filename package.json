@@ -35,6 +35,7 @@
     "test:verdict-number": "ts-node tests/verdict-number.test.ts",
     "test:dashboard-auth": "ts-node tests/dashboard-auth.test.ts",
     "test:voicebox-narration": "ts-node tests/voicebox-narration.test.ts",
+    "test:omnivoice": "ts-node tests/omnivoice.test.ts",
     "test:careers-niche": "ts-node tests/careers-niche.test.ts",
     "test:v2-verdict": "ts-node tests/v2-verdict.test.ts",
     "test:still-source": "ts-node tests/still-source.test.ts",

@@ -1,7 +1,8 @@
 import fs from "fs";
 import path from "path";
 import { pipelineLogger } from "../utils/logger";
-import { generateVoiceboxNarration, type VoiceboxLine } from "../my-video/voiceboxNarration";
+import { type VoiceboxLine } from "../my-video/voiceboxNarration";
+import { generateNarration, voiceEngine } from "./narration";
 import { voiceInputsFor } from "../my-video/voiceProfiles";
 import { makeAsk } from "../longvideo-auto/llm";
 
@@ -256,7 +257,7 @@ export function startClonedLines(slug: string, lines: VoiceboxLine[], profileKey
   const timeoutMin = Number(process.env.CLONED_VOICE_TIMEOUT_MIN) || 20;
   const started = Date.now();
   const english = profileKey.toLowerCase() === "codeorcap";
-  pipelineLogger.info(`Cloned voice (${profileKey}): ${lines.length} line(s) -> GitHub Actions (give up after ${timeoutMin} min)`, "ClonedVoice");
+  pipelineLogger.info(`Cloned voice (${profileKey}): ${lines.length} line(s) -> ${voiceEngine() === "omnivoice" ? "OmniVoice" : "Voicebox"} (give up after ${timeoutMin} min)`, "ClonedVoice");
   // English: no denoise (the user compared 4 variants against their own voice and the undenoised one (turbo, 1.0x) sounded closest)
   let spokenLines: VoiceboxLine[] = lines;
   const run = async () => {
@@ -264,10 +265,11 @@ export function startClonedLines(slug: string, lines: VoiceboxLine[], profileKey
     if (!spoken) throw new Error("the Hindi text could not be prepared");
     spokenLines = spoken;
     const attemptOnce = (budgetMs: number, suffix: string) =>
-      generateVoiceboxNarration({
+      generateNarration({
         slug: slug + suffix,
         lines: spoken,
         language: english ? "en" : "hi",
+        channelKey: profileKey,
         speed: "1.0",
         inputs: { ...voiceInputsFor(profileKey), shard_chars: process.env.VOICE_SHARD_CHARS || "60", max_shards: process.env.VOICE_MAX_SHARDS || "8", ...(english ? { denoise: "false" } : {}) },
         giveUpMs: budgetMs,
