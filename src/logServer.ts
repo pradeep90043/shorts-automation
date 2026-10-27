@@ -1212,13 +1212,12 @@ export function startLogServer(): void {
       res.end();
       return;
     }
-    // The log endpoints (/logs, /logs/raw, /logs/stream ...) are deliberately open, so logs can be read with a plain curl.
-    const openLogs = req.method === "GET" && (authPath === "/logs" || authPath.startsWith("/logs/"));
+    // Diagnostic logs can contain internal URLs, job metadata, and provider errors; require dashboard auth.
     // Temporary public links for Instagram's video_url upload (src/instagram/mediaLinks.ts). Answered BEFORE the login check on
     // purpose (Instagram's servers have no session) and ONLY for /ig-media/<43-char token>.mp4; every other path continues below.
     if (handleMediaRequest(req, res)) return;
 
-    if (!openLogs && !isMachineRoute(req.method || "GET", authPath)) {
+    if (!isMachineRoute(req.method || "GET", authPath)) {
       const auth = authenticate(req);
       if (!auth.ok) {
         const wantsPage = req.method === "GET" && String(req.headers.accept || "").includes("text/html");
@@ -2929,7 +2928,6 @@ export function startLogServer(): void {
       res.writeHead(200, {
         "Content-Type": "text/plain; charset=utf-8",
         "Cache-Control": "no-store, no-cache, must-revalidate",
-        "Access-Control-Allow-Origin": "*",
       });
 
       const targetLog = urlObj.searchParams.get("type") === "error" ? ERROR_LOG : COMBINED_LOG;
@@ -2961,7 +2959,6 @@ export function startLogServer(): void {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         "Connection": "keep-alive",
-        "Access-Control-Allow-Origin": "*",
       });
       res.flushHeaders();
       res.write("data: connected\n\n");
