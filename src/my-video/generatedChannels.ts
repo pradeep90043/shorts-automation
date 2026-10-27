@@ -1,12 +1,17 @@
 /**
  * Channels whose Shorts are made entirely by my-video (a stickman/doodle video narrated by the cloned voice), with no footage of the
- * source reel and no extra "how it works" clip. Storiyum by default; STORIYUM_GENERATED=off brings back the reel-based Short,
- * GENERATED_SHORT_CHANNELS="a,b" picks other channels.
+ * source reel and no extra "how it works" clip. Storiyum, CodeOrCap and Prompt Gag by default; STORIYUM_GENERATED=off brings back
+ * Storiyum's reel-based Short, GENERATED_SHORT_CHANNELS="a,b" picks other channels. InfoOnSpot never: its Shorts are the real reel with
+ * its original audio.
  */
+export const DEFAULT_GENERATED_SHORT_CHANNELS = "storiyum,codeorcap,prompt_gag";
+
 export function isGeneratedShortChannel(channelKey: string, env: NodeJS.ProcessEnv = process.env): boolean {
-  const raw = (env.GENERATED_SHORT_CHANNELS ?? "storiyum").trim().toLowerCase();
-  if (["", "off", "none", "0", "false"].includes(raw) || ["off", "false", "0"].includes((env.STORIYUM_GENERATED ?? "").trim().toLowerCase()) && channelKey.toLowerCase() === "storiyum") return false;
-  return raw.split(",").map((s) => s.trim()).includes(channelKey.toLowerCase());
+  const key = channelKey.toLowerCase();
+  if (key === "infoonspot") return false;
+  const raw = (env.GENERATED_SHORT_CHANNELS ?? DEFAULT_GENERATED_SHORT_CHANNELS).trim().toLowerCase();
+  if (["", "off", "none", "0", "false"].includes(raw) || ["off", "false", "0"].includes((env.STORIYUM_GENERATED ?? "").trim().toLowerCase()) && key === "storiyum") return false;
+  return raw.split(",").map((s) => s.trim()).includes(key);
 }
 
 /**

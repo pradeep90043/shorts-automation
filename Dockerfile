@@ -52,7 +52,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Python deps (faster-whisper: local transcription, model baked in below; pyotp: unattended 2FA for Instagram auto-login; ddgs + beautifulsoup4: search-engine reel discovery; edge-tts: free TTS for the my-video stickman renderer)
-RUN pip3 install --break-system-packages instagrapi shazamio pyotp ddgs beautifulsoup4 faster-whisper numpy edge-tts
+RUN pip3 install --break-system-packages instagrapi shazamio pyotp ddgs beautifulsoup4 faster-whisper numpy edge-tts kaggle
 
 # Bake the Whisper model into the image so the VM never downloads it at runtime.
 ENV WHISPER_MODEL=base \

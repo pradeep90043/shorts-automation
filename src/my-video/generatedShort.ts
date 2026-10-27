@@ -5,6 +5,9 @@ import { pipelineLogger } from "../utils/logger";
 import { toDevanagari } from "../audio/clonedVoice";
 export { isGeneratedShortChannel } from "./generatedChannels";
 import { getStickmanJob, isStickmanBusy, startStickmanJob } from "./stickmanJobs";
+import { tagSpeakers, type SpeakerLine } from "../audio/omnivoice/speakers";
+import { voiceEngine } from "../audio/narration";
+import { makeAsk } from "../longvideo-auto/llm";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -45,6 +48,13 @@ export async function renderGeneratedShort(input: GeneratedShortInput): Promise<
   const words = script.split(/\s+/).filter(Boolean).length;
   const targetSec = Math.min(58, Math.max(35, Math.round(words / 2.6)));
 
+  // Storiyum dialogue in character voices (OmniVoice only): one LLM call marks which sentences a character speaks; none = all narrated
+  let speakerLines: SpeakerLine[] = [];
+  if (input.channelKey.toLowerCase() === "storiyum" && voiceEngine() === "omnivoice") {
+    speakerLines = await tagSpeakers(script, makeAsk({ timeoutMs: 60_000, hedgeMs: 15_000 }));
+    if (speakerLines.length) pipelineLogger.info(`Generated Short: ${speakerLines.length} dialogue line(s) in character voices (${[...new Set(speakerLines.map((l) => l.speaker))].join(", ")})`, "GeneratedShort");
+  }
+
   const waitUntil = Date.now() + (Number(process.env.GENERATED_SHORT_QUEUE_MIN) || 30) * 60_000;
   while (isStickmanBusy()) {
     if (Date.now() > waitUntil) throw new Error("the video engine stayed busy: the generated Short could not start");
@@ -53,7 +63,7 @@ export async function renderGeneratedShort(input: GeneratedShortInput): Promise<
   }
   const job = startStickmanJob({
     script, title: input.title, voice: "voicebox", language: input.language ?? "hi",
-    channelKey: input.channelKey, orientation: "vertical", targetSec, resolution: 1080, noRunnerPublish: true, keepScript: true,
+    channelKey: input.channelKey, orientation: "vertical", targetSec, resolution: 1080, noRunnerPublish: true, keepScript: true, speakerLines,
   });
   pipelineLogger.info(`Generated Short: job ${job.id}, ${words} words, ~${targetSec}s`, "GeneratedShort");
 
