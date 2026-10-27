@@ -19,7 +19,7 @@ const SAFFRON = "#ffb347";
 /** seconds the next picture fades in over the end of the previous one */
 export const XFADE = 0.5;
 /** seconds of air after each spoken line */
-const PAD = 0.35;
+const PAD = 0.25;
 
 const run = (args: string[]): Promise<void> =>
   new Promise((resolve, reject) => {
@@ -90,9 +90,14 @@ export function timeline(durations: number[]): { starts: number[]; clipLens: num
   return { starts, clipLens: durations.map((d) => d + XFADE), offsets: starts.slice(1).map((s) => s - XFADE), total: t };
 }
 
-/** Deeper and a little slower (sample-rate drop of 5%: about one semitone), warmer low end, even level, a short hall. */
+/**
+ * The cloned voice speaks slowly (~2.4 words/s, up to 0.8 s of silence per line): trim each line's silent edges and shorten long
+ * pauses to 0.3 s, lower the pitch about one semitone (sample-rate drop of 5%) and win the tempo back (net ~3% faster), then a warmer
+ * low end, an even level and a short hall.
+ */
 export const VOICE_FX =
-  "aresample=44100,asetrate=41895,aresample=44100,equalizer=f=120:t=q:w=1.2:g=3,acompressor=threshold=-20dB:ratio=3:attack=8:release=220,aecho=0.8:0.55:60|130:0.2|0.1";
+  "aresample=44100,silenceremove=start_periods=1:start_threshold=-45dB:stop_periods=-1:stop_threshold=-45dB:stop_duration=0.3:stop_silence=0.3," +
+  "asetrate=41895,aresample=44100,atempo=1.08,equalizer=f=120:t=q:w=1.2:g=3,acompressor=threshold=-20dB:ratio=3:attack=8:release=220,aecho=0.8:0.55:60|130:0.2|0.1";
 
 export interface RenderMythOptions {
   tempDir: string;
@@ -100,6 +105,8 @@ export interface RenderMythOptions {
   /** the spoken line of each scene (mp3/wav), in scene order */
   voices: string[];
   handle?: string;
+  /** pictures made elsewhere (e.g. a Kaggle batch), by scene; a missing one is generated */
+  backgrounds?: (Buffer | null | undefined)[];
   /** tests: no AI pictures */
   noAi?: boolean;
 }
@@ -136,7 +143,7 @@ export async function renderMythShort(script: MythScript, o: RenderMythOptions):
   for (let i = 0; i < script.scenes.length; i += 2) {
     await Promise.all([i, i + 1].filter((k) => k < script.scenes.length).map(async (k) => {
       pngs[k] = await sceneFrame(script.scenes[k], path.join(o.tempDir, `s${k}.png`), {
-        hook: k === 0 ? script.hook : undefined, handle: o.handle, background: o.noAi ? null : undefined,
+        hook: k === 0 ? script.hook : undefined, handle: o.handle, background: o.noAi ? null : o.backgrounds?.[k] ?? undefined,
       });
     }));
   }
@@ -160,8 +167,9 @@ export async function renderMythShort(script: MythScript, o: RenderMythOptions):
   const film = path.join(o.tempDir, "film.mp4");
   await run([
     "-y", ...clips.flatMap((c) => ["-i", c]),
-    "-filter_complex", `${chain}[xf]noise=alls=7:allf=t,vignette=PI/4.6,fade=t=in:d=0.3,format=yuv420p[v]`,
-    "-map", "[v]", "-t", tl.total.toFixed(3), "-c:v", "libx264", "-preset", "veryfast", "-crf", "19", "-an", film,
+    // light grain: at strength 7 a 53 s Short was 160 MB (moving noise is what x264 spends its bits on); 3 + tune film is ~6 MB
+    "-filter_complex", `${chain}[xf]noise=alls=3:allf=t,vignette=PI/4.6,fade=t=in:d=0.3,format=yuv420p[v]`,
+    "-map", "[v]", "-t", tl.total.toFixed(3), "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-tune", "film", "-an", film,
   ]);
 
   // 4. sound: voice lines in a row over a low drone (two sines + brown noise, slowly breathing) and a boom on the first frame

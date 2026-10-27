@@ -2,7 +2,7 @@ import type { MythTopic } from "./topics";
 
 /**
  * The script of a mythology Short: 6-8 scenes, each one spoken sentence in Devanagari (the cloned Hindi voice reads Devanagari),
- * a short on-screen caption and an English picture prompt. About 110-150 words, so ~40-50 s at the slower dramatic pace.
+ * a short on-screen caption and an English picture prompt. About 100-130 words, so ~40-50 s at the slower dramatic pace.
  */
 export interface MythScene {
   narration: string;
@@ -37,7 +37,8 @@ export function mythPrompt(topic: MythTopic): string {
     `- Respectful and devotional in tone. No mocking, no politics, no caste or religious comparison, no claims that one faith is better.\n` +
     `- 7 scenes. Scene 1 is a hook question or shocking line that makes a viewer stay. Scenes 2-6 tell the story with rising tension. ` +
     `Scene 7 gives the twist or lesson in one strong line, then "ऐसी ही कथाओं के लिए फ़ॉलो करें।"\n` +
-    `- narration: ONE spoken sentence per scene in pure Hindi, Devanagari script only, 10 to 22 words, numbers written as Hindi words. Short dramatic sentences.\n` +
+    `- narration: ONE spoken sentence per scene in pure Hindi, Devanagari script only, 10 to 20 words, numbers written as Hindi words. ` +
+    `All 7 together 100 to 130 words (the Short must stay under 50 seconds). Short dramatic sentences.\n` +
     `- caption: the key words of that scene in Hindi (Devanagari), at most 32 characters.\n` +
     `- image: an English description of ONE painting for the scene: the setting, the figures, their action, the light. ` +
     `Gods and revered figures are shown from behind, in silhouette or from a distance, never a close-up of a god's face. No text in the picture.\n` +
@@ -67,7 +68,7 @@ export function parseMythScript(raw: string): MythScript | null {
   const title = clip(j?.title, 95);
   if (!title || scenes.length < 5) return null;
   const words = scenes.reduce((n, s) => n + s.narration.split(/\s+/).length, 0);
-  if (words < 70 || words > 200) return null;
+  if (words < 70 || words > 160) return null; // ~2.6 Hindi words/s, slowed 5%: 160 words is already ~65 s
   const tags = (Array.isArray(j?.tags) ? j.tags : []).map((t: unknown) => clip(t, 40)).filter(Boolean).slice(0, 15);
   return {
     title,
