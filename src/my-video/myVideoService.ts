@@ -8,6 +8,9 @@ import { pipeline } from "stream/promises";
 import { config } from "../config";
 import { logger } from "../utils/logger";
 
+/** true only when the variable is explicitly on (on/true/1/yes) */
+const switchOnStrict = (name: string): boolean => /^(on|true|1|yes)$/i.test((process.env[name] ?? "").trim());
+
 /**
  * Bridge to the separate `my-video` repo (Remotion + stickman templates).
  * It runs the repo's own `longform` pipeline as a child process, so its
@@ -528,6 +531,10 @@ const doRender = async (spec: StickmanVideoSpec, onProgress?: ProgressCallback):
     description: spec.description,
     tags: spec.tags,
     ...(spec.cast?.length ? { cast: spec.cast } : {}),
+    // Heard as noise under the narration, so off unless switched on: the looping ambience bed (rain, night, wind… picked from the
+    // narration words; STICKMAN_AMBIENCE=on) and the whoosh at every scene change, which with one sentence per scene lands on every
+    // sentence end (STICKMAN_TRANSITION_SOUND=on). Short foley (footsteps, a door) stays.
+    fx: { ambience: switchOnStrict("STICKMAN_AMBIENCE"), transitionSound: switchOnStrict("STICKMAN_TRANSITION_SOUND") },
     scenes: spec.scenes,
   };
   fs.writeFileSync(path.join(projectDir, "video.json"), JSON.stringify(videoJson, null, 2));

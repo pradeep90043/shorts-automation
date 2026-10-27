@@ -49,21 +49,66 @@ def ffmpeg(*args):
     subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", *args], check=True)
 
 
-def cut_sample(src, start, end, out):
-    ffmpeg("-ss", str(start), "-to", str(end), "-i", src, "-vn", "-ac", "1", "-ar", "24000", out)
+RNNOISE_URL = "https://raw.githubusercontent.com/GregorR/rnnoise-models/master/beguiling-drafter-2018-08-30/bd.rnnn"
+_denoise_chain = None
+
+
+def denoise_chain(work):
+    """scripts/voice_denoise.sh's chain: rumble high-pass, RNNoise (speech-aware), a light spectral denoiser for what is left.
+    Without the RNNoise model (no network) only the spectral denoiser runs."""
+    global _denoise_chain
+    if _denoise_chain is None:
+        model = os.path.join(work, "bd.rnnn")
+        try:
+            if not os.path.exists(model):
+                subprocess.run(["curl", "-fsSL", "--retry", "3", "-o", model, RNNOISE_URL], check=True, timeout=60)
+            _denoise_chain = f"highpass=f=70,arnndn=m={model},afftdn=nr=12:nf=-55:tn=1"
+        except Exception as err:
+            log(f"RNNoise model unavailable ({err}): spectral denoise only")
+            _denoise_chain = "highpass=f=70,afftdn=nr=18:nf=-50:tn=1"
+    return _denoise_chain
+
+
+def cut_sample(src, start, end, out, work):
+    """The voice sample, cut and cleaned: its background hiss would otherwise be cloned as part of the voice."""
+    ffmpeg("-ss", str(start), "-to", str(end), "-i", src, "-vn", "-ac", "1", "-ar", "24000", "-af", denoise_chain(work), out)
     return out
 
 
 TRIM = "silenceremove=start_periods=1:start_threshold=-50dB:start_silence=0.08"
+TARGET_SPEECH_DB = -18.0  # speech level of every line (dBFS RMS over the voiced frames)
+PEAK_DB = -1.5
+FADE_OUT = 0.08  # seconds
 
 
-def finish(wav, out_path, fmt):
-    """Silence around the speech trimmed (the scene lasts as long as its audio), loudness evened out across lines and voices."""
-    chain = f"{TRIM},areverse,{TRIM},areverse,loudnorm=I=-16:TP=-1.5:LRA=11"
+def level_gain(wav):
+    """One fixed gain per line: speech to TARGET_SPEECH_DB, peaks under PEAK_DB. A fixed gain (unlike loudnorm's dynamic mode) never
+    lifts the quiet gaps between words, so it never makes the remaining hiss louder."""
+    import numpy as np
+    import soundfile as sf
+    a, _ = sf.read(wav, dtype="float32")
+    a = a if a.ndim == 1 else a.mean(axis=1)
+    n = 1200
+    frames = a[: len(a) // n * n].reshape(-1, n) if len(a) >= n else a.reshape(1, -1)
+    rms = np.sqrt((frames ** 2).mean(axis=1)) + 1e-9
+    voiced = rms[20 * np.log10(rms) > 20 * np.log10(rms.max()) - 25]
+    speech_db = 20 * np.log10(np.sqrt((voiced ** 2).mean()))
+    peak_db = 20 * np.log10(np.abs(a).max() + 1e-9)
+    return min(TARGET_SPEECH_DB - speech_db, PEAK_DB - peak_db)
+
+
+def finish(wav, out_path, fmt, work):
+    """Each line denoised, the silence around the speech trimmed (the scene lasts as long as its audio), and brought to one speech level."""
+    clean = wav.replace(".wav", ".clean.wav")
+    ffmpeg("-i", wav, "-af", f"{denoise_chain(work)},{TRIM},areverse,{TRIM},areverse", "-ar", "24000", "-ac", "1", clean)
+    # a short fade at both ends: the model can stop mid-sound, and a hard stop is a click when the scenes play back to back
+    length = duration_of(clean)
+    fade = f"afade=t=in:d=0.01,afade=t=out:st={max(0.0, length - FADE_OUT):.3f}:d={FADE_OUT}" if length > 2 * FADE_OUT else ""
+    chain = ",".join(x for x in (f"volume={level_gain(clean):.2f}dB", "alimiter=limit=0.84:level=0", fade) if x)
     if fmt == "mp3":
-        ffmpeg("-i", wav, "-af", chain, "-ar", "44100", "-ac", "1", "-codec:a", "libmp3lame", "-q:a", "2", out_path)
+        ffmpeg("-i", clean, "-af", chain, "-ar", "44100", "-ac", "1", "-codec:a", "libmp3lame", "-q:a", "2", out_path)
     else:
-        ffmpeg("-i", wav, "-af", chain, "-ar", "24000", "-ac", "1", out_path)
+        ffmpeg("-i", clean, "-af", chain, "-ar", "24000", "-ac", "1", out_path)
 
 
 def duration_of(path):
@@ -128,9 +173,11 @@ def main():
 
     sample = job["sample"]
     if a.sample:
-        narrator_wav = a.sample
+        # GitHub: already cut by the workflow, cleaned here like on Kaggle
+        narrator_wav = f"{work}/narrator.wav"
+        ffmpeg("-i", a.sample, "-ac", "1", "-ar", "24000", "-af", denoise_chain(work), narrator_wav)
     else:
-        narrator_wav = cut_sample(find_file(os.path.basename(sample["file"])), sample.get("start", 0), sample.get("end", 15), f"{work}/narrator.wav")
+        narrator_wav = cut_sample(find_file(os.path.basename(sample["file"])), sample.get("start", 0), sample.get("end", 15), f"{work}/narrator.wav", work)
     voices = {None: (narrator_wav, sample.get("text") or None)}
 
     for speaker, design in (job.get("characters") or {}).items():
@@ -161,7 +208,7 @@ def main():
                     raise
                 log(f"{line['name']}: {err}; retrying")
         out_path = os.path.join(a.out, f"{line['name']}.{fmt}")
-        finish(raw, out_path, fmt)
+        finish(raw, out_path, fmt, work)
         manifest["lines"][line["name"]] = round(duration_of(out_path), 2)
         log(f"[{i}/{len(job['lines'])}] {line['name']} {manifest['lines'][line['name']]}s ({line.get('emotion') or 'neutral'}, {line.get('speaker') or 'narrator'})")
 
