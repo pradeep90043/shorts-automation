@@ -49,6 +49,7 @@ import { renderShortCloud } from "./renderer/cloudShortRenderer";
 import { renderGeneratedShort } from "./my-video/generatedShort";
 import { buildFormatShort } from "./formats/runFormat";
 import { usesGeneratedShort } from "./my-video/generatedChannels";
+import { CHANNEL_FLAVOR, FINANCE_DISCLAIMER } from "./longvideo-auto/scriptWriter";
 import { cleanNarration, extractNarration } from "./longvideo-auto/scriptWriter";
 import { nextDirectorModel } from "./my-video/stickmanPlanner";
 
@@ -4024,8 +4025,16 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
           // up to 3 tries: the free models often answer with their "thinking process" or a few words instead of the story
           for (let attempt = 1; attempt <= 3; attempt++) {
             try {
+              const storyChannel = this.profile.key.toLowerCase() === "storiyum";
               const raw = await this.freellmapi?.generateText(
-                `You are the narrator of the story channel "${this.profile.brandName}". RETELL THE STORY that the material below tells, as a 45-second vertical story video: about 120 words in Hindi written in Devanagari script (English brand words may stay in Latin letters, but every sentence is Hindi). ` +
+                !storyChannel
+                  // CodeOrCap / Prompt Gag: an explainer in the channel's own angle, not a story (src/longvideo-auto/scriptWriter.ts CHANNEL_FLAVOR)
+                  ? `You are the narrator of the channel "${this.profile.brandName}" (${CHANNEL_FLAVOR[this.profile.key.toLowerCase()] ?? CHANNEL_FLAVOR.infoonspot}). ` +
+                    `Write the narration of a 45-second vertical Short about the topic of the material below: about 120 words in Hindi written in Devanagari script (English tech or finance words spelled in Devanagari). ` +
+                    `Use the material only for the TOPIC; explain it in your own words. Start with a hook sentence, then the key point step by step with one concrete example, and end with a one-line takeaway. ` +
+                    `Use a number only if it is in the material. Do not invent quotes, prices or dates.${this.profile.key.toLowerCase() === "prompt_gag" ? " Never give advice to buy or sell." : ""} Short spoken sentences, every sentence something that can be SHOWN. No headings, no emojis, no stage directions. ` +
+                    `\n\nMATERIAL:\n${basis}\n\nOutput only the narration, between <<< and >>>.\n/no_think`
+                  : `You are the narrator of the story channel "${this.profile.brandName}". RETELL THE STORY that the material below tells, as a 45-second vertical story video: about 120 words in Hindi written in Devanagari script (English brand words may stay in Latin letters, but every sentence is Hindi). ` +
                   `Be faithful: keep the same characters, the same events in the same order, the same places and the same ending; do not invent a different story and do not turn it into advice or an essay. ` +
                   `If the material is only a short caption or a meme, make a small story from it with 2 or 3 named characters, a problem, a turn and an ending. ` +
                   `Name every character the first time ("राजू", "माँ", "टीचर"), say who does what ("राजू ने माँ को तोहफ़ा दिया"), mention the objects, animals, weather and places that matter, in short spoken sentences. Every sentence should be something that can be SHOWN. No headings, no emojis, no stage directions. ` +
@@ -4044,6 +4053,8 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
             } catch (e) { pipelineLogger.warn(`Generated Short: story attempt ${attempt}/3 failed (${String((e as Error)?.message ?? e).slice(0, 100)})`, "DirectUploader"); }
           }
         }
+        // Prompt Gag says the "not financial advice" line at the end of every Short
+        if (this.profile.key.toLowerCase() === "prompt_gag" && !script.includes(FINANCE_DISCLAIMER)) script = `${script} ${FINANCE_DISCLAIMER}`.trim();
         // The story could not be written: use what the reel itself says (spoken words, caption, description), not the generic AI blurb
         if (script.split(/\s+/).length < 40) {
           const own = [context.transcript?.text, context.captionMetadata?.description, context.metadata?.description].map((t) => (t ?? "").replace(/#\S+/g, " ").replace(/\s+/g, " ").trim()).filter((t) => t.split(/\s+/).length >= 6);

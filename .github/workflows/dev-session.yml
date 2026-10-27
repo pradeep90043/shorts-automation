@@ -90,6 +90,7 @@ jobs:
           if [ -n "${GEMINI_API_KEY}" ]; then printf 'GEMINI_API_KEY=%s\n' "${GEMINI_API_KEY}" >> .env.dev; fi
           if [ -n "${COVER_IMAGE_API_KEY}" ]; then printf 'COVER_IMAGE_API_KEY=%s\n' "${COVER_IMAGE_API_KEY}" >> .env.dev; fi
           if [ -n "${COVER_IMAGE_API_URL}" ]; then printf 'COVER_IMAGE_API_URL=%s\n' "${COVER_IMAGE_API_URL}" >> .env.dev; fi
+          if [ -n "${KAGGLE_API_TOKEN}" ]; then printf 'KAGGLE_API_TOKEN=%s\n' "${KAGGLE_API_TOKEN}" >> .env.dev; fi   # OmniVoice narration on Kaggle (src/audio/omnivoice)
           printf 'VOICEBOX_GITHUB_REPO=pradeep90043/shorts-automation-test\n' >> .env.dev
           printf 'MY_VIDEO_GITHUB_REPO=pradeep90043/my-video-test\n' >> .env.dev
           printf 'RENDER_GITHUB_REPO=pradeep90043/my-video-test\n' >> .env.dev
@@ -104,6 +105,7 @@ jobs:
           COVER_IMAGE_API_KEY: ${{ secrets.COVER_IMAGE_API_KEY }}
           COVER_IMAGE_API_URL: ${{ secrets.COVER_IMAGE_API_URL }}
           FREELLM_ENC: ${{ secrets.DEV_FREELLM_ENCRYPTION_KEY }}
+          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
 
       - name: Start Postgres and FreeLLMAPI, add the provider keys
         run: |

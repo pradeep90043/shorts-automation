@@ -64,3 +64,24 @@ assert.strictEqual(meta.enable_gpu, true);
 assert.deepStrictEqual(meta.dataset_sources, ["someone/voice-samples"]);
 
 console.log("omnivoice tests passed");
+
+// story dialogue: the planner's scenes get the speaker of the line they are; mixed scenes stay with the narrator
+import { assignSpeakers, tagSpeakers } from "../src/audio/omnivoice/speakers";
+(async () => {
+  const scenes = assignSpeakers(
+    [
+      { text: "उस रात घर में सिर्फ़ एक रोटी बची थी।" },
+      { text: "माँ, तुमने खाना खाया?" },
+      { text: "माँ ने कहा, हाँ बेटा, मैंने खा लिया। और वो मुस्कुरा दी, पर उसकी आँखें नम थीं।" },
+    ],
+    [{ speaker: "child", text: "माँ, तुमने खाना खाया?" }, { speaker: "mother", text: "हाँ बेटा, मैंने खा लिया।" }],
+  );
+  assert.deepStrictEqual(scenes.map((x) => (x as any).speaker), [undefined, "child", undefined]);
+
+  const story = "उस रात घर में सिर्फ़ एक रोटी बची थी। माँ, तुमने खाना खाया? हाँ बेटा, मैंने खा लिया। छोटू सो गया।";
+  const tagged = await tagSpeakers(story, async () => 'sure: [{"n": 2, "speaker": "Child"}, {"n": 3, "speaker": "old woman"}, {"n": 9, "speaker": "child"}, {"n": 4, "speaker": "dragon"}]');
+  assert.deepStrictEqual(tagged, [{ speaker: "child", text: "माँ, तुमने खाना खाया?" }, { speaker: "old_woman", text: "हाँ बेटा, मैंने खा लिया।" }], "out-of-range and unknown voices are dropped");
+  assert.deepStrictEqual(await tagSpeakers(story, async () => { throw new Error("down"); }), [], "an LLM failure narrates everything");
+  assert.deepStrictEqual(await tagSpeakers(story, async () => '[{"n":1,"speaker":"child"},{"n":2,"speaker":"child"},{"n":3,"speaker":"child"}]'), [], "almost all dialogue = misread, narrate all");
+  console.log("omnivoice speaker tests passed");
+})().catch((err) => { console.error(err); process.exit(1); });

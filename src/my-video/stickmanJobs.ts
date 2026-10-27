@@ -29,6 +29,7 @@ import { lessonQualityReport, type QualityWarning } from "./lessonQuality";
 import { addDirectorShots, directorShotsEnabled } from "./directorShots";
 import { cancelVoiceboxRun, estimateVoiceboxSec, sceneLines, type VoiceboxRunRef } from "./voiceboxNarration";
 import { generateNarration } from "../audio/narration";
+import { assignSpeakers } from "../audio/omnivoice/speakers";
 import { voiceInputsFor } from "./voiceProfiles";
 
 /** `voice: "voicebox"` = the cloned voice made on GitHub Actions (see voiceboxNarration.ts) instead of an edge-tts voice. */
@@ -71,6 +72,8 @@ export interface StickmanJobInput {
   keepScript?: boolean;
   /** the finished file is only handed back: the runner must not upload it to YouTube itself (a Short is published by its own pipeline) */
   noRunnerPublish?: boolean;
+  /** story dialogue: lines spoken by a character instead of the narrator (src/audio/omnivoice/speakers.ts assignSpeakers) */
+  speakerLines?: { speaker?: string; text: string }[];
 }
 
 type StageStatus = "pending" | "running" | "done" | "failed";
@@ -316,7 +319,7 @@ async function run(job: StickmanJob, resume = false): Promise<void> {
       if (resume && planReused && audioStageDone && narrationDir && fs.existsSync(narrationDir)) {
         log(`Reusing cloned-voice narration from ${narrationDir}`);
       } else {
-        const lines = sceneLines(plan.scenes);
+        const lines = sceneLines(assignSpeakers(plan.scenes, job.input.speakerLines));
         const voiceSec = estimateVoiceboxSec(lines.reduce((n, l) => n + l.text.length, 0), 20, 800, language);
         const audio = job.stages.find((s) => s.key === "audio");
         if (audio) {
