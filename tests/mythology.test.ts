@@ -57,10 +57,10 @@ assert.strictEqual(tl.total, 12);
   const p = JSON.parse(execFileSync("ffprobe", ["-v", "error", "-show_entries", "stream=codec_type,width,height", "-show_entries", "format=duration", "-of", "json", out]).toString());
   assert.ok(p.streams.some((x: any) => x.codec_type === "video" && x.width === 1080 && x.height === 1920));
   assert.ok(p.streams.some((x: any) => x.codec_type === "audio"));
-  // the film is exactly as long as the processed voice lines (slowed 5% by the voice chain, plus air after each)
+  // the film is exactly as long as the processed voice lines (pitch-shifted, ~3% faster, plus air after each)
   const sec = (f: string) => Number(execFileSync("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", f]).toString());
   const expected = voices.reduce((t, _f, i) => t + sec(path.join(dir, "w", `vx${i}.wav`)), 0);
-  assert.ok(sec(path.join(dir, "w", "vx0.wav")) > sec(voices[0]) / 0.95, "the voice chain slows the line down");
+  assert.ok(Math.abs(sec(path.join(dir, "w", "vx0.wav")) - (sec(voices[0]) / 1.026 + 0.25)) < 0.2, "the voice chain keeps the line's length (~3% faster)");
   assert.ok(Math.abs(Number(p.format.duration) - expected) < 0.1, `duration ${p.format.duration} vs ${expected}`);
   console.log("mythology: ok", out);
 })().catch((e) => { console.error(e); process.exit(1); });
