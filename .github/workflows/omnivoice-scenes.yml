@@ -16,6 +16,9 @@ on:
       lines:
         description: 'JSON list of {"name","text","emotion"?,"speaker"?}, one per scene; each becomes <name>.mp3'
         required: true
+      narrator:
+        description: 'Designed narrator voice (e.g. "male, middle-aged, indian accent"); empty = clone the sample'
+        default: ''
       characters:
         description: 'JSON object {"<speaker>": "<OmniVoice voice design>"} for story characters (src/audio/omnivoice/job.ts)'
         default: '{}'
@@ -130,6 +133,7 @@ jobs:
       - name: Speak this shard
         env:
           CHARACTERS: ${{ inputs.characters }}
+          NARRATOR: ${{ inputs.narrator }}
           SAMPLE_TEXT: ${{ inputs.sample_text }}
         run: |
           python3 - <<'PY'
@@ -137,6 +141,8 @@ jobs:
           job = {"tag": "${{ inputs.tag }}", "language": "${{ inputs.language }}", "speed": float("${{ inputs.speed }}" or 1.0), "format": "wav",
                  "sample": {"file": "sample.wav", "text": os.environ.get("SAMPLE_TEXT", "")},
                  "characters": json.loads(os.environ.get("CHARACTERS") or "{}"), "lines": []}
+          if os.environ.get("NARRATOR"):
+              job["narrator"] = os.environ["NARRATOR"]
           json.dump(job, open("job.json", "w"), ensure_ascii=False)
           PY
           python3 scripts/omnivoice_runner.py --job job.json --lines plan/shard-${{ matrix.shard }}.json --sample sample.wav --device cpu --out out

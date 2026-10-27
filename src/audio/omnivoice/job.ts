@@ -8,13 +8,35 @@ export interface OmniVoiceJob {
   language: string;
   speed: number;
   format: "mp3" | "wav";
-  sample: { file: string; start: number; end: number; text: string };
+  /** a cloned narrator: the channel's voice sample (VOICE_CLONE=on only) */
+  sample?: { file: string; start: number; end: number; text: string };
+  /** a designed narrator (the default): OmniVoice voice-design attributes, made the same way in every run (fixed seed) */
+  narrator?: string;
   characters: Record<string, string>;
   lines: VoiceboxLine[];
 }
 
 /**
- * Designed voices for the people in a story (Storiyum dialogue). The narrator always stays the channel's cloned voice;
+ * Each channel's narrator: a generic designed voice (no cloned recording, so none of a recording's hiss). NARRATOR_VOICE_<CHANNEL>
+ * (e.g. NARRATOR_VOICE_STORIYUM="female, middle-aged, indian accent") replaces one.
+ */
+export const NARRATOR_VOICES: Record<string, string> = {
+  storiyum: "male, middle-aged, low pitch, indian accent",
+  codeorcap: "male, young adult, indian accent",
+  prompt_gag: "male, middle-aged, indian accent",
+  infoonspot: "female, young adult, indian accent",
+};
+
+export function narratorVoiceFor(channelKey?: string, env: NodeJS.ProcessEnv = process.env): string {
+  const key = (channelKey ?? "").trim().toLowerCase();
+  return (env[`NARRATOR_VOICE_${key.toUpperCase()}`] ?? "").trim() || NARRATOR_VOICES[key] || NARRATOR_VOICES.codeorcap;
+}
+
+/** The cloned voices (voiceProfiles.ts) are off by default: the clones carried the samples' background hiss. VOICE_CLONE=on brings them back. */
+export const cloneVoices = (env: NodeJS.ProcessEnv = process.env): boolean => /^(on|true|1|yes)$/i.test((env.VOICE_CLONE ?? "").trim());
+
+/**
+ * Designed voices for the people in a story (Storiyum dialogue). The narrator stays the channel's narrator voice;
  * a line with one of these speakers is spoken in that character's voice. Values are OmniVoice voice-design attributes.
  */
 export const CHARACTER_VOICES: Record<string, string> = {
@@ -38,27 +60,36 @@ export function characterKey(speaker?: string): string | undefined {
   return k && k !== "narrator" && CHARACTER_VOICES[k] ? k : undefined;
 }
 
-/** The job for a channel: its cloned narrator voice (voiceProfiles.ts, CodeOrCap's when the channel has none) and the characters it uses. */
-export function buildOmniVoiceJob(tag: string, lines: VoiceboxLine[], opts: { channelKey?: string; language?: string; speed?: string | number } = {}): OmniVoiceJob {
-  const profile = VOICE_PROFILES[(opts.channelKey ?? "").trim().toLowerCase()] ?? VOICE_PROFILES.codeorcap;
+/** The job for a channel: its designed narrator (or, with VOICE_CLONE=on, its cloned voice from voiceProfiles.ts) and the characters it uses. */
+export function buildOmniVoiceJob(
+  tag: string,
+  lines: VoiceboxLine[],
+  opts: { channelKey?: string; language?: string; speed?: string | number } = {},
+  env: NodeJS.ProcessEnv = process.env,
+): OmniVoiceJob {
   const spoken: VoiceboxLine[] = lines.map((l) => {
     const speaker = characterKey(l.speaker);
     const { speaker: _drop, ...rest } = l;
     return speaker ? { ...rest, speaker } : rest;
   });
   const used = new Set(spoken.map((l) => l.speaker).filter(Boolean) as string[]);
-  return {
+  const base = {
     tag,
     language: opts.language || "hi",
     speed: Number(opts.speed) || 1.0,
-    format: "mp3",
+    format: "mp3" as const,
+    characters: Object.fromEntries([...used].map((k) => [k, CHARACTER_VOICES[k]])),
+    lines: spoken,
+  };
+  if (!cloneVoices(env)) return { ...base, narrator: narratorVoiceFor(opts.channelKey, env) };
+  const profile = VOICE_PROFILES[(opts.channelKey ?? "").trim().toLowerCase()] ?? VOICE_PROFILES.codeorcap;
+  return {
+    ...base,
     sample: {
       file: path.basename(profile.sample_path),
       start: Number(profile.sample_start) || 0,
       end: Number(profile.sample_end) || 15,
       text: profile.sample_text,
     },
-    characters: Object.fromEntries([...used].map((k) => [k, CHARACTER_VOICES[k]])),
-    lines: spoken,
   };
 }
