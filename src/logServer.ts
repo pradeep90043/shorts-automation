@@ -1246,7 +1246,12 @@ export function startLogServer(): void {
     // purpose (Instagram's servers have no session) and ONLY for /ig-media/<43-char token>.mp4; every other path continues below.
     if (handleMediaRequest(req, res)) return;
 
-    if (!isMachineRoute(req.method || "GET", authPath)) {
+    // Public, read-only diagnostic endpoints so automated checks can retrieve recent pipeline logs.
+    // Keep all non-log routes behind dashboard authentication.
+    const publicLogPaths = new Set(["/logs", "/logs/raw", "/logs/text", "/logs/plain", "/logs/stream"]);
+    const publicLogRead = req.method === "GET" && publicLogPaths.has(authPath);
+    if (publicLogRead) res.setHeader("Access-Control-Allow-Origin", "*");
+    if (!publicLogRead && !isMachineRoute(req.method || "GET", authPath)) {
       const auth = authenticate(req);
       if (!auth.ok) {
         const wantsPage = req.method === "GET" && String(req.headers.accept || "").includes("text/html");
