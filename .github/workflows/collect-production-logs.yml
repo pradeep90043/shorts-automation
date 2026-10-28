@@ -2,6 +2,10 @@ name: Collect production application logs
 
 on:
   workflow_dispatch:
+  # Collect immediately after a successful production deployment as well as on schedule.
+  workflow_run:
+    workflows: ["CI/CD Deploy to Oracle VM"]
+    types: [completed]
   schedule:
     - cron: "*/15 * * * *"
 
@@ -15,6 +19,7 @@ concurrency:
 
 jobs:
   collect:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 4
     steps:
