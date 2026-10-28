@@ -1,0 +1,52 @@
+name: Collect production application logs
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/15 * * * *"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: collect-production-logs
+  cancel-in-progress: true
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Fetch latest production logs
+        id: fetch
+        shell: bash
+        env:
+          LOGS_URL: https://shorts-automation.duckdns.org/logs/raw?tail=350
+        run: |
+          set +e
+          HTTP_CODE=$(curl --location --silent --show-error --max-time 45 \
+            --output production-app-logs.txt --write-out '%{http_code}' "$LOGS_URL")
+          CURL_EXIT=$?
+          printf 'url=%s\nhttp_status=%s\ncurl_exit=%s\nfetched_at_utc=%s\n' \
+            "$LOGS_URL" "$HTTP_CODE" "$CURL_EXIT" "$(date -u +%FT%TZ)" > fetch-status.txt
+          echo "Log endpoint HTTP status: $HTTP_CODE (curl exit: $CURL_EXIT)"
+          if [ "$CURL_EXIT" -ne 0 ] || [ "$HTTP_CODE" != "200" ] || [ ! -s production-app-logs.txt ]; then
+            echo "Production log collection failed; status metadata will still be uploaded."
+            exit 1
+          fi
+          if grep -Eiq 'login required|<html' production-app-logs.txt; then
+            echo "Endpoint returned an auth page or HTML instead of raw logs."
+            exit 1
+          fi
+
+      - name: Upload log snapshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-app-logs
+          path: |
+            production-app-logs.txt
+            fetch-status.txt
+          retention-days: 3
+          if-no-files-found: warn
