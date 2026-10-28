@@ -6,7 +6,7 @@ on:
     - cron: "*/15 * * * *"
 
 permissions:
-  contents: read
+  contents: write
   actions: read
 
 concurrency:
@@ -39,6 +39,25 @@ jobs:
             echo "Endpoint returned an auth page or HTML instead of raw logs."
             exit 1
           fi
+
+
+      - name: Publish latest snapshot to the stable diagnostic-logs branch
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          mkdir publish
+          cp production-app-logs.txt publish/latest-production-app-logs.txt
+          cp fetch-status.txt publish/fetch-status.txt
+          cd publish
+          git init --quiet --initial-branch=diagnostic-logs
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add latest-production-app-logs.txt fetch-status.txt
+          git commit --quiet -m "Refresh production log snapshot $(date -u +%FT%TZ)"
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push --force origin HEAD:diagnostic-logs
 
       - name: Upload log snapshot
         if: always()
