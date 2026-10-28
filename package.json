@@ -40,6 +40,7 @@
     "test:v2-verdict": "ts-node tests/v2-verdict.test.ts",
     "test:still-source": "ts-node tests/still-source.test.ts",
     "test:row-icons": "ts-node tests/row-icons.test.ts",
+    "test:card-qa": "ts-node tests/card-qa.test.ts",
     "test:cloned-voice": "ts-node tests/cloned-voice.test.ts",
     "test:cover-image": "ts-node tests/cover-image.test.ts",
     "test:ig-caption": "ts-node tests/ig-caption.test.ts",

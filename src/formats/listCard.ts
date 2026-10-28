@@ -90,10 +90,15 @@ export function cardLayout(c: ListCardContent, accent: string, footer?: string):
   const iconSize = 64;
   const textX = 100 + iconSize + 26;
   const inner = CARD_W - 100 - textX;
+  const hasDevanagari = (s: string) => /[\u0900-\u097F]/.test(s);
   const laid = c.rows.map((r) => {
-    // measured widths of the row fonts (regular label ~0.5 em, bold value ~0.58 em per character); GLYPH is the safe upper bound
-    const valueW = r.value.length * valueSize * 0.58;
-    const perLine = Math.max(8, Math.floor((inner - valueW - 30) / (rowSize * 0.5)));
+    // measured widths of the row fonts: Devanagari characters are significantly wider (~0.72-0.78 em) than Latin (~0.5-0.58 em)
+    const valCharW = hasDevanagari(r.value) ? 0.75 : 0.60;
+    const lblCharW = hasDevanagari(r.label) ? 0.72 : 0.54;
+    const valueW = Math.max(100, r.value.length * valueSize * valCharW);
+    // keep a safe margin of at least 45px between label and value so they never touch or collide
+    const availableLabelW = Math.max(160, inner - valueW - 45);
+    const perLine = Math.max(6, Math.floor(availableLabelW / (rowSize * lblCharW)));
     const lines = wrapHeadline(r.label, perLine, 4);
     return { ...r, lines, icon: iconFor(r.label), h: Math.max(lines.length * lineH, iconSize) + Math.round(rowSize * 1.0) };
   });
