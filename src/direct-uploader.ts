@@ -3872,7 +3872,15 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         },
         tts: (text, file) => this.tts.generateVoiceover(text, file, this.profile.key),
         tempDir: path.join(context.tempDir, "format"),
+        // Pass the vision client so the rendered card PNG is QA-checked before publishing
+        freellmapi: this.freellmapi ?? undefined,
       });
+      if (built.qaOk === false) {
+        pipelineLogger.warn(
+          `[format][${id}] Card QA failed after retry (${built.qaReason ?? "unknown"}); publishing best-effort card`,
+          "DirectUploader",
+        );
+      }
       if (format === "manual") {
         const dir = path.join(config.paths.outputDir, "manual-candidates", id);
         fs.mkdirSync(dir, { recursive: true });

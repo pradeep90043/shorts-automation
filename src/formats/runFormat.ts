@@ -3,6 +3,8 @@ import { pipelineLogger } from "../utils/logger";
 import { parseImageVoice, renderImageVoice } from "./imageVoice";
 import { listCardFromLines, listCardPrompt, parseListCard, pickMusicBed, renderListCardPng, renderStillReel, type ListCardContent } from "./listCard";
 import { imageVoicePrompt } from "./imageVoice";
+import { checkCardQa } from "./cardQa";
+import { FreeLlmApiClient } from "../ai/freellmapi";
 
 export type BuiltFormat = "image_music" | "image_voice" | "manual";
 
@@ -25,6 +27,13 @@ export interface FormatRequest {
   cardSeconds?: number;
   /** tests: no AI pictures */
   noAi?: boolean;
+  /**
+   * FreeLLM API client used for card visual QA.
+   * When provided, the rendered PNG is sent to the vision model after rendering;
+   * if problems are detected the card is rebuilt once (different LLM draw) before giving up.
+   * When absent the QA step is skipped silently.
+   */
+  freellmapi?: FreeLlmApiClient;
 }
 
 export interface FormatResult {
@@ -32,6 +41,9 @@ export interface FormatResult {
   videoPath: string;
   cardPng?: string;
   title: string;
+  /** populated when visual QA ran: true = passed, false = failed (video still returned, caller decides) */
+  qaOk?: boolean;
+  qaReason?: string;
 }
 
 /** The free models often answer with their thinking or a few words: ask up to `tries` times until `parse` accepts the answer. */
@@ -46,6 +58,51 @@ export async function askUntil<T>(llm: (p: string) => Promise<string>, prompt: s
     }
   }
   return null;
+}
+
+/**
+ * Renders a list card PNG and runs visual QA on it (when `freellmapi` is provided).
+ * On a QA failure the card is re-asked from the LLM (one retry) before giving up and
+ * returning the best available PNG + the QA verdict for the caller to decide.
+ */
+async function renderAndQaCard(
+  card: ListCardContent,
+  r: FormatRequest,
+  pngPath: string,
+): Promise<{ png: string; qaOk: boolean; qaReason: string }> {
+  const png = await renderListCardPng(card, r.brandKey, pngPath, {
+    footer: r.footer,
+    background: r.noAi ? null : undefined,
+  });
+
+  if (!r.freellmapi) return { png, qaOk: true, qaReason: "" };
+
+  const qa = await checkCardQa(png, r.freellmapi);
+  if (!qa.checked || qa.ok) return { png, qaOk: true, qaReason: qa.reason };
+
+  // QA failed — ask the LLM for a fresh card layout and re-render once
+  pipelineLogger.warn(
+    `CardQA failed (${qa.reason}); requesting a new card layout from the LLM`,
+    "Formats",
+  );
+  const fresh = await askUntil(r.llm, listCardPrompt(r.material.replace(/\s+/g, " ").trim(), r.hindi), parseListCard, 2);
+  if (!fresh) {
+    pipelineLogger.warn("CardQA re-ask produced no usable card; keeping original", "Formats");
+    return { png, qaOk: false, qaReason: qa.reason };
+  }
+
+  const pngRetry = pngPath.replace(/\.png$/, "_retry.png");
+  const png2 = await renderListCardPng(fresh, r.brandKey, pngRetry, {
+    footer: r.footer,
+    background: r.noAi ? null : undefined,
+  });
+  const qa2 = await checkCardQa(png2, r.freellmapi);
+  if (qa2.ok || !qa2.checked) {
+    pipelineLogger.info("CardQA retry passed ✓", "Formats");
+    return { png: png2, qaOk: true, qaReason: "" };
+  }
+  pipelineLogger.warn(`CardQA retry still failed (${qa2.reason}); using retry card anyway`, "Formats");
+  return { png: png2, qaOk: false, qaReason: qa2.reason };
 }
 
 /** Builds the Short for a format. Throws when it cannot, so the caller can fall back to the channel's normal Short. */
@@ -65,8 +122,14 @@ export async function buildFormatShort(r: FormatRequest): Promise<FormatResult> 
   let card: ListCardContent | null = await askUntil(r.llm, listCardPrompt(material, r.hindi), parseListCard);
   if (!card && r.ocrText) card = listCardFromLines(r.ocrText, r.title ?? "");
   if (!card) throw new Error("could not structure the source text into a list card");
-  const png = await renderListCardPng(card, r.brandKey, path.join(r.tempDir, "format_card.png"), { footer: r.footer, background: r.noAi ? null : undefined });
+
+  const { png, qaOk, qaReason } = await renderAndQaCard(
+    card,
+    r,
+    path.join(r.tempDir, "format_card.png"),
+  );
+
   const out = path.join(r.tempDir, "format_image_music.mp4");
   await renderStillReel(png, pickMusicBed(r.seed), out, r.cardSeconds ?? 6);
-  return { format: r.format, videoPath: out, cardPng: png, title: card.title };
+  return { format: r.format, videoPath: out, cardPng: png, title: card.title, qaOk, qaReason };
 }
