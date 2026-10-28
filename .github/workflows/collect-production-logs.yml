@@ -11,12 +11,12 @@ permissions:
 
 concurrency:
   group: collect-production-logs
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 4
     steps:
       - name: Fetch latest production logs
         id: fetch
@@ -32,30 +32,45 @@ jobs:
             "$LOGS_URL" "$HTTP_CODE" "$CURL_EXIT" "$(date -u +%FT%TZ)" > fetch-status.txt
           echo "Log endpoint HTTP status: $HTTP_CODE (curl exit: $CURL_EXIT)"
           if [ "$CURL_EXIT" -ne 0 ] || [ "$HTTP_CODE" != "200" ] || [ ! -s production-app-logs.txt ]; then
-            echo "Production log collection failed; status metadata will still be uploaded."
+            echo "Production log collection failed; status will still be published to diagnostic-logs."
             exit 1
           fi
           if grep -Eiq 'login required|<html' production-app-logs.txt; then
             echo "Endpoint returned an auth page or HTML instead of raw logs."
+            printf 'validation_error=endpoint returned HTML/auth page, not raw logs\n' >> fetch-status.txt
             exit 1
           fi
 
-
-      - name: Publish latest snapshot to the stable diagnostic-logs branch
-        if: success()
+      # Publish status even when fetching fails, so the reason is inspectable
+      # from the stable branch rather than being trapped only in a short-lived artifact.
+      - name: Publish latest snapshot and fetch status
+        if: always()
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          mkdir publish
-          cp production-app-logs.txt publish/latest-production-app-logs.txt
-          cp fetch-status.txt publish/fetch-status.txt
+          mkdir -p publish
+          if [ -s fetch-status.txt ]; then
+            cp fetch-status.txt publish/fetch-status.txt
+          else
+            printf 'error=fetch step did not create status metadata\nfetched_at_utc=%s\n' "$(date -u +%FT%TZ)" > publish/fetch-status.txt
+          fi
+
+          if [ -s production-app-logs.txt ] && grep -q 'http_status=200' publish/fetch-status.txt && grep -q 'curl_exit=0' publish/fetch-status.txt && ! grep -Eiq 'login required|<html' production-app-logs.txt; then
+            cp production-app-logs.txt publish/latest-production-app-logs.txt
+          else
+            {
+              echo "No valid production log snapshot was collected."
+              echo "Read fetch-status.txt in this branch for the latest failure details."
+            } > publish/latest-production-app-logs.txt
+          fi
+
           cd publish
           git init --quiet --initial-branch=diagnostic-logs
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add latest-production-app-logs.txt fetch-status.txt
-          git commit --quiet -m "Refresh production log snapshot $(date -u +%FT%TZ)"
+          git commit --quiet -m "Refresh production log snapshot/status $(date -u +%FT%TZ)"
           git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git push --force origin HEAD:diagnostic-logs
 
