@@ -120,3 +120,39 @@ function makeFakeCardPng(dir: string): string {
   assert.strictEqual(result.qaOk, true, "QA should pass");
   console.log("card-qa test 4 (buildFormatShort + QA pass): ok", result.videoPath);
 })().catch((e) => { console.error("card-qa test 4 FAILED:", e); process.exit(1); });
+
+// ── test 5: buildFormatShort throws and aborts if QA retry fails ─────────
+
+(async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cardqa-format-fail-"));
+  const goodCard = JSON.stringify({
+    title: "3 Tips",
+    rows: [{ label: "Tip 1", value: "" }, { label: "Tip 2", value: "" }, { label: "Tip 3", value: "" }],
+    image: "desk",
+  });
+  const llm = async (_p: string) => goodCard;
+  const tts = async (_t: string, f: string) => { fs.writeFileSync(f, ""); return 0; };
+  // Mock vision that ALWAYS rejects with text overlap
+  const freellmapi = makeMockFreellm(JSON.stringify({ ok: false, problems: ["text_overlap"], reason: "text overlap" }));
+
+  let threw = false;
+  try {
+    await buildFormatShort({
+      format: "image_music",
+      brandKey: "codeorcap",
+      seed: "test-seed-fail",
+      material: "Tip 1 text. Tip 2 text. Tip 3 text.",
+      hindi: false,
+      llm,
+      tts,
+      tempDir: dir,
+      noAi: true,
+      freellmapi,
+    });
+  } catch (err: any) {
+    threw = true;
+    assert.ok(String(err.message).includes("failed visual QA"), "should mention visual QA failure");
+  }
+  assert.strictEqual(threw, true, "buildFormatShort should throw on repeated QA failure");
+  console.log("card-qa test 5 (repeated QA failure aborts format): ok");
+})().catch((e) => { console.error("card-qa test 5 FAILED:", e); process.exit(1); });

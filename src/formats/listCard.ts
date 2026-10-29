@@ -30,7 +30,9 @@ export function listCardPrompt(material: string, hindi: boolean): string {
     `From the MATERIAL below (the text of a short video) make a LIST CARD in ${hindi ? "Hindi written in Devanagari script (numbers as digits)" : "English"}. ` +
     `Use the facts and numbers of the material but write your own wording; NEVER invent a number, price or claim that is not in the material. Ignore calls to action in the material (follow, subscribe, comment, DM, link in bio, join a list): they are not facts. ` +
     `Answer with JSON only: {"title": hook of at most 55 characters that contains the main number or promise, ` +
-    `"rows": one object per item of the material, ALL of them in order with nothing left out (a "top 10" has 10 rows, a table of 25 has 25) {"label": the item, "value": its number or short fact}, ` +
+    `"rows": one object per item of the material, ALL of them in order with nothing left out (a "top 10" has 10 rows, a table of 25 has 25). ` +
+    `For a table of numbers/prices/metrics, use {"label": metric name at most 30 chars, "value": compact number/price at most 12 chars e.g. "₹15 LPA" or "250-300"}. ` +
+    `For tips, advice, mistakes, steps, ideas, or rules, use {"label": the full point/advice as a single clear sentence of at most 60 chars, "value": ""}. ` +
     `"closing": one short sentence of at most 90 characters (a caveat or takeaway), ` +
     `"image": one photo scene that fits the topic, described in English, no text, no people's faces}.\n\nMATERIAL:\n${material.slice(0, 1800)}\n/no_think`
   );
@@ -44,8 +46,21 @@ export function parseListCard(raw: string): ListCardContent | null {
   try { j = JSON.parse(m[0]); } catch { return null; }
   const title = clip(j?.title, 60);
   const rows = (Array.isArray(j?.rows) ? j.rows : [])
-    .map((r: any) => ({ label: clip(r?.label, 80), value: clip(r?.value, 40) }))
-    .filter((r: { label: string; value: string }) => r.label && r.value)
+    .filter((r: any) => r?.label && clip(r.label, 80).length > 0)
+    .map((r: any) => {
+      let label = clip(r?.label, 80);
+      let value = clip(r?.value, 40);
+      // If value is a sentence/phrase (>16 chars or >3 words without numeric patterns), merge into label
+      if (value.length > 16 || (value.split(/\s+/).length > 3 && !/^[₹$€£\d\s\-.,%a-zA-Z/+]+$/.test(value))) {
+        if (!value.toLowerCase().includes(label.toLowerCase()) && label.length <= 25) {
+          label = `${label}: ${value}`;
+        } else if (value.length >= label.length) {
+          label = value;
+        }
+        value = "";
+      }
+      return { label, value };
+    })
     .slice(0, MAX_ROWS);
   if (!title || rows.length < 3) return null;
   return { title, rows, closing: clip(j?.closing, 100) || undefined, image: clip(j?.image, 200) || title };
@@ -88,20 +103,40 @@ export function cardLayout(c: ListCardContent, accent: string, footer?: string):
   const lineH = Math.round(rowSize * 1.25);
   // each row starts with an icon of what it is about (rowIcons.ts: a stored icon set, no extra AI picture)
   const iconSize = 64;
-  const textX = 100 + iconSize + 26;
-  const inner = CARD_W - 100 - textX;
+  const textX = 100 + iconSize + 26; // = 190
+  const inner = CARD_W - 100 - textX; // = 790
   const hasDevanagari = (s: string) => /[\u0900-\u097F]/.test(s);
+
+  // Check if every row has a compact metric value (numbers, currency, units <= 15 chars)
+  const isMetricVal = (v: string) => {
+    const s = (v || "").trim();
+    if (!s || s.length > 15) return false;
+    const words = s.split(/\s+/);
+    return words.length <= 3 || /^[₹$€£\d\s\-.,%a-zA-Z/+]+$/.test(s);
+  };
+  const isMetricCard = c.rows.length > 0 && c.rows.every((r) => isMetricVal(r.value));
+
   const laid = c.rows.map((r) => {
-    // measured widths of the row fonts: Devanagari characters are significantly wider (~0.72-0.78 em) than Latin (~0.5-0.58 em)
-    const valCharW = hasDevanagari(r.value) ? 0.75 : 0.60;
     const lblCharW = hasDevanagari(r.label) ? 0.72 : 0.54;
-    const valueW = Math.max(100, r.value.length * valueSize * valCharW);
-    // keep a safe margin of at least 45px between label and value so they never touch or collide
-    const availableLabelW = Math.max(160, inner - valueW - 45);
-    const perLine = Math.max(6, Math.floor(availableLabelW / (rowSize * lblCharW)));
-    const lines = wrapHeadline(r.label, perLine, 4);
-    return { ...r, lines, icon: iconFor(r.label), h: Math.max(lines.length * lineH, iconSize) + Math.round(rowSize * 1.0) };
+    const icon = iconFor(r.label || r.value);
+
+    if (isMetricCard) {
+      // 2-Column Metric Table: left column label, right column compact number
+      const valCharW = hasDevanagari(r.value) ? 0.75 : 0.60;
+      const valueW = Math.max(120, Math.min(260, r.value.length * valueSize * valCharW));
+      const availableLabelW = Math.max(180, inner - valueW - 35);
+      const perLine = Math.max(6, Math.floor(availableLabelW / (rowSize * lblCharW)));
+      const lines = wrapHeadline(r.label, perLine, 4);
+      return { ...r, lines, icon, isMetric: true, h: Math.max(lines.length * lineH, iconSize) + Math.round(rowSize * 1.0) };
+    } else {
+      // Full-Width Item Card: tips, rules, mistakes, ideas wrap across the entire inner width
+      const fullText = r.value && r.value !== r.label ? `${r.label} — ${r.value}` : r.label;
+      const perLine = Math.max(10, Math.floor(inner / (rowSize * lblCharW)));
+      const lines = wrapHeadline(fullText, perLine, 4);
+      return { ...r, lines, icon, isMetric: false, h: Math.max(lines.length * lineH, iconSize) + Math.round(rowSize * 1.0) };
+    }
   });
+
   const cardTop = ruleY + 60;
   const cardH = laid.reduce((sum, r) => sum + r.h, 0) + 36;
   let y = cardTop + 18;
@@ -116,8 +151,10 @@ export function cardLayout(c: ListCardContent, accent: string, footer?: string):
         .join("");
       // the icon sits on the first line of the label
       const icon = iconSvg(r.icon, 100, base - Math.round(rowSize * 0.36) - iconSize / 2, iconSize, accent);
-      return icon + label +
-        `<text x="${CARD_W - 100}" y="${base}" text-anchor="end" font-family="${FONT}" font-weight="700" font-size="${valueSize}" fill="${i >= laid.length - 2 ? accent : "#fff"}">${esc(r.value)}</text>${sep}`;
+      const val = r.isMetric
+        ? `<text x="${CARD_W - 100}" y="${base}" text-anchor="end" font-family="${FONT}" font-weight="700" font-size="${valueSize}" fill="${i >= laid.length - 2 ? accent : "#fff"}">${esc(r.value)}</text>`
+        : "";
+      return icon + label + val + sep;
     })
     .join("");
 

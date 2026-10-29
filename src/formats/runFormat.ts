@@ -87,8 +87,8 @@ async function renderAndQaCard(
   );
   const fresh = await askUntil(r.llm, listCardPrompt(r.material.replace(/\s+/g, " ").trim(), r.hindi), parseListCard, 2);
   if (!fresh) {
-    pipelineLogger.warn("CardQA re-ask produced no usable card; keeping original", "Formats");
-    return { png, qaOk: false, qaReason: qa.reason };
+    pipelineLogger.error(`CardQA re-ask produced no usable card (${qa.reason}) — rejecting list card format`, "Formats");
+    throw new Error(`List card failed visual QA: ${qa.reason}`);
   }
 
   const pngRetry = pngPath.replace(/\.png$/, "_retry.png");
@@ -101,8 +101,8 @@ async function renderAndQaCard(
     pipelineLogger.info("CardQA retry passed ✓", "Formats");
     return { png: png2, qaOk: true, qaReason: "" };
   }
-  pipelineLogger.warn(`CardQA retry still failed (${qa2.reason}); using retry card anyway`, "Formats");
-  return { png: png2, qaOk: false, qaReason: qa2.reason };
+  pipelineLogger.error(`CardQA retry still failed (${qa2.reason}) — rejecting list card format`, "Formats");
+  throw new Error(`List card failed visual QA after retry: ${qa2.reason}`);
 }
 
 /** Builds the Short for a format. Throws when it cannot, so the caller can fall back to the channel's normal Short. */

@@ -3876,10 +3876,7 @@ Return ONLY the rephrased caption text containing the segment prefix tags and do
         freellmapi: this.freellmapi ?? undefined,
       });
       if (built.qaOk === false) {
-        pipelineLogger.warn(
-          `[format][${id}] Card QA failed after retry (${built.qaReason ?? "unknown"}); publishing best-effort card`,
-          "DirectUploader",
-        );
+        throw new Error(`Card visual QA rejected layout (${built.qaReason ?? "unknown layout issue"})`);
       }
       if (format === "manual") {
         const dir = path.join(config.paths.outputDir, "manual-candidates", id);
