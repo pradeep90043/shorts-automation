@@ -22,6 +22,7 @@
     "test:pipeline": "ts-node tests/pipeline.test.ts",
     "test:format-test": "ts-node tests/format-test.test.ts",
     "test:list-card": "ts-node tests/list-card.test.ts",
+    "test:html-card": "ts-node tests/html-card.test.ts",
     "test:image-voice": "ts-node tests/image-voice.test.ts",
     "test:run-format": "ts-node tests/run-format.test.ts",
     "test:format-report": "ts-node tests/format-report.test.ts",

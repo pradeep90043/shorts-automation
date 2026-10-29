@@ -6,6 +6,7 @@ import { brandFor, generateBackgroundImage, wrapHeadline } from "../cover/coverI
 import { config } from "../config";
 import { pipelineLogger } from "../utils/logger";
 import { iconFor, iconSvg } from "./rowIcons";
+import { renderListCardHtml } from "./htmlCardRenderer";
 
 /**
  * Format "image_music": one list card (our own AI picture + our own layout, never a frame of the source) that is shown for a few
@@ -192,24 +193,33 @@ export interface RenderCardOptions {
   background?: Buffer | null;
 }
 
-/** The card as a 1080x1920 PNG. A failed AI picture only means a branded gradient behind the same layout. */
+/** The card as a 1080x1920 PNG. Uses HTML/Flexbox via Puppeteer for collision-free layout, falling back to SVG. */
 export async function renderListCardPng(c: ListCardContent, brandKey: string, outPng: string, opts: RenderCardOptions = {}): Promise<string> {
   const brand = brandFor(brandKey);
   const prompt = `${c.image}. ${PICTURE_MOOD}. No text, no letters, no words, no logos, no watermark. vertical composition`;
   const bg = opts.background !== undefined ? opts.background : await generateBackgroundImage(prompt, CARD_W, CARD_H, c.image);
-  const { svg, height } = cardLayout(c, brand.accent, opts.footer);
-  // the AI picture is the hero at the top (behind the title); the rest of a tall card is the dark brand colour
-  const base = bg
-    ? sharp(await sharp({ create: { width: CARD_W, height, channels: 3, background: "#050b1c" } })
-        .composite([{ input: await sharp(bg).resize(CARD_W, Math.min(height, HERO_H), { fit: "cover" }).toBuffer(), top: 0, left: 0 }])
-        .png().toBuffer())
-    : sharp(await sharp({ create: { width: CARD_W, height, channels: 3, background: brand.bg } })
-        .composite([{ input: Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_W}" height="${height}"><defs><radialGradient id="r" cx="0.7" cy="0.15" r="0.8"><stop offset="0" stop-color="${brand.accent}" stop-opacity="0.45"/><stop offset="1" stop-color="${brand.accent}" stop-opacity="0"/></radialGradient></defs><rect width="${CARD_W}" height="${height}" fill="url(#r)"/></svg>`) }])
-        .png().toBuffer());
-  fs.mkdirSync(path.dirname(outPng), { recursive: true });
-  await base.composite([{ input: Buffer.from(svg) }]).png().toFile(outPng);
-  pipelineLogger.info(`List card (${bg ? "AI picture" : "branded background"}): "${c.title}", ${c.rows.length} rows`, "ListCard");
-  return outPng;
+
+  try {
+    return await renderListCardHtml(c, brand.accent, outPng, { heroBuffer: bg, footer: opts.footer });
+  } catch (htmlErr: any) {
+    pipelineLogger.warn(
+      `HTML card render failed (${String(htmlErr?.message || htmlErr).slice(0, 200)}); falling back to SVG layout`,
+      "ListCard"
+    );
+    const { svg, height } = cardLayout(c, brand.accent, opts.footer);
+    // the AI picture is the hero at the top (behind the title); the rest of a tall card is the dark brand colour
+    const base = bg
+      ? sharp(await sharp({ create: { width: CARD_W, height, channels: 3, background: "#050b1c" } })
+          .composite([{ input: await sharp(bg).resize(CARD_W, Math.min(height, HERO_H), { fit: "cover" }).toBuffer(), top: 0, left: 0 }])
+          .png().toBuffer())
+      : sharp(await sharp({ create: { width: CARD_W, height, channels: 3, background: brand.bg } })
+          .composite([{ input: Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_W}" height="${height}"><defs><radialGradient id="r" cx="0.7" cy="0.15" r="0.8"><stop offset="0" stop-color="${brand.accent}" stop-opacity="0.45"/><stop offset="1" stop-color="${brand.accent}" stop-opacity="0"/></radialGradient></defs><rect width="${CARD_W}" height="${height}" fill="url(#r)"/></svg>`) }])
+          .png().toBuffer());
+    fs.mkdirSync(path.dirname(outPng), { recursive: true });
+    await base.composite([{ input: Buffer.from(svg) }]).png().toFile(outPng);
+    pipelineLogger.info(`List card (SVG fallback): "${c.title}", ${c.rows.length} rows`, "ListCard");
+    return outPng;
+  }
 }
 
 const MUSIC_DIR = path.join(__dirname, "../../assets/music-synth");
