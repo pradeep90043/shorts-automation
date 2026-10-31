@@ -32,6 +32,12 @@ export async function generateNarration(opts: NarrationOptions): Promise<{ dir: 
   const job = buildOmniVoiceJob(opts.slug, lines, { channelKey: opts.channelKey, language: opts.language, speed: opts.speed });
   const budget = opts.giveUpMs ?? 3 * 60 * 60 * 1000;
 
+  // Shorts have fewer lines (<=15) and strict publishing slots: cap Kaggle to 10 min so the GitHub fallback has time to run
+  const isShort = lines.length <= 15;
+  const defaultKaggleMin = isShort ? (Number(process.env.KAGGLE_SHORTS_TIMEOUT_MIN) || 10) : 45;
+  const kaggleTimeoutMin = Number(process.env.KAGGLE_VOICE_TIMEOUT_MIN) || defaultKaggleMin;
+  const kaggleBudget = Math.min(budget, kaggleTimeoutMin * 60_000);
+
   if (kaggleOn()) {
     try {
       return await runOnKaggle({
@@ -40,7 +46,7 @@ export async function generateNarration(opts: NarrationOptions): Promise<{ dir: 
         lines,
         onProgress: opts.onProgress,
         isCancelled: opts.isCancelled,
-        giveUpMs: Math.min(budget, (Number(process.env.KAGGLE_VOICE_TIMEOUT_MIN) || 45) * 60_000),
+        giveUpMs: kaggleBudget,
       });
     } catch (err) {
       if (opts.isCancelled?.()) throw err;
