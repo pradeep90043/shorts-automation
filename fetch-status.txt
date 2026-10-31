@@ -1,0 +1,4 @@
+url=https://shorts-automation.duckdns.org/logs/raw?tail=350
+http_status=502
+curl_exit=0
+fetched_at_utc=2026-10-31T19:00:59Z

@@ -1,0 +1,2 @@
+No valid production log snapshot was collected.
+Read fetch-status.txt in this branch for the latest failure details.
