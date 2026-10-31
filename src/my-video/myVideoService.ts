@@ -268,7 +268,8 @@ export async function fetchRetry(url: string, init?: RequestInit, attempts = 6):
   let lastErr: unknown;
   for (let i = 0; i < attempts; i++) {
     try {
-      const res = await fetch(url, init);
+      const signal = init?.signal ?? AbortSignal.timeout(30_000);
+      const res = await fetch(url, { ...init, signal });
       if (res.status < 500 && res.status !== 429) return res;
       lastErr = new Error(`HTTP ${res.status}`);
     } catch (err) {

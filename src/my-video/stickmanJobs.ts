@@ -176,7 +176,19 @@ function persistSoon(): void {
 
 (function loadJobs() {
   try {
-    for (const j of JSON.parse(fs.readFileSync(jobsFile(), "utf8")) as StickmanJob[]) jobs.set(j.id, j);
+    for (const j of JSON.parse(fs.readFileSync(jobsFile(), "utf8")) as StickmanJob[]) {
+      // If server restarts, any job loaded with status === "running" has no active worker in memory.
+      // Mark it failed with an informative message so it does not permanently deadlock the engine.
+      if (j.status === "running") {
+        j.status = "failed";
+        j.error = "Interrupted: server restarted while job was in progress";
+        j.finishedAt = Date.now();
+        for (const s of j.stages || []) {
+          if (s.status === "running") s.status = "failed";
+        }
+      }
+      jobs.set(j.id, j);
+    }
   } catch {
     /* none yet */
   }
@@ -185,7 +197,33 @@ function persistSoon(): void {
 /** Function (not an inline compare) so TypeScript does not narrow away a cancel that happened during an await. */
 const isCancelled = (job: StickmanJob): boolean => job.status === "cancelled";
 
-export const isStickmanBusy = (): boolean => [...jobs.values()].some((j) => j.status === "running");
+/** Maximum allowed runtime for any stickman job before watchdog marks it as timed out (90 minutes) */
+const MAX_STICKMAN_JOB_AGE_MS = 90 * 60 * 1000;
+
+export const isStickmanBusy = (): boolean => {
+  const now = Date.now();
+  let busy = false;
+  for (const j of jobs.values()) {
+    if (j.status === "running") {
+      if (now - (j.createdAt || 0) > MAX_STICKMAN_JOB_AGE_MS) {
+        pipelineLogger.warn(
+          `[Watchdog] Job ${j.id} exceeded max runtime (${Math.round(MAX_STICKMAN_JOB_AGE_MS / 60000)}m) - auto-cancelling frozen job`,
+          "StickmanJob"
+        );
+        j.status = "failed";
+        j.error = "Timed out: exceeded maximum execution time (90 minutes)";
+        j.finishedAt = now;
+        for (const s of j.stages || []) {
+          if (s.status === "running") s.status = "failed";
+        }
+        persistSoon();
+      } else {
+        busy = true;
+      }
+    }
+  }
+  return busy;
+};
 
 function setStage(job: StickmanJob, key: StageKey, patch: Partial<StageState>): void {
   const st = job.stages.find((s) => s.key === key)!;

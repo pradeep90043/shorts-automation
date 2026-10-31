@@ -204,6 +204,8 @@ export function startAutoLong(deps: AutoLongDeps, tickMs = 60_000): { stop(): vo
   let busy = false;
   let ticks = 0;
   let lastState = "";
+  let consecutiveBlockedTicks = 0;
+  let lastBlockedAlertAt = 0;
   autoLongStatus.log("info", "boot", `daily long video ON for ${channels.join(", ")}; release slots ${cfg.longReleaseIst.join(", ")} IST`);
 
   const alertFailure = async (result: string, req: LongRequest, error?: string) => {
@@ -240,6 +242,23 @@ export function startAutoLong(deps: AutoLongDeps, tickMs = 60_000): { stop(): vo
       const rows = deps.queue.all();
       const queued = rows.filter((r) => r.status === "queued").length;
       const state = `${result}|queued=${queued}`;
+
+      // Alert when blocked for >30 consecutive minutes while no Shorts are active
+      if (result === "blocked") {
+        consecutiveBlockedTicks++;
+        if (consecutiveBlockedTicks >= 30 && !deps.isShortActive()) {
+          const now = deps.now();
+          if (now - lastBlockedAlertAt > 60 * 60 * 1000) {
+            lastBlockedAlertAt = now;
+            deps.notify(
+              `⚠️ *AutoLong Warning*: Daily long video queue has been blocked for ${consecutiveBlockedTicks}m (engine busy: ${deps.isStickmanBusy()}, queued: ${queued}).`,
+            ).catch(() => {});
+          }
+        }
+      } else {
+        consecutiveBlockedTicks = 0;
+      }
+
       if (state !== lastState) {
         lastState = state;
         autoLongStatus.log("info", "tick", `${result}; ${queued} queued, ${rows.filter((r) => r.status === "done").length} done, ${rows.filter((r) => r.status === "failed").length} failed`);
